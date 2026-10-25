@@ -8,20 +8,20 @@
 
 ## 下载程序
 
-**[下载 Windows 便携版 · 1.2.0](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.2.0/Elysia_desktop_pet-1.2.0.exe)**
+**[下载 Windows 便携版 · 1.3.0](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.3.0/Elysia_desktop_pet-1.3.0.exe)**
 
-[更新说明](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.2.0) · [SHA256 校验文件](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.2.0/Elysia_desktop_pet-1.2.0.exe.sha256)
+[更新说明](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.3.0) · [SHA256 校验文件](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.3.0/Elysia_desktop_pet-1.3.0.exe.sha256)
 
-**当前已发布的便携版是 1.2.0；本仓库源码已更新到 1.3.0。** 1.3.0 新增 36 句日常语音、18 句点击互动语音、最多两行的台词气泡，以及可调保留时间的三种鼠标流光。可按下方[源码运行与构建步骤](#源码运行)使用，详见 [1.3.0 更新说明](docs/releases/v1.3.0.md)。历史 [1.2.0 更新说明](docs/releases/v1.2.0.md)保留。
+**1.3.0 新增：** 36 句日常语音、18 句点击互动语音、最多两行的台词气泡，以及可调保留时间的三种鼠标流光。详见 [1.3.0 更新说明](docs/releases/v1.3.0.md)，也可按下方[源码运行与构建步骤](#源码运行)自行构建。历史 [1.2.0 更新说明](docs/releases/v1.2.0.md)保留。
 
-下载后双击 EXE 即可运行，无需安装 Node.js。升级前先从右下角托盘退出旧版；1.2.0 会保留已有的位置、大小、装扮开关和偏好，无需手动迁移。
+下载后双击 EXE 即可运行，无需安装 Node.js。升级前先从右下角托盘退出旧版，再打开 `Elysia_desktop_pet-1.3.0.exe`；已有正式配置中的位置、大小、装扮开关和偏好会保留，无需手动迁移。
 
 <details>
 <summary>下载提示与文件后缀</summary>
 
 **下载提示：** 当前版本未进行数字签名。如果 Edge 提示“isn't commonly downloaded（不常下载）”，确认文件来自本仓库发布页后，在下载列表选择 **⋯ → 保留 → 显示更多 → 仍然保留**，等待下载完成。[微软操作说明](https://learn.microsoft.com/en-us/troubleshoot/microsoft-edge/development/download-failures#check-security-and-smartscreen-settings)
 
-**下载完成后，如果文件仍叫 `Unconfirmed 数字.crdownload`，可以将后缀改为 `.exe` 使用。** 先在文件资源管理器中显示“文件扩展名”，再将完整文件名改为 **`Elysia_desktop_pet-1.2.0.exe`**，不要保留末尾的 `.crdownload`。此操作只适用于已经完整下载的文件；仍在下载或下载中断时，请先完成下载。
+**下载完成后，如果文件仍叫 `Unconfirmed 数字.crdownload`，可以将后缀改为 `.exe` 使用。** 先在文件资源管理器中显示“文件扩展名”，再将完整文件名改为 **`Elysia_desktop_pet-1.3.0.exe`**，不要保留末尾的 `.crdownload`。此操作只适用于已经完整下载的文件；仍在下载或下载中断时，请先完成下载。
 
 </details>
 

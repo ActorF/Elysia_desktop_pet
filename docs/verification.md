@@ -1,6 +1,6 @@
 # 验证说明
 
-本文件说明 **1.3.0** 的检查范围与执行方式，包含已有桌宠功能、54 条语音、点击互动、台词气泡和可调时长的鼠标流光。GitHub 当前已发布的便携版仍为 1.2.0；从本仓库构建 1.3.0 后，程序生成在 `release/Elysia_desktop_pet-1.3.0.exe`。检查结果以实际运行输出和 `artifacts/` 中生成的报告为准，历史版本说明保留在 `docs/releases/`。
+本文件说明 **1.3.0** 的检查范围与执行方式，包含已有桌宠功能、54 条语音、点击互动、台词气泡和可调时长的鼠标流光。正式便携版及校验文件见 [1.3.0 发布页](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.3.0)；从本仓库构建后，程序生成在 `release/Elysia_desktop_pet-1.3.0.exe`。检查结果以实际运行输出和 `artifacts/` 中生成的报告为准，历史版本说明保留在 `docs/releases/`。
 
 ## 环境与命令
 

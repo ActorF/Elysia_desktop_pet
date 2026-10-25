@@ -9,20 +9,20 @@ A chibi Elysia companion for Windows, with a transparent full-body character, mo
 
 ## Download
 
-**[Download for Windows · Portable Release 1.2.0](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.2.0/Elysia_desktop_pet-1.2.0.exe)**
+**[Download for Windows · Portable Release 1.3.0](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.3.0/Elysia_desktop_pet-1.3.0.exe)**
 
-[Release notes](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.2.0) · [SHA256 checksum](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.2.0/Elysia_desktop_pet-1.2.0.exe.sha256)
+[Release notes](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.3.0) · [SHA256 checksum](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.3.0/Elysia_desktop_pet-1.3.0.exe.sha256)
 
-**The latest published portable download is 1.2.0; this repository's source is now 1.3.0.** Version 1.3.0 adds 36 daily voice lines, 18 interaction voice lines, speech bubbles of up to two lines, and three cursor trails with adjustable duration. Use the [source and build instructions](#run-from-source) below. See the [1.3.0 changes](docs/releases/v1.3.0.md) or the historical [1.2.0 notes](docs/releases/v1.2.0.md).
+**New in 1.3.0:** 36 daily voice lines, 18 interaction voice lines, speech bubbles of up to two lines, and three cursor trails with adjustable duration. See the [1.3.0 changes](docs/releases/v1.3.0.md), or use the [source and build instructions](#run-from-source) below. The historical [1.2.0 notes](docs/releases/v1.2.0.md) remain available.
 
-Download and double-click the EXE to run; no Node.js installation is needed. Before upgrading, quit the old version from the tray. Version 1.2.0 keeps your position, size, outfit switches, and preferences without manual migration.
+Download and double-click the EXE to run; no Node.js installation is needed. Before upgrading, quit the old version from the tray, then open `Elysia_desktop_pet-1.3.0.exe`. Position, size, outfit switches, and preferences in your existing release profile are preserved without manual migration.
 
 <details>
 <summary>Download warnings and files ending in .crdownload</summary>
 
 The app is currently unsigned. If Microsoft Edge says the file “isn't commonly downloaded,” check that it came from this repository's release page. In the downloads list, choose **⋯ → Keep → Show more → Keep anyway**, then wait for the download to finish. See [Microsoft's instructions](https://learn.microsoft.com/en-us/troubleshoot/microsoft-edge/development/download-failures#check-security-and-smartscreen-settings).
 
-**If the download has fully completed but the file is still named `Unconfirmed <number>.crdownload`, you can rename it to use the `.exe` extension.** Enable **File name extensions** in File Explorer, then change the complete filename to **`Elysia_desktop_pet-1.2.0.exe`**. Remove the trailing `.crdownload` entirely.
+**If the download has fully completed but the file is still named `Unconfirmed <number>.crdownload`, you can rename it to use the `.exe` extension.** Enable **File name extensions** in File Explorer, then change the complete filename to **`Elysia_desktop_pet-1.3.0.exe`**. Remove the trailing `.crdownload` entirely.
 
 This only applies to a file that has finished downloading. If the download is still running or was interrupted, complete it first; renaming an incomplete file does not finish the download.
 
