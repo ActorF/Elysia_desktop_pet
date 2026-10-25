@@ -16,6 +16,7 @@ let patchFrame = 0, pendingPatch = {};
 const status = document.querySelector('#save-status');
 const errorMessage = document.querySelector('#error-message');
 const controls = new Map(), rangeControls = new Map();
+const trailStyles = ['pink', 'ribbon', 'stardust'];
 const format = n => Number(n.toPrecision(7)).toString();
 function element(tag, attributes = {}, text) {
   const node = document.createElement(tag);
@@ -76,19 +77,21 @@ const toggles = [
   ['#eye-toggle', 'eyeTracking', '目光跟随鼠标', '保持原来的眼神效果，可以单独调整幅度。'],
   ['#motion-toggle', 'hairMotion', '头发、衣摆与腿部摆动', '上半身与下半身保持同向轻摆。'],
   ['#key-toggle', 'keyDisplay', '按键云朵', '只显示最近输入的一个字符，约一秒后消失。'],
+  ['#interactions-toggle', 'interactionsEnabled', '点击互动', '关闭后，摸头和戳戳不再触发表情、字幕和声音；拖动与缩放仍可使用。'],
+  ['#cursor-trail-toggle', 'cursorTrailEnabled', '鼠标流光', '鼠标移动时出现流光，停下后逐渐淡出。流光不影响鼠标点击或拖动。'],
   ['#topmost-toggle', 'alwaysOnTop', '始终置顶', '让桌宠显示在其他普通窗口上方。'],
   ['#passthrough-toggle', 'clickThrough', '鼠标穿透人物', '设置窗口仍可操作；Ctrl + Alt + P 可恢复人物操作。'],
   ['#legacy-toggle', 'legacyHotkeys', '空格全局组合键', '空格 + 数字切换表情，空格 + F1–F6 切换装扮和动作。'],
   ['#alternate-toggle', 'alternateHotkeys', '备用 Ctrl + Alt 组合键', '搭配数字、F1–F6 或退格键，作为另一套操作方式。'],
 ];
 for (const [target, ...args] of toggles) makeToggle(document.querySelector(target), ...args);
-function makeRange(target, key, title, min, max, step, factor, unit) {
+function makeRange(target, key, title, min, max, step, factor, unit, defaultValue = 1) {
   const heading = element('div', { class: 'range-heading' });
   const id = `range-${key}`;
   heading.append(element('label', { for: id }, title));
   const values = element('div', { class: 'range-values' });
   const reset = element('button', { class: 'range-reset', type: 'button', 'aria-label': `恢复默认${title}` }, '默认');
-  reset.addEventListener('click', () => void patch(key, 1));
+  reset.addEventListener('click', () => void patch(key, defaultValue));
   const numberHolder = element('label', { class: 'number-field' });
   const number = element('input', { type: 'number', name: `${key}Value`, min, max, step, 'aria-label': `${title}数值` });
   numberHolder.append(number, element('span', {}, unit)); values.append(reset, numberHolder); heading.append(values);
@@ -98,22 +101,32 @@ function makeRange(target, key, title, min, max, step, factor, unit) {
   target.append(heading, row);
   slider.addEventListener('input', () => { number.value = slider.value; schedulePatch(key, Number(slider.value) / factor); });
   number.addEventListener('change', () => {
-    if (number.value === '' || !Number.isFinite(number.valueAsNumber)) { render(); return; }
+    if (number.value === '' || !Number.isFinite(number.valueAsNumber)) {
+      const current = Number.isFinite(snapshot?.settings?.[key]) ? snapshot.settings[key] : defaultValue;
+      number.value = format(current * factor); slider.value = number.value; return;
+    }
     const value = Math.max(min, Math.min(max, number.valueAsNumber));
     number.value = String(value); slider.value = String(value); void patch(key, value / factor);
   });
-  rangeControls.set(key, { slider, number, factor });
+  rangeControls.set(key, { slider, number, factor, defaultValue });
 }
 makeRange(document.querySelector('#eye-range'), 'eyeWarpStrength', '眼睛跟随幅度', 0, 200, 1, 100, '%');
 makeRange(document.querySelector('#amplitude-range'), 'motionAmplitude', '摆动幅度', 0, 200, 1, 100, '%');
 makeRange(document.querySelector('#speed-range'), 'motionSpeed', '摆动速度', .25, 3, .05, 1, '×');
+makeRange(document.querySelector('#cursor-trail-duration'), 'cursorTrailDuration', '轨迹保留时间', .1, 5, .1, 1, '秒', .6);
+for (const input of document.querySelectorAll('#cursor-trail-duration input')) input.setAttribute('aria-describedby', 'cursor-trail-duration-hint');
+document.querySelector('[name=cursorTrailDurationValue]').inputMode = 'decimal';
+document.querySelector('[name=cursorTrailDurationValue]').addEventListener('keydown', event => {
+  if (event.key === 'Enter') { event.preventDefault(); event.currentTarget.blur(); }
+});
 
 function render() {
   if (!snapshot) return;
   const { settings, appearance = {} } = snapshot;
-  for (const [key, input] of controls) input.checked = key === 'cat' || key === 'glasses' ? Boolean(appearance[key]) : Boolean(settings[key]);
-  for (const [key, { slider, number, factor }] of rangeControls) {
-    const value = Number.isFinite(settings[key]) ? settings[key] * factor : factor;
+  for (const [key, input] of controls) input.checked = key === 'cat' || key === 'glasses' ? Boolean(appearance[key])
+    : key === 'interactionsEnabled' || key === 'cursorTrailEnabled' ? settings[key] !== false : Boolean(settings[key]);
+  for (const [key, { slider, number, factor, defaultValue }] of rangeControls) {
+    const value = Number.isFinite(settings[key]) ? settings[key] * factor : defaultValue * factor;
     if (document.activeElement !== slider) slider.value = format(value);
     if (document.activeElement !== number && document.activeElement !== slider) number.value = format(value);
   }
@@ -124,6 +137,8 @@ function render() {
   if (document.activeElement !== size) size.value = format(settings.scale * 100);
   for (const button of document.querySelectorAll('[data-scale]')) button.setAttribute('aria-pressed', String(Math.abs(settings.scale - Number(button.dataset.scale)) < 1e-10));
   for (const radio of document.querySelectorAll('[name=taskbarInFront]')) radio.checked = settings.taskbarInFront === (radio.value === 'true');
+  const trailStyle = trailStyles.includes(settings.cursorTrailStyle) ? settings.cursorTrailStyle : 'pink';
+  for (const radio of document.querySelectorAll('[name=cursorTrailStyle]')) radio.checked = radio.value === trailStyle;
   document.querySelector('#taskbar-fieldset').disabled = !settings.alwaysOnTop;
   document.querySelector('#taskbar-hint').textContent = settings.alwaysOnTop ? '决定人物与任务栏重叠时的前后顺序。' : '开启“始终置顶”后可以选择。';
 }
@@ -133,6 +148,9 @@ document.querySelector('#neutral-face').addEventListener('click', () => {
 });
 document.querySelector('[data-action=reset]').addEventListener('click', () => void appearanceAction({ type: 'reset' }));
 for (const radio of document.querySelectorAll('[name=taskbarInFront]')) radio.addEventListener('change', () => { if (radio.checked) void patch('taskbarInFront', radio.value === 'true'); });
+for (const radio of document.querySelectorAll('[name=cursorTrailStyle]')) radio.addEventListener('change', () => {
+  if (radio.checked && trailStyles.includes(radio.value)) void patch('cursorTrailStyle', radio.value);
+});
 for (const button of document.querySelectorAll('[data-recover]')) button.addEventListener('click', () => void command(() => desktop.recover(button.dataset.recover === 'true')));
 for (const button of document.querySelectorAll('[data-scale]')) button.addEventListener('click', () => void command(() => desktop.resize(Number(button.dataset.scale))));
 for (const button of document.querySelectorAll('[data-resize-factor]')) button.addEventListener('click', () => void command(() => desktop.resize(snapshot.settings.scale * Number(button.dataset.resizeFactor))));

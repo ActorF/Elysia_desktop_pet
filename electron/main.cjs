@@ -1,6 +1,6 @@
 // Independent transparent Electron host. Character animation lives entirely in the local renderer.
 'use strict';
-const { app, BrowserWindow, Menu, Tray, nativeImage, screen, ipcMain, globalShortcut, session } = require('electron');
+const { app, BrowserWindow, Menu, Tray, nativeImage, screen, ipcMain, globalShortcut, session, powerMonitor } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
@@ -17,17 +17,26 @@ const {createViewportChannel}=require('./viewport-channel.cjs');
 const {createTypedKeyListener}=require('./typed-key-listener.cjs');
 const {createSettingsWindow}=require('./settings-window.cjs');
 const {settingsAction,isSettingsSender}=require('./settings-policy.cjs');
+const {createVoiceController}=require('./voice-controller.cjs');
+const {createCursorTrail}=require('./cursor-trail.cjs');
+const {migrateSampleProfile}=require('./profile-migration.cjs');
 
 const root = path.resolve(__dirname, '..');
 const rendererUrl = pathToFileURL(path.join(root, 'renderer', 'index.html')).href;
 const smokeNativeHotkeys = process.argv.includes('--smoke-native-hotkeys');
-const isSmokeTest = process.argv.includes('--smoke-test') || smokeNativeHotkeys;
+const isVoiceSmoke = process.argv.includes('--voice-smoke-test');
+const isInteractionSmoke = process.argv.includes('--interaction-smoke-test');
+const isSmokeTest = process.argv.includes('--smoke-test') || smokeNativeHotkeys || isVoiceSmoke || isInteractionSmoke;
+if (isSmokeTest) app.commandLine.appendSwitch('mute-audio');
+const voiceTestHooks = isSmokeTest ? {} : undefined;
 // Keep production preferences across upgrades; smoke tests use an isolated profile.
 app.setName('爱莉希雅桌宠');
 app.setAppUserModelId('io.actorf.elysia.standalonepet');
+if (!isSmokeTest) migrateSampleProfile(app.getPath('appData'));
 app.setPath('userData', isSmokeTest
-  ? path.join(app.getPath('temp'), 'elysia-pet-host-smoke')
+  ? path.join(app.getPath('temp'), isVoiceSmoke ? 'elysia-pet-voice-smoke' : isInteractionSmoke ? 'elysia-pet-interaction-smoke' : 'elysia-pet-host-smoke')
   : path.join(app.getPath('appData'), 'Elysia Desktop Pet'));
+let voices, cursorTrail;
 let pet, tray, settingsWindow, settingsFile, pointerTimer, saveTimer, desktopPointer, dragLifecycle, topmost, windowShape, legacyProcess, typingListener;
 let preferences = { ...DEFAULT_SETTINGS };
 let appearance = sanitizeAppearance();
@@ -47,7 +56,15 @@ function action(typeOrAction) { send('pet:action', typeof typeOrAction === 'stri
 function pollPointer(dragging=false) {
   clearInterval(pointerTimer);
   if(quitting||!pet||pet.isDestroyed())return;
-  pointerTimer=setInterval(()=>{if(pet&&!pet.isDestroyed())desktopPointer.sample();},dragging?DRAG_INTERVAL_MS:POINTER_INTERVAL_MS);
+  // Capture turns between display frames; the trail still batches IPC at 16ms.
+  const interval=dragging?DRAG_INTERVAL_MS:preferences.cursorTrailEnabled?8:POINTER_INTERVAL_MS;
+  pointerTimer=setInterval(()=>{
+    if(pet&&!pet.isDestroyed()) {
+      const point=screen.getCursorScreenPoint();
+      desktopPointer.sample(point);
+      if(!isSmokeTest)cursorTrail?.sample({...point,sampledAt:Date.now()});
+    }
+  },interval);
 }
 function placePet(position) {
   // Keep the configured DIP size. Recycling getBounds() through setPosition()
@@ -72,6 +89,7 @@ function placePet(position) {
   viewport=viewportSnapshot(characterBounds,content,planned.clipped);
   if(!previous||['width','height','characterX','characterY','characterWidth','characterHeight','clipped'].some(key=>previous[key]!==viewport[key]))viewportChannel.publish(viewport);
   applyHitRegion();
+  voices?.reposition();
 }
 function saveSettings() {
   clearTimeout(saveTimer);
@@ -122,8 +140,16 @@ function updateSettings(patch, anchor) {
   if (preferences.legacyHotkeys !== previous.legacyHotkeys) configureLegacyHotkeys();
   if (preferences.alternateHotkeys !== previous.alternateHotkeys) configureAlternateHotkeys();
   if (preferences.keyDisplay !== previous.keyDisplay) configureTypedKeys();
+  if (preferences.interactionsEnabled !== previous.interactionsEnabled) voices?.preferencesChanged();
+  if (preferences.cursorTrailEnabled !== previous.cursorTrailEnabled) {
+    cursorTrail?.setEnabled(preferences.cursorTrailEnabled);
+    if (desktopPointer) pollPointer(desktopPointer.dragging);
+  }
+  if (preferences.cursorTrailStyle !== previous.cursorTrailStyle) cursorTrail?.setStyle(preferences.cursorTrailStyle);
+  if (preferences.cursorTrailDuration !== previous.cursorTrailDuration) cursorTrail?.setDuration(preferences.cursorTrailDuration);
   saveSettings();
   publishSettings();
+  voices?.reposition();
   return state();
 }
 
@@ -224,7 +250,7 @@ function configureAlternateHotkeys() {
 }
 
 function buildMenu() {
-  return Menu.buildFromTemplate(trayTemplate({openSettings:()=>settingsWindow.open().catch(error=>console.error('Could not open settings:',error)),quit:()=>app.quit()}));
+  return Menu.buildFromTemplate(trayTemplate({openSettings:()=>settingsWindow.open().catch(error=>console.error('Could not open settings:',error)),quit:()=>voices?voices.requestQuit():app.quit()}));
 }
 
 function registerIpc() {
@@ -232,6 +258,7 @@ function registerIpc() {
   ipcMain.handle('pet:get-state', (event) => trusted(event) ? state() : null);
   ipcMain.handle('pet:set-settings', (event, patch) => trusted(event) ? updateSettings(patch) : null);
   ipcMain.handle('pet:zoom-by', (event, input) => trusted(event) ? zoomPet(input) : null);
+  ipcMain.handle('pet:interact', (event, kind) => trusted(event) ? voices?.interact(kind) : false);
   ipcMain.handle('pet:set-hit-region', (event, region) => {
     if(!trusted(event))return false;
     if(region?.space==='character'){
@@ -250,8 +277,11 @@ function registerIpc() {
   });
   ipcMain.on('pet:drag-start', (event) => { if (trusted(event) && (preferences.clickThrough||!dragLifecycle?.startDrag())) send('pet:drag-state',false); });
   ipcMain.on('pet:drag-end', (event) => { if (trusted(event)) dragLifecycle?.endDrag(); });
-  ipcMain.on('pet:quit', (event) => { if (trusted(event)) app.quit(); });
+  ipcMain.on('pet:quit', (event) => { if (trusted(event)) voices ? voices.requestQuit() : app.quit(); });
   const trustedSettings = event => isSettingsSender(event, settingsWindow?.getWindow(), settingsWindow?.url);
+  ipcMain.handle('settings:voice-get', event => trustedSettings(event) ? voices?.getState() : null);
+  ipcMain.handle('settings:voice-settings', (event, patch) => trustedSettings(event) ? voices?.setSettings(patch) : null);
+  ipcMain.handle('settings:voice-stop', event => trustedSettings(event) ? voices?.stopVoice() : null);
   ipcMain.on('settings:window-control', (event, value) => {
     if (trustedSettings(event)) settingsWindow.windowControl(value);
   });
@@ -305,6 +335,8 @@ async function createWindow() {
   pet.webContents.on('did-finish-load',()=>{desktopPointer?.reset();viewportChannel.reset();});
   pet.setMenu(null);
   pet.on('page-title-updated', event => event.preventDefault());
+  pet.on('query-session-end', () => { voices?.dispose();cursorTrail?.dispose(); });
+  pet.on('session-end', () => app.quit());
   pet.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   pet.webContents.on('will-navigate', (event, url) => { if (url !== rendererUrl) event.preventDefault(); });
   pet.webContents.on('will-attach-webview', (event) => event.preventDefault());
@@ -316,8 +348,20 @@ async function createWindow() {
   pet.once('ready-to-show', () => { if (!isSmokeTest) pet.showInactive(); });
   await pet.loadURL(rendererUrl);
   pollPointer();
+  voices?.start();
   if (isSmokeTest) {
     await pet.webContents.executeJavaScript(`new Promise((resolve,reject)=>{const deadline=Date.now()+15000;const timer=setInterval(()=>{if(document.documentElement.dataset.ready==='true'){clearInterval(timer);resolve(true)}else if(Date.now()>deadline){clearInterval(timer);reject(new Error('Renderer did not become ready'))}},50)})`);
+    if (isVoiceSmoke) {
+      const report = await require('./voice-smoke.cjs').checkVoiceRuntime({ voices, voiceTestHooks, settingsWindow, pet, screen, placePet, root, ipcMain });
+      console.log(JSON.stringify({ voiceSmoke: 'ok', ...report }));
+      app.quit(); return;
+    }
+    if (isInteractionSmoke) {
+      const report = await require('./interaction-smoke.cjs').checkInteractionSettings({ pet, voices, voiceTestHooks, cursorTrail, settingsWindow,
+        screen, root, getState:state, updateSettings, settingsFile, buildMenu, action, ipcMain });
+      console.log(JSON.stringify({ interactionSmoke: 'ok', ...report }));
+      app.quit(); return;
+    }
     if (smokeNativeHotkeys) {
       const deadline = Date.now() + 10000;
       while (!hotkeys.legacy.active && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 50));
@@ -360,14 +404,32 @@ else {
     settingsFile = path.join(app.getPath('userData'), 'settings.json');
     loadSettings();
     settingsWindow=createSettingsWindow({BrowserWindow,screen,root,isSmokeTest,isPackaged:app.isPackaged,getState:state});
+    voices = createVoiceController({ BrowserWindow, screen, ipcMain, powerMonitor, root,
+      assetDirectory: app.isPackaged ? path.join(process.resourcesPath, 'voice') : undefined,
+      interactionAssetDirectory: app.isPackaged ? path.join(process.resourcesPath, 'interaction-voice') : undefined,
+      userData: app.getPath('userData'), getCharacterBounds: () => characterBounds,
+      getPreferences: () => preferences, isSmokeTest, isPackaged: app.isPackaged, quit: () => app.quit(), testHooks: voiceTestHooks,
+      publish: snapshot => {
+        const environment = snapshot.environment;
+        cursorTrail?.setBlocked(environment.locked || environment.suspended || environment.fullscreen || environment.monitorReady === false);
+        const panel = settingsWindow?.getWindow();
+        if (panel && !panel.webContents.isDestroyed()) panel.webContents.send('settings:voice-state', snapshot);
+      },
+    });
+    cursorTrail = createCursorTrail({ BrowserWindow, screen, root, isSmokeTest, isPackaged: app.isPackaged });
+    cursorTrail.setStyle(preferences.cursorTrailStyle);
+    cursorTrail.setDuration(preferences.cursorTrailDuration);
+    cursorTrail.setEnabled(preferences.cursorTrailEnabled);
+    const environment = voices.getState().environment;
+    cursorTrail.setBlocked(environment.locked || environment.suspended || environment.fullscreen || environment.monitorReady === false);
     session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
     session.defaultSession.setPermissionCheckHandler(() => false);
     session.defaultSession.webRequest.onBeforeRequest((details, callback) => {
-      callback({ cancel: !isLocalResource(details.url, root) && !details.url.startsWith('data:') && !details.url.startsWith('blob:') });
+      callback({ cancel: !isLocalResource(details.url, root) && !voices?.allowsUrl(details.url) && !details.url.startsWith('data:') && !details.url.startsWith('blob:') });
     });
     registerIpc();
     tray = new Tray(createTrayImage(nativeImage));
-    tray.setToolTip('爱莉希雅桌宠 · Ctrl+Alt+P 恢复操作');
+    tray.setToolTip(`爱莉希雅桌宠 ${app.getVersion()} · Ctrl+Alt+P 恢复操作`);
     tray.on('click', () => tray.popUpContextMenu(buildMenu()));
     tray.on('right-click', () => tray.popUpContextMenu(buildMenu()));
     hotkeys.recovery = globalShortcut.register('CommandOrControl+Alt+P', () => recover());
@@ -382,6 +444,8 @@ else {
 }
 app.on('before-quit', () => {
   quitting = true;
+  voices?.dispose();
+  cursorTrail?.dispose();
   settingsWindow?.dispose();
   clearInterval(pointerTimer);
   dragLifecycle?.dispose();

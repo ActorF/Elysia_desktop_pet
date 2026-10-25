@@ -1,0 +1,190 @@
+{
+  "revision": "1.3.0-confirmed",
+  "status": "confirmed",
+  "confirmedBy": "user",
+  "confirmedAt": "2026-10-25",
+  "confirmedCount": 18,
+  "audioProcessing": "none; copied byte-for-byte from the eighteen user-approved audition clips",
+  "lines": [
+    {
+      "id": "H01",
+      "groupId": "head-pat",
+      "text": "嗯，轻轻的就好啦。",
+      "currentPath": "audio-final/H01.wav",
+      "currentSha256": "7687394657ba4e42ccf3e91588a94c8c9e4e4292b2fb3ff3ac1fb7400fde6519",
+      "originalSha256": "7687394657ba4e42ccf3e91588a94c8c9e4e4292b2fb3ff3ac1fb7400fde6519",
+      "durationSeconds": 2.65,
+      "status": "confirmed"
+    },
+    {
+      "id": "H02",
+      "groupId": "head-pat",
+      "text": "今天的发型也很漂亮，对不对？",
+      "currentPath": "audio-final/H02.wav",
+      "currentSha256": "f36062c29ce1610dc7142e24139a049f5b366c06de75cd3dc23f1539fbd7b673",
+      "originalSha256": "f36062c29ce1610dc7142e24139a049f5b366c06de75cd3dc23f1539fbd7b673",
+      "durationSeconds": 2.49,
+      "status": "confirmed"
+    },
+    {
+      "id": "H03",
+      "groupId": "head-pat",
+      "text": "好啦，再摸下去，刘海可要翘起来了。",
+      "currentPath": "audio-final/H03.wav",
+      "currentSha256": "093199d416fadfad954a75bccfe6c5f0869bc28a14a599bbcfc6241017caf140",
+      "originalSha256": "093199d416fadfad954a75bccfe6c5f0869bc28a14a599bbcfc6241017caf140",
+      "durationSeconds": 3.97,
+      "status": "confirmed"
+    },
+    {
+      "id": "H04",
+      "groupId": "head-pat",
+      "text": "这个力道刚刚好，我就再享受一会儿。",
+      "currentPath": "audio-final/H04.wav",
+      "currentSha256": "7adbb1118f3652dac51562f4a333a6ee937ba3984b06c14b8cc4106462174b03",
+      "originalSha256": "7adbb1118f3652dac51562f4a333a6ee937ba3984b06c14b8cc4106462174b03",
+      "durationSeconds": 3.13,
+      "status": "confirmed"
+    },
+    {
+      "id": "H05",
+      "groupId": "head-pat",
+      "text": "这么温柔，是在给我加油打气吗？",
+      "currentPath": "audio-final/H05.wav",
+      "currentSha256": "dcf3fac60bd222ea84823313b36b64f005bd9040a980221b6b308ae8a2c3e342",
+      "originalSha256": "dcf3fac60bd222ea84823313b36b64f005bd9040a980221b6b308ae8a2c3e342",
+      "durationSeconds": 3.49,
+      "status": "confirmed"
+    },
+    {
+      "id": "H06",
+      "groupId": "head-pat",
+      "text": "被你这么一摸，心情也跟着变好了。",
+      "currentPath": "audio-final/H06.wav",
+      "currentSha256": "65afe568096a57b225526f5a77cdecc35643ee3aa947bafbd40a3ecb8fb4044d",
+      "originalSha256": "65afe568096a57b225526f5a77cdecc35643ee3aa947bafbd40a3ecb8fb4044d",
+      "durationSeconds": 3.09,
+      "status": "confirmed"
+    },
+    {
+      "id": "P01",
+      "groupId": "poke",
+      "text": "嗯？是在叫我吗？",
+      "currentPath": "audio-final/P01.wav",
+      "currentSha256": "d810c7b6b11f6204cda80959b0c971ea232a4470a8df106eafb3e430557a224b",
+      "originalSha256": "d810c7b6b11f6204cda80959b0c971ea232a4470a8df106eafb3e430557a224b",
+      "durationSeconds": 2.17,
+      "status": "confirmed"
+    },
+    {
+      "id": "P02",
+      "groupId": "poke",
+      "text": "我听着呢，有什么新鲜事想告诉我？",
+      "currentPath": "audio-final/P02.wav",
+      "currentSha256": "3f790bd87db69ef4f6394b004673e914882fb7981c0884f0100d6442bf2db181",
+      "originalSha256": "3f790bd87db69ef4f6394b004673e914882fb7981c0884f0100d6442bf2db181",
+      "durationSeconds": 2.81,
+      "status": "confirmed"
+    },
+    {
+      "id": "P03",
+      "groupId": "poke",
+      "text": "哎呀，被你发现我在偷偷发呆啦。",
+      "currentPath": "audio-final/P03.wav",
+      "currentSha256": "26ded0f5dd9dac41e07228f568db15d1acc9cd2e43f445f8ec5cda9e66708068",
+      "originalSha256": "26ded0f5dd9dac41e07228f568db15d1acc9cd2e43f445f8ec5cda9e66708068",
+      "durationSeconds": 3.21,
+      "status": "confirmed"
+    },
+    {
+      "id": "P04",
+      "groupId": "poke",
+      "text": "来得正好，陪我歇一小会儿吧。",
+      "currentPath": "audio-final/P04.wav",
+      "currentSha256": "a29f89688d1f10e61a6ffa8cb006db93470d44249495c4dea81ad4eddb8a2589",
+      "originalSha256": "a29f89688d1f10e61a6ffa8cb006db93470d44249495c4dea81ad4eddb8a2589",
+      "durationSeconds": 3.25,
+      "status": "confirmed"
+    },
+    {
+      "id": "P05",
+      "groupId": "poke",
+      "text": "不用着急，我已经看见你啦。",
+      "currentPath": "audio-final/P05.wav",
+      "currentSha256": "aa496c47e9f36d5326c2ced8483a14a8cb333509e95ac8bb2a9728d775b92415",
+      "originalSha256": "aa496c47e9f36d5326c2ced8483a14a8cb333509e95ac8bb2a9728d775b92415",
+      "durationSeconds": 2.41,
+      "status": "confirmed"
+    },
+    {
+      "id": "P06",
+      "groupId": "poke",
+      "text": "这一下，就当是我们打过招呼啦。",
+      "currentPath": "audio-final/P06.wav",
+      "currentSha256": "306f5a3230416f4d9728884efd3dcf357df1e41371ad2450dc5fc2983201071d",
+      "originalSha256": "306f5a3230416f4d9728884efd3dcf357df1e41371ad2450dc5fc2983201071d",
+      "durationSeconds": 3.65,
+      "status": "confirmed"
+    },
+    {
+      "id": "A01",
+      "groupId": "poke-annoyed",
+      "text": "再戳下去，我可要假装生气啦。",
+      "currentPath": "audio-final/A01.wav",
+      "currentSha256": "555704f1aa749e022a007d615e27d26d5eabd5a29d8456381e91b095b61a7704",
+      "originalSha256": "555704f1aa749e022a007d615e27d26d5eabd5a29d8456381e91b095b61a7704",
+      "durationSeconds": 3.09,
+      "status": "confirmed"
+    },
+    {
+      "id": "A02",
+      "groupId": "poke-annoyed",
+      "text": "小恶作剧被发现了，还想再来一下吗？",
+      "currentPath": "audio-final/A02.wav",
+      "currentSha256": "674ba20037d6ee37700e8dba12198cb27f926bcc32d951e812337d24eeb4d282",
+      "originalSha256": "674ba20037d6ee37700e8dba12198cb27f926bcc32d951e812337d24eeb4d282",
+      "durationSeconds": 3.49,
+      "status": "confirmed"
+    },
+    {
+      "id": "A03",
+      "groupId": "poke-annoyed",
+      "text": "看来你很想看我鼓起脸颊的样子嘛。",
+      "currentPath": "audio-final/A03.wav",
+      "currentSha256": "a12ef45577adb540d5b56f2c40313707f88556524341b7c0da70983898ba3ad2",
+      "originalSha256": "a12ef45577adb540d5b56f2c40313707f88556524341b7c0da70983898ba3ad2",
+      "durationSeconds": 3.09,
+      "status": "confirmed"
+    },
+    {
+      "id": "A04",
+      "groupId": "poke-annoyed",
+      "text": "等一下，让我摆好生气的表情。",
+      "currentPath": "audio-final/A04.wav",
+      "currentSha256": "c93c562dadcfa81fa9a58f8d0fe8b620c53af90972bf0af6cc7356bef0c9fb27",
+      "originalSha256": "c93c562dadcfa81fa9a58f8d0fe8b620c53af90972bf0af6cc7356bef0c9fb27",
+      "durationSeconds": 2.97,
+      "status": "confirmed"
+    },
+    {
+      "id": "A05",
+      "groupId": "poke-annoyed",
+      "text": "今天有点调皮哦，用一个笑容补偿吧。",
+      "currentPath": "audio-final/A05.wav",
+      "currentSha256": "14697b9f4f3970a8e9480f0ccb0593330226dc921a9df2809282877fad57dcab",
+      "originalSha256": "14697b9f4f3970a8e9480f0ccb0593330226dc921a9df2809282877fad57dcab",
+      "durationSeconds": 3.37,
+      "status": "confirmed"
+    },
+    {
+      "id": "A06",
+      "groupId": "poke-annoyed",
+      "text": "好啦，休战一小会儿，我们再继续。",
+      "currentPath": "audio-final/A06.wav",
+      "currentSha256": "5946be1d10eea5aaf224e609a6939752d98d4d3b55a5d3ac4d1b65460ae18632",
+      "originalSha256": "5946be1d10eea5aaf224e609a6939752d98d4d3b55a5d3ac4d1b65460ae18632",
+      "durationSeconds": 3.61,
+      "status": "confirmed"
+    }
+  ]
+}

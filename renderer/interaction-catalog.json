@@ -1,0 +1,20 @@
+[
+  {"id":"H01","groupId":"head-pat","text":"嗯，轻轻的就好啦。"},
+  {"id":"H02","groupId":"head-pat","text":"今天的发型也很漂亮，对不对？"},
+  {"id":"H03","groupId":"head-pat","text":"好啦，再摸下去，刘海可要翘起来了。"},
+  {"id":"H04","groupId":"head-pat","text":"这个力道刚刚好，我就再享受一会儿。"},
+  {"id":"H05","groupId":"head-pat","text":"这么温柔，是在给我加油打气吗？"},
+  {"id":"H06","groupId":"head-pat","text":"被你这么一摸，心情也跟着变好了。"},
+  {"id":"P01","groupId":"poke","text":"嗯？是在叫我吗？"},
+  {"id":"P02","groupId":"poke","text":"我听着呢，有什么新鲜事想告诉我？"},
+  {"id":"P03","groupId":"poke","text":"哎呀，被你发现我在偷偷发呆啦。"},
+  {"id":"P04","groupId":"poke","text":"来得正好，陪我歇一小会儿吧。"},
+  {"id":"P05","groupId":"poke","text":"不用着急，我已经看见你啦。"},
+  {"id":"P06","groupId":"poke","text":"这一下，就当是我们打过招呼啦。"},
+  {"id":"A01","groupId":"poke-annoyed","text":"再戳下去，我可要假装生气啦。"},
+  {"id":"A02","groupId":"poke-annoyed","text":"小恶作剧被发现了，还想再来一下吗？"},
+  {"id":"A03","groupId":"poke-annoyed","text":"看来你很想看我鼓起脸颊的样子嘛。"},
+  {"id":"A04","groupId":"poke-annoyed","text":"等一下，让我摆好生气的表情。"},
+  {"id":"A05","groupId":"poke-annoyed","text":"今天有点调皮哦，用一个笑容补偿吧。"},
+  {"id":"A06","groupId":"poke-annoyed","text":"好啦，休战一小会儿，我们再继续。"}
+]

@@ -5,7 +5,7 @@
 <p align="center"><a href="README.md">简体中文</a> · <strong>English</strong></p>
 <p align="center"><a href="#download">Download</a> · <a href="#character-gallery">Gallery</a> · <a href="#usage">Usage</a> · <a href="#run-from-source">Run from source</a></p>
 
-A chibi Elysia companion for Windows, with a transparent full-body character, mouse-following eyes, and gentle motion. Mix expressions, cat mode, glasses, and four actions, with little clouds that respond to your typing.
+A chibi Elysia companion for Windows, with a transparent full-body character, mouse-following eyes, and gentle motion. Mix expressions, cat mode, glasses, and four actions, with little clouds that respond to your typing. Version 1.3.0 adds daily voice lines, click interactions, speech bubbles, and three cursor trails.
 
 ## Download
 
@@ -13,7 +13,7 @@ A chibi Elysia companion for Windows, with a transparent full-body character, mo
 
 [Release notes](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.2.0) · [SHA256 checksum](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.2.0/Elysia_desktop_pet-1.2.0.exe.sha256)
 
-**New in 1.2.0:** a separate settings window, adjustable sway amplitude and speed, adjustable eye-follow strength, and a choice of keeping the taskbar or pet in front. See the [1.2.0 changes](docs/releases/v1.2.0.md).
+**The latest published portable download is 1.2.0; this repository's source is now 1.3.0.** Version 1.3.0 adds 36 daily voice lines, 18 interaction voice lines, speech bubbles of up to two lines, and three cursor trails with adjustable duration. Use the [source and build instructions](#run-from-source) below. See the [1.3.0 changes](docs/releases/v1.3.0.md) or the historical [1.2.0 notes](docs/releases/v1.2.0.md).
 
 Download and double-click the EXE to run; no Node.js installation is needed. Before upgrading, quit the old version from the tray. Version 1.2.0 keeps your position, size, outfit switches, and preferences without manual migration.
 
@@ -71,6 +71,7 @@ A pale pink-and-white cloud shows a single character above her hand during Idle,
 | Control | What it does |
 | --- | --- |
 | Hold the left mouse button on the character and drag | Move her freely, including partly beyond any edge of the screen |
+| Left-click her head or body | Pat her head or poke her; the fifth click across both areas within three seconds triggers an annoyed response |
 | Hold the right mouse button on the character and scroll | Scroll up to enlarge or down to shrink; starts at 1% with no fixed upper size limit |
 | Click or right-click the system tray icon | Open a menu with just Settings (`设置`) and Quit (`退出`) |
 | Choose Settings (`设置`) | Open a separate settings window while the pet stays visible |
@@ -82,9 +83,11 @@ Transparent space around the character lets clicks pass through to the windows b
 
 The new tray icon is a pink emblem on a transparent background. Position, size, and preferences are saved automatically.
 
+Version 1.3.0 stores release preferences in `%APPDATA%/Elysia Desktop Pet/` and keeps existing settings and position. If a local 1.3 sample was used previously, missing new options and voice history are imported from its profile without replacing values already present in the release profile.
+
 ### Settings window
 
-**Version 1.2.0 adds a separate settings window.** Settings and the pet stay on screen together, and you can move or resize the window independently. Drag its empty header area to move it. The three standard icons at the top right minimize, maximize/restore, and close the window. Closing Settings leaves the pet running.
+Settings and the pet stay on screen together, and you can move or resize the window independently. Drag its empty header area to move it. The three standard icons at the top right minimize, maximize/restore, and close the window. Closing Settings leaves the pet running. Version 1.3.0 has five tabs: **Appearance, Animation, Desktop, Interaction, and Voice**.
 
 <table>
   <tr><th>Appearance</th><th>Animation</th><th>Desktop</th></tr>
@@ -95,11 +98,21 @@ The new tray icon is a pink emblem on a transparent background. Position, size, 
   </tr>
 </table>
 
+<table>
+  <tr><th>Interaction</th><th>Voice</th></tr>
+  <tr>
+    <td><a href="docs/media/settings-interaction.png"><img src="docs/media/settings-interaction.png" width="420" alt="Interaction settings: click responses, cursor styles, and trail duration"></a></td>
+    <td><a href="docs/media/settings-voice.png"><img src="docs/media/settings-voice.png" width="420" alt="Voice settings: automatic greetings, Do not disturb, volume, birthday, and playback status"></a></td>
+  </tr>
+</table>
+
 Click a screenshot to view it at full size. The app currently uses Chinese labels.
 
 - **Appearance (`外观`):** choose expressions, cat mode, glasses, and one of four actions. Keyboard shortcuts also update the window.
 - **Animation (`动画`):** toggle eye tracking, sway, and key clouds. Adjust the parameters below with sliders or number fields, or restore their defaults.
 - **Desktop (`桌面`):** change character size, always-on-top behavior, taskbar order, click-through, and shortcuts. Enter a size percentage starting at 1%, with no fixed upper size limit.
+- **Interaction (`互动`):** toggle click responses and cursor trails independently, and choose the trail style and duration.
+- **Voice (`语音`):** control automatic greetings, Do not disturb, volume, and birthday month/day, and view playback status. The release UI has no sample audition or simulated-trigger tools.
 
 | Animation parameter | Range | Default |
 | --- | --- | --- |
@@ -110,6 +123,36 @@ Click a screenshot to view it at full size. The app currently uses Chinese label
 Eye tracking keeps the original effect at its default strength: 0% removes the deformation, while 200% strengthens it. The upper and lower parts sway in the same direction; 0% amplitude stops the sway. Turning either feature off and back on keeps its values.
 
 Enable Always on top (`始终置顶`) to choose Taskbar in front (`任务栏在前`) or Pet in front (`桌宠在前`); Pet in front is the default. Settings remains usable while the pet is in click-through mode, and the buttons at the bottom can bring her back at any time.
+
+### Daily voices and speech bubbles
+
+**36 daily voice lines** cover 12 situations, including morning/evening greetings, mealtimes, returning to the computer, breaks, weekends, birthdays, and saying goodbye. Each group has three alternatives, played one at a time according to local time and activity. Automatic greetings are at least 20 minutes apart and limited to six per day; birthday greetings and deliberate exits are counted separately. Locking, sleep, fullscreen apps, and Do not disturb pause automatic greetings; missed occasions are not replayed later. See the [release notes](docs/releases/v1.3.0.md) for the conditions.
+
+Speech appears in a **white bubble with a pink border**, showing the complete text in at most two lines. Its size follows the sentence length. The bubble appears to her left when she is in the right half of the current display, and to her right when she is in the left half. It follows dragging and resizing, and remains for about 1.2 seconds after the recording ends.
+
+Use the Voice tab to adjust volume, enable Do not disturb, or save a birthday month and day locally; no year is required. Quitting from the tray may play a goodbye first. Choose Quit again to skip it; closing Settings does not trigger a goodbye.
+
+### Head pats and pokes
+
+With **Click interactions (`点击互动`)** enabled, left-click her head or fringe for a head pat and a blush, or click her body for a poke and a surprised expression. **Head and body clicks share a counter: the fifth click within three seconds triggers an annoyed response**, followed by a three-second cooldown. Dragging and right-button scrolling do not count as clicks. No held-button stroking gesture is needed.
+
+Each interaction has six alternatives, for **18 interaction voice lines** in total. Rapid clicks are combined; a voice already playing can finish, and at most one annoyed response waits behind it. Expired responses are discarded. Daily and interaction voices share playback control so recordings do not overlap. Temporary expressions restore the previous expression when finished.
+
+Click interactions and automatic daily greetings have separate controls. Turning click interactions off clears their current audio, captions, and pending response, while dragging, resizing, and daily greetings remain available. With Do not disturb enabled or volume set to zero, clicks still produce expressions and text.
+
+### Cursor trails
+
+Enable **Cursor trail (`鼠标流光`)** in the Interaction tab to leave a trail while moving the mouse across the desktop. Cursor trails and click interactions are independent and enabled by default. The overlay lets clicks through and does not take keyboard focus.
+
+| Style | Appearance |
+| --- | --- |
+| Pink glow (`粉色流光`) | The default fine pink line |
+| Purple-pink ribbon (`紫粉绸光`) | A thick purple head fading along the path into a thin rose-pink tail |
+| Stardust (`星尘尾迹`) | Small sparkles with short light strands |
+
+**Trail duration accepts decimal values from 0.1 to 5 seconds; the default is 0.6 seconds.** Enter a value such as `1.3` or `2.5`, or use the slider in 0.1-second steps. Default (`默认`) restores 0.6 seconds. You can choose a style and duration while the trail is off. Changing either value or turning the trail off immediately clears the old trail, and preferences are saved automatically.
+
+Fast flicks, circles, and multiple displays are supported. Crossing displays or returning from lock/sleep starts a new path instead of connecting to an old point on another display or before the interruption.
 
 ### Key cloud behavior
 
@@ -165,20 +208,24 @@ npm run test:visual
 npm run test:faces
 npm run test:zoom
 npm run test:settings
+npm run test:voice
+npm run test:interactions
+npm run test:interaction-settings
 npm run make:portable
 node scripts/verify-package.cjs
 ```
 
-The build creates `release/Elysia_desktop_pet-1.2.0.exe`. Use `npm run package` for an unpacked application directory. See the [verification guide](docs/verification.md) for additional checks; the guide is currently in Chinese.
+The build creates `release/Elysia_desktop_pet-1.3.0.exe`. Use `npm run package` for an unpacked application directory. See the [verification guide](docs/verification.md) for additional checks; the guide is currently in Chinese.
 
 ## Project structure
 
 | Path | Contents |
 | --- | --- |
-| `electron/` | Transparent pet window, independent settings window, system tray, global shortcuts, key display input, dragging, resizing, and saved settings |
-| `renderer/` | Character drawing, expressions and actions, eye tracking, motion, key cloud effects, and settings UI |
+| `electron/` | Pet, settings, speech and trail windows; voice scheduling, system tray, global shortcuts, dragging, resizing, and saved settings |
+| `renderer/` | Character drawing, expressions, actions, click interactions, captions, cursor trails, and settings UI |
 | `assets/character/` | Character artwork required by the app |
 | `assets/ui/` | System tray icon |
+| `assets/voice/`, `assets/interaction-voice/` | 36 daily recordings, 18 interaction recordings, and checksum manifests |
 | `scripts/` | Launch, package verification, and preview tools |
 | `tests/` | Automated tests |
 | `docs/` | Character previews, release notes, and verification documentation |
@@ -189,4 +236,4 @@ The app uses an Electron transparent window, composited PNG artwork, and WebGL m
 
 ## License & credits
 
-Code uses the [MIT License](LICENSE). Elysia, *Honkai Impact 3rd*, and related characters and brands belong to miHoYo / HoYoverse and their rights holders; CoCo Fresh Tea & Juice belongs to its rights holders. This is an unofficial fan project, and the code license does not grant rights to these characters or brands. See the [asset notice](ASSET-NOTICE.md).
+Code uses the [MIT License](LICENSE). Elysia, *Honkai Impact 3rd*, and related characters and brands belong to miHoYo / HoYoverse and their rights holders; CoCo Fresh Tea & Juice belongs to its rights holders. This is an unofficial fan project. Its synthesized recordings are not official game audio, and the code license does not grant character, brand, or related voice rights. See the [asset notice](ASSET-NOTICE.md).

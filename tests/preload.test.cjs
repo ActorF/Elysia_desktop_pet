@@ -58,4 +58,8 @@ test('preload keeps event metadata private and removes subscriptions cleanly', (
   stopTyped(); assert.equal(listeners.has('pet:typed-key'),false);
   const region={width:420,height:560,rects:[{x:20,y:30,width:40,height:50}]};
   bridge.setHitRegion(region);assert.deepEqual(invocations.at(-1),['pet:set-hit-region',region]);
+  bridge.interact('head-pat'); assert.deepEqual(invocations.at(-1), ['pet:interact','head-pat']);
+  const beforeInvalid = invocations.length;
+  bridge.interact({text:'arbitrary content'}); bridge.interact('not-an-interaction');
+  assert.equal(invocations.length, beforeInvalid, 'Interaction bridge accepts only three named actions');
 });

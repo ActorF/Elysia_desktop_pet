@@ -50,6 +50,58 @@ test('taskbar preference defaults behind the pet and survives unrelated changes 
   assert.equal(sanitizeSettings({ taskbarInFront: false }, front).taskbarInFront, false);
 });
 
+test('interaction and cursor trail toggles migrate old saves, persist independently and reject coerced values', () => {
+  const old = { scale: 1.2, eyeTracking: false };
+  const initial = sanitizeSettings(old);
+  assert.equal(initial.interactionsEnabled, true);
+  assert.equal(initial.cursorTrailEnabled, true);
+  const disabled = sanitizeSettings({ interactionsEnabled: false, cursorTrailEnabled: false }, initial);
+  assert.equal(disabled.interactionsEnabled, false); assert.equal(disabled.cursorTrailEnabled, false);
+  const restored = sanitizeSettings(JSON.parse(JSON.stringify(disabled)));
+  assert.deepEqual(restored, disabled);
+  const trailOnly = sanitizeSettings({ cursorTrailEnabled: true }, restored);
+  assert.equal(trailOnly.interactionsEnabled, false); assert.equal(trailOnly.cursorTrailEnabled, true);
+  for (const value of ['false', 'true', null, 0, 1, [], {}]) {
+    assert.equal(sanitizeSettings({ interactionsEnabled: value }, disabled).interactionsEnabled, false);
+    assert.equal(sanitizeSettings({ cursorTrailEnabled: value }, initial).cursorTrailEnabled, true);
+  }
+  assert.equal(trailOnly.scale, 1.2); assert.equal(trailOnly.eyeTracking, false);
+});
+
+test('three cursor styles migrate, persist while disabled and reject unknown values without changing switches', () => {
+  assert.equal(sanitizeSettings({}).cursorTrailStyle, 'pink');
+  assert.equal(sanitizeSettings({}, { cursorTrailStyle: 'removed-style' }).cursorTrailStyle, 'pink');
+  const previous = sanitizeSettings({ cursorTrailEnabled: false, interactionsEnabled: false });
+  for (const style of ['pink', 'ribbon', 'stardust']) {
+    const selected = sanitizeSettings({ cursorTrailStyle: style }, previous);
+    assert.equal(selected.cursorTrailStyle, style);
+    assert.equal(selected.cursorTrailEnabled, false); assert.equal(selected.interactionsEnabled, false);
+    assert.deepEqual(sanitizeSettings(JSON.parse(JSON.stringify(selected))), selected);
+    assert.equal(sanitizeSettings({ scale: 1.5 }, selected).cursorTrailStyle, style);
+    for (const invalid of ['unknown', '', null, 1, true, {}, ['pink']]) {
+      assert.equal(sanitizeSettings({ cursorTrailStyle: invalid }, selected).cursorTrailStyle, style);
+    }
+  }
+});
+
+test('trail duration supports decimal seconds, migrates old saves and remains independent of switches and style', () => {
+  assert.equal(sanitizeSettings({}).cursorTrailDuration, 0.6);
+  const prior = sanitizeSettings({ cursorTrailEnabled: false, interactionsEnabled: false, cursorTrailStyle: 'ribbon' });
+  for (const seconds of [0.1, 0.25, 0.6, 0.8, 1.5, 5]) {
+    const selected = sanitizeSettings({ cursorTrailDuration: seconds }, prior);
+    assert.deepEqual(selected, { ...prior, cursorTrailDuration: seconds });
+    assert.deepEqual(sanitizeSettings(JSON.parse(JSON.stringify(selected))), selected);
+    assert.equal(sanitizeSettings({ scale: 2 }, selected).cursorTrailDuration, seconds);
+  }
+  const saved = { ...prior, cursorTrailDuration: 1.5 };
+  for (const value of [NaN, Infinity, -Infinity, '1.5', null, true, [], {}]) {
+    assert.deepEqual(sanitizeSettings({ cursorTrailDuration: value }, saved), saved);
+    assert.equal(sanitizeSettings({}, { ...prior, cursorTrailDuration: value }).cursorTrailDuration, 0.6);
+  }
+  assert.equal(sanitizeSettings({ cursorTrailDuration: -2 }).cursorTrailDuration, 0.1);
+  assert.equal(sanitizeSettings({ cursorTrailDuration: 500 }).cursorTrailDuration, 5);
+});
+
 test('motion preferences migrate old settings and retain independent choices across reloads', () => {
   assert.equal(DEFAULT_SETTINGS.motionAmplitude, 1);
   assert.equal(DEFAULT_SETTINGS.motionSpeed, 1);

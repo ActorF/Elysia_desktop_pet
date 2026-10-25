@@ -22,8 +22,8 @@ test('settings preload exposes only its narrow independent-window bridge', () =>
   });
   assert.equal(name, 'elysiaSettings');
   assert.equal(Object.isFrozen(bridge), true);
-  assert.deepEqual(Object.keys(bridge).sort(), ['action', 'getState', 'getWindowState', 'onState', 'onWindowState', 'recover', 'resize', 'setSettings', 'windowControl']);
-  for (const forbidden of ['invoke', 'send', 'dragStart', 'setHitRegion', 'setAppearance', 'quit']) assert.equal(bridge[forbidden], undefined);
+  assert.deepEqual(Object.keys(bridge).sort(), ['action', 'getState', 'getVoiceState', 'getWindowState', 'onState', 'onVoiceState', 'onWindowState', 'recover', 'resize', 'setSettings', 'setVoiceSettings', 'stopVoice', 'windowControl']);
+  for (const forbidden of ['invoke', 'send', 'dragStart', 'setHitRegion', 'setAppearance', 'quit', 'playVoice', 'simulateVoice']) assert.equal(bridge[forbidden], undefined);
   bridge.getState();
   bridge.getWindowState();
   bridge.setSettings({ motionAmplitude: .75, eyeWarpStrength: 1.5 });
@@ -56,5 +56,20 @@ test('settings preload exposes only its narrow independent-window bridge', () =>
   stopWindowState();
   assert.equal(listeners.has('settings:window-state'), false);
   assert.equal(typeof bridge.onWindowState(null), 'function');
+  bridge.getVoiceState();
+  bridge.setVoiceSettings({ volume: .45, birthday: '02-29' });
+  bridge.stopVoice();
+  assert.deepEqual(calls.slice(-3), [
+    ['settings:voice-get'], ['settings:voice-settings', { volume: .45, birthday: '02-29' }],
+    ['settings:voice-stop'],
+  ]);
+  assert.ok(calls.every(([channel]) => !['settings:voice-play', 'settings:voice-simulate'].includes(channel)), 'Production settings expose no audition or simulation IPC');
+  const stopVoiceState = bridge.onVoiceState((...args) => { received = args; });
+  const voiceState = { settings: { enabled: true, dnd: false, volume: .45, birthday: '02-29' }, playback: { lineId: '01-1', status: 'playing' } };
+  listeners.get('settings:voice-state')({ sender: 'private metadata' }, voiceState);
+  assert.deepEqual(received, [voiceState]);
+  stopVoiceState();
+  assert.equal(listeners.has('settings:voice-state'), false);
+  assert.equal(typeof bridge.onVoiceState(null), 'function');
   assert.equal(listeners.size, 0);
 });

@@ -5,13 +5,14 @@ import { createPointerTracking } from './pointer-tracking.mjs';
 import { createCharacterHitRegion, prepareCharacterHitRegions, withKeyCloudRegion } from './hit-region.mjs';
 import { characterView, canvasBacking } from './viewport.mjs';
 import { createKeyDisplay, drawKeyCloud, KEY_EFFECT_BOUNDS } from './key-cloud.mjs';
+import { createInteractions, createExpressionReaction } from './interactions.mjs';
 
 const desktop = window.elysiaDesktop;
 const state = createPetState();
 const pointerTracking = createPointerTracking(state, RIG);
 const canvas = document.querySelector('#pet');
 const ctx = canvas.getContext('2d');
-let settings = { eyeTracking:true, eyeWarpStrength:1, hairMotion:true, motionAmplitude:1, motionSpeed:1, alwaysOnTop:true, clickThrough:false, legacyHotkeys:true, keyDisplay:true, scale:1, cat:false, glasses:false };
+let settings = { eyeTracking:true, eyeWarpStrength:1, hairMotion:true, motionAmplitude:1, motionSpeed:1, alwaysOnTop:true, clickThrough:false, legacyHotkeys:true, keyDisplay:true, interactionsEnabled:true, scale:1, cat:false, glasses:false };
 let hotkeys = {}, viewport = null;
 let dragging = null, rightPointer = null;
 let characterAtlas = null, dragRenderPaused = false, redrawRequested = true, shapeScheduled = false;
@@ -22,6 +23,18 @@ let updateCanvas = () => {};
 const pendingActions = [];
 const keyDisplay=createKeyDisplay();
 let keyCloudVisible=false;
+const expressionReaction = createExpressionReaction(state, { onChange: syncAppearance, now: () => performance.now() });
+const interactions = createInteractions({ now: () => performance.now(), onReaction(reaction) {
+  if (restoringAppearance || settings.clickThrough || settings.interactionsEnabled === false) return;
+  expressionReaction.react(reaction.expression, reaction.duration);
+  void Promise.resolve(desktop?.interact?.(reaction.type)).catch(console.error);
+} });
+function interactionPoint(event) {
+  const view = characterView(innerWidth, innerHeight, viewport);
+  return { x: (event.clientX - view.x) / view.scale, y: (event.clientY - view.y) / view.scale,
+    screenX: event.screenX, screenY: event.screenY, button: event.button, buttons: event.buttons,
+    pointerId: event.pointerId, now: performance.now(), blocked: restoringAppearance || settings.clickThrough || settings.interactionsEnabled === false || spaceHeld };
+}
 
 function receiveTypedKey(character){
   if(settings.keyDisplay===false||!keyDisplay.receive(character,performance.now()))return;
@@ -52,6 +65,7 @@ function receiveViewport(next) {
   const wasClipped = viewport?.clipped;
   viewport = {...next}; viewportEpoch++;
   const after = characterView(innerWidth, innerHeight, viewport);
+  if (before.x !== after.x || before.y !== after.y || before.scale !== after.scale) interactions.cancel();
   // Ordinary native dragging moves the existing bitmap without repainting it.
   if (before.x !== after.x || before.y !== after.y || before.scale !== after.scale || wasClipped !== viewport.clipped) redrawRequested = true;
   updateCanvas();
@@ -59,6 +73,8 @@ function receiveViewport(next) {
 function receiveSettings(snapshot, includeViewport = true) {
   if (snapshot?.settings) { settings = {...snapshot.settings}; settingsEpoch++; }
   if(settings.keyDisplay===false){keyDisplay.clear();keyCloudVisible=false;}
+  if(settings.interactionsEnabled===false){interactions.reset();expressionReaction.cancel({restore:true});}
+  else if(settings.clickThrough){interactions.cancel();expressionReaction.cancel({restore:true});}
   hotkeys = snapshot?.hotkeys ?? hotkeys;
   if (includeViewport && snapshot?.viewport) receiveViewport(snapshot.viewport);
   redrawRequested = true; scheduleHitRegion();
@@ -76,6 +92,7 @@ async function updateSettings(patch) {
 function act(action) {
   if (!action || !['expression','pose','toggle-skin','reset'].includes(action.type)) return;
   if (restoringAppearance) { pendingActions.push(action); return; }
+  interactions.cancel(); expressionReaction.cancel({restore:true});
   applyAction(state, action); syncAppearance();
   if (action.type === 'toggle-skin' || action.type === 'reset') void updateSettings({cat:state.cat, glasses:state.glasses});
 }
@@ -106,15 +123,25 @@ function queueZoom() {
     finally { zoomBusy = false; queueZoom(); }
   });
 }
-function samplePointer(event) { pointerTracking.sample({...event,viewport}); }
+function samplePointer(event) {
+  pointerTracking.sample({...event,viewport});
+  // Native dragging can keep local coordinates stationary. Track screen travel
+  // during a press so a drag away and back never becomes a poke on release.
+  if (dragging && Number.isFinite(event.x) && Number.isFinite(event.y)) {
+    interactions.sample({x:-1,y:-1,screenX:event.x,screenY:event.y,buttons:1,now:performance.now(),blocked:settings.clickThrough||settings.interactionsEnabled===false});
+  }
+}
 canvas.addEventListener('pointermove', event => {
   const samples = event.getCoalescedEvents?.();
   const latest = samples?.length ? samples[samples.length-1] : event;
   samplePointer({localX:latest.clientX,localY:latest.clientY,width:innerWidth,height:innerHeight,sampledAt:performance.timeOrigin+latest.timeStamp});
+  interactions.sample(interactionPoint(latest));
 });
+canvas.addEventListener('pointerleave', () => { if (!dragging) interactions.sample({x:-1,y:-1,buttons:0,now:performance.now()}); });
 canvas.addEventListener('pointerdown', event => {
-  if (event.button === 2) { rightPointer = event.pointerId; canvas.setPointerCapture(event.pointerId); return; }
+  if (event.button === 2) { interactions.cancel(); rightPointer = event.pointerId; canvas.setPointerCapture(event.pointerId); return; }
   if (event.button !== 0) return;
+  interactions.pointerDown({...interactionPoint(event),blocked:restoringAppearance||settings.clickThrough||settings.interactionsEnabled===false||spaceHeld||rightPointer!==null});
   dragging = {pointerId:event.pointerId}; pauseDragRendering(true);
   canvas.setPointerCapture(event.pointerId); desktop?.dragStart();
 });
@@ -124,14 +151,15 @@ function endDrag() {
 }
 canvas.addEventListener('pointerup', event => {
   if (event.button === 2) rightPointer = null;
-  if (event.button === 0) endDrag();
+  if (event.button === 0) { interactions.pointerUp(interactionPoint(event)); endDrag(); }
   if (!dragging && rightPointer === null && canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
 });
-canvas.addEventListener('pointercancel', () => { rightPointer = null; zoomSteps = 0; endDrag(); });
-canvas.addEventListener('lostpointercapture', () => { rightPointer = null; if (dragging) endDrag(); });
+canvas.addEventListener('pointercancel', () => { interactions.cancel(); rightPointer = null; zoomSteps = 0; endDrag(); });
+canvas.addEventListener('lostpointercapture', () => { rightPointer = null; if (dragging) {interactions.cancel();endDrag();} });
 canvas.addEventListener('contextmenu', event => event.preventDefault());
 canvas.addEventListener('wheel', event => {
   if (rightPointer === null || !Number.isFinite(event.deltaY) || !event.deltaY) return;
+  interactions.cancel();
   event.preventDefault();
   const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? innerHeight : 1;
   zoomSteps -= event.deltaY * unit / 100;
@@ -147,7 +175,7 @@ document.addEventListener('keydown', event => {
   if (chord && !event.repeat) act(chord);
 });
 document.addEventListener('keyup', event => { if (event.code === 'Space') {event.preventDefault();spaceHeld=false;} });
-window.addEventListener('blur', () => {spaceHeld=false;rightPointer=null;zoomSteps=0;endDrag();});
+window.addEventListener('blur', () => {interactions.cancel();spaceHeld=false;rightPointer=null;zoomSteps=0;endDrag();});
 
 if (desktop) {
   desktop.onPointer(samplePointer);
@@ -226,6 +254,7 @@ try {
   let previous = performance.now();
   function frame(now) {
     const elapsed = (now-previous)/1000; previous = now;
+    expressionReaction.tick(now);
     const display=settings.keyDisplay===false?null:keyDisplay.snapshot(now);
     if(keyCloudVisible!==Boolean(display)){keyCloudVisible=Boolean(display);redrawRequested=true;scheduleHitRegion();}
     if (!dragRenderPaused || redrawRequested) {

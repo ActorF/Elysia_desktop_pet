@@ -10,6 +10,9 @@ const subscribe = (channel, callback) => {
 contextBridge.exposeInMainWorld('elysiaSettings', Object.freeze({
   getState: () => ipcRenderer.invoke('settings:get-state'),
   getWindowState: () => ipcRenderer.invoke('settings:get-window-state'),
+  getVoiceState: () => ipcRenderer.invoke('settings:voice-get'),
+  setVoiceSettings: patch => ipcRenderer.invoke('settings:voice-settings', patch),
+  stopVoice: () => ipcRenderer.invoke('settings:voice-stop'),
   setSettings: patch => ipcRenderer.invoke('settings:set-settings', patch),
   action: value => ipcRenderer.invoke('settings:action', value),
   resize: scale => ipcRenderer.invoke('settings:resize', scale),
@@ -19,4 +22,5 @@ contextBridge.exposeInMainWorld('elysiaSettings', Object.freeze({
   },
   onState: callback => subscribe('settings:state', callback),
   onWindowState: callback => subscribe('settings:window-state', callback),
+  onVoiceState: callback => subscribe('settings:voice-state', callback),
 }));

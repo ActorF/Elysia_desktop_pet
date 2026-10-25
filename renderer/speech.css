@@ -1,0 +1,10 @@
+:root { font-family: "Microsoft YaHei UI", "Segoe UI", sans-serif; font-synthesis: none; color: #654254; --pink: #ed9fc3; }
+* { box-sizing: border-box; }
+html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: transparent; }
+body { padding: 12px; user-select: none; }
+#speech { position: relative; height: 100%; padding: 12px 18px; border: 2px solid var(--pink); border-radius: 18px; background: #fff; box-shadow: 0 3px 9px #a95d811c; }
+#speech[data-layout="pending"] { visibility: hidden; }
+#line { margin: 0; font-size: 16px; line-height: 1.75; overflow-wrap: anywhere; line-break: strict; }
+#tail { position: absolute; top: calc(50% - 8px); width: 16px; height: 16px; background: #fff; border: 2px solid var(--pink); transform: rotate(45deg); }
+#speech[data-side="left"] #tail { right: -9px; border-bottom: 0; border-left: 0; }
+#speech[data-side="right"] #tail { left: -9px; border-top: 0; border-right: 0; }

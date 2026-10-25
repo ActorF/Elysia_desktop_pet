@@ -28,6 +28,8 @@
     <button id="tab-appearance" role="tab" aria-selected="true" aria-controls="panel-appearance" data-tab="appearance">外观</button>
     <button id="tab-animation" role="tab" aria-selected="false" aria-controls="panel-animation" tabindex="-1" data-tab="animation">动画</button>
     <button id="tab-desktop" role="tab" aria-selected="false" aria-controls="panel-desktop" tabindex="-1" data-tab="desktop">桌面</button>
+    <button id="tab-interaction" role="tab" aria-selected="false" aria-controls="panel-interaction" tabindex="-1" data-tab="interaction">互动</button>
+    <button id="tab-voice" role="tab" aria-selected="false" aria-controls="panel-voice" tabindex="-1" data-tab="voice">语音</button>
   </nav>
   <main>
     <p id="error-message" role="alert" hidden></p>
@@ -78,11 +80,80 @@
       </div>
       <div class="card"><div id="legacy-toggle"></div><div id="alternate-toggle" class="divided"></div></div>
     </section>
+    <section id="panel-interaction" role="tabpanel" aria-labelledby="tab-interaction" hidden>
+      <div class="section-heading"><h2>陪伴互动</h2><span class="hint">两个开关各自生效</span></div>
+      <p class="section-hint">按自己的习惯，选择点击回应和鼠标流光。</p>
+      <div class="card" id="interactions-toggle"></div>
+      <div class="card">
+        <div id="cursor-trail-toggle"></div>
+        <fieldset class="trail-styles">
+          <legend>流光样式</legend>
+          <div class="trail-style-grid">
+            <label class="trail-style-choice">
+              <input type="radio" name="cursorTrailStyle" value="pink" aria-label="粉色流光">
+              <span class="trail-style-card"><span class="trail-swatch pink" aria-hidden="true"></span><span class="trail-style-title">粉色流光</span><span class="trail-style-description">轻盈的细粉色光线</span></span>
+            </label>
+            <label class="trail-style-choice">
+              <input type="radio" name="cursorTrailStyle" value="ribbon" aria-label="紫粉绸光">
+              <span class="trail-style-card"><span class="trail-swatch ribbon" aria-hidden="true"></span><span class="trail-style-title">紫粉绸光</span><span class="trail-style-description">紫色前端，粉色细尾</span></span>
+            </label>
+            <label class="trail-style-choice">
+              <input type="radio" name="cursorTrailStyle" value="stardust" aria-label="星尘尾迹">
+              <span class="trail-style-card"><span class="trail-swatch stardust" aria-hidden="true"></span><span class="trail-style-title">星尘尾迹</span><span class="trail-style-description">散开闪点与短光丝</span></span>
+            </label>
+          </div>
+          <p class="hint">选择后立即生效。关闭流光时也可选好样式，开启时使用。</p>
+        </fieldset>
+        <div class="trail-duration">
+          <div id="cursor-trail-duration"></div>
+          <p id="cursor-trail-duration-hint" class="hint">可输入 0.1–5 秒，支持小数。关闭流光时也能预设，修改后自动保存。</p>
+        </div>
+      </div>
+      <div class="card interaction-guide">
+        <h2>轻点互动方式</h2>
+        <dl>
+          <div><dt>轻点头部</dt><dd>摸摸头，收到温柔的回应。</dd></div>
+          <div><dt>轻点身体</dt><dd>戳一下，向她打个招呼。</dd></div>
+          <div><dt>连续点击</dt><dd>头部与身体一起计数，3 秒内第 5 次点击会让她有点生气，随后休息 3 秒。</dd></div>
+        </dl>
+        <p class="hint">语音页可调整音量，或用勿扰保留文字回应。</p>
+      </div>
+    </section>
+    <section id="panel-voice" role="tabpanel" aria-labelledby="tab-voice" hidden>
+      <div class="section-heading"><h2>日常与互动语音</h2><span class="voice-badge">1.3.0</span></div>
+      <p class="section-hint">36 句日常问候与 18 句互动语音。说话时，台词会出现在爱莉希雅身旁。</p>
+      <p id="voice-error" class="voice-error" role="alert" hidden></p>
+      <div class="card">
+        <label class="toggle-row"><span class="toggle-copy"><span class="toggle-title">自动触发语音</span><span class="toggle-description">按照时间与使用状态，适时送上一句问候。</span></span><span class="switch"><input id="voice-enabled" type="checkbox" aria-label="自动触发语音"><i aria-hidden="true"></i></span></label>
+        <label class="toggle-row divided"><span class="toggle-copy"><span class="toggle-title">勿扰</span><span class="toggle-description">暂停自动问候与互动发声，点击人物仍可看字幕。</span></span><span class="switch"><input id="voice-dnd" type="checkbox" aria-label="语音勿扰"><i aria-hidden="true"></i></span></label>
+        <div class="inset-control">
+          <div class="range-heading"><label for="voice-volume">语音音量</label><output id="voice-volume-value" for="voice-volume">80%</output></div>
+          <div class="range-row"><span>静音</span><input id="voice-volume" type="range" min="0" max="100" step="1" value="80"><span>100%</span></div>
+        </div>
+        <form id="voice-birthday-form" class="inset-control">
+          <label class="toggle-title" for="voice-birthday-month">生日祝福</label>
+          <div class="voice-birthday-fields">
+            <label class="number-field"><input id="voice-birthday-month" type="number" min="1" max="12" step="1" inputmode="numeric" aria-label="生日月份"><span>月</span></label>
+            <label class="number-field"><input id="voice-birthday-day" type="number" min="1" max="31" step="1" inputmode="numeric" aria-label="生日日期"><span>日</span></label>
+            <button class="secondary-button" type="submit">保存生日</button>
+            <button class="text-button" id="voice-clear-birthday" type="button">清除</button>
+          </div>
+          <p id="voice-birthday-hint" class="hint">未设置生日。只在此电脑保存月、日。</p>
+        </form>
+      </div>
+      <div class="voice-player" aria-label="当前语音">
+        <div><p id="voice-playback-status" role="status" aria-live="polite">正在读取语音…</p><p id="voice-playback-line" class="hint"></p></div>
+        <button id="voice-stop" class="secondary-button" type="button" disabled>停止播放</button>
+      </div>
+      <p id="voice-interaction-error" class="voice-error" role="alert" hidden></p>
+      <p class="voice-rules hint">自动语音至少间隔 20 分钟，每天最多 6 次，生日与主动告别单独计数。锁屏、休眠或全屏时暂停自动问候，错过的时段不补播。</p>
+    </section>
   </main>
   <footer>
     <span class="footer-hint">关闭此窗口，桌宠会继续运行。</span>
     <div class="recovery-actions"><button class="secondary-button" data-recover="false">找回桌宠</button><button class="text-button" data-recover="true">恢复大小并找回</button></div>
   </footer>
   <script type="module" src="./settings.mjs"></script>
+  <script type="module" src="./voice-settings.mjs"></script>
 </body>
 </html>

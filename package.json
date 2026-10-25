@@ -1,7 +1,7 @@
 {
   "name": "elysia_desktop_pet",
   "productName": "爱莉希雅桌宠",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "private": true,
   "description": "独立爱莉希雅桌面伙伴",
   "author": "ActorF",
@@ -11,14 +11,17 @@
     "start": "node scripts/launch.cjs",
     "test": "node --test tests/*.test.cjs tests/*.test.mjs",
     "package": "electron-builder --dir",
-    "make:portable": "electron-builder --win portable",
+    "make:portable": "electron-builder --win portable --publish never",
     "test:smoke": "node scripts/launch.cjs --smoke-test",
     "test:visual": "node scripts/visual-check.cjs",
     "test:faces": "node scripts/face-integrity-check.cjs",
     "preview:expressions": "node scripts/gallery-preview.cjs",
     "preview:motion": "node scripts/gallery-preview.cjs --motion",
     "test:zoom": "node scripts/tray-zoom-check.cjs",
-    "test:settings": "node scripts/settings-window-check.cjs"
+    "test:settings": "node scripts/settings-window-check.cjs",
+    "test:voice": "node scripts/launch.cjs --voice-smoke-test",
+    "test:interactions": "node scripts/interactions-check.cjs",
+    "test:interaction-settings": "node scripts/launch.cjs --interaction-smoke-test"
   },
   "devDependencies": {
     "electron": "43.8.0",
@@ -41,10 +44,23 @@
       "LICENSE",
       "ASSET-NOTICE.md"
     ],
+    "extraResources": [
+      {
+        "from": "assets/voice",
+        "to": "voice",
+        "filter": ["final-audio-map.json", "audio-final/*.wav"]
+      },
+      {
+        "from": "assets/interaction-voice",
+        "to": "interaction-voice",
+        "filter": ["final-audio-map.json", "audio-final/*.wav"]
+      }
+    ],
     "asarUnpack": [
       "electron/legacy-hotkeys.ps1",
       "electron/typed-keys.ps1",
-      "electron/taskbar-order.ps1"
+      "electron/taskbar-order.ps1",
+      "electron/voice-environment.ps1"
     ],
     "win": {
       "target": "portable",

@@ -25,6 +25,7 @@ contextBridge.exposeInMainWorld('elysiaDesktop', Object.freeze({
   zoomBy: (input) => ipcRenderer.invoke('pet:zoom-by', input),
   setAppearance: (appearance) => ipcRenderer.send('pet:set-appearance', appearance),
   setHitRegion: (region) => ipcRenderer.invoke('pet:set-hit-region', region),
+  interact: kind => ['head-pat', 'poke', 'poke-annoyed'].includes(kind) ? ipcRenderer.invoke('pet:interact', kind) : Promise.resolve(false),
   dragStart: () => ipcRenderer.send('pet:drag-start'),
   dragEnd: () => ipcRenderer.send('pet:drag-end'),
   quit: () => ipcRenderer.send('pet:quit'),

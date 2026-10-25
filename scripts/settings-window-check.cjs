@@ -48,8 +48,16 @@ async function main() {
       return snapshot();
     });
     await page.addInitScript(() => {
-      const listeners = new Set(), windowListeners = new Set(), windowControls = [];
+      const listeners = new Set(), windowListeners = new Set(), windowControls = [], voiceListeners = new Set(), voiceCalls = [];
       let windowState = { maximized: false };
+      let voiceState = { settings: { enabled: true, dnd: false, volume: .8, birthday: '' }, playback: { status: 'idle' },
+        available: true, interactionAvailable: true, error: null, interactionError: null, queuedInteraction: null,
+        environment: { monitorReady: true, locked: false, suspended: false, fullscreen: false } };
+      const publishVoice = patch => {
+        voiceState = { ...voiceState, ...patch };
+        for (const callback of voiceListeners) callback(structuredClone(voiceState));
+        return structuredClone(voiceState);
+      };
       const publish = state => { for (const callback of listeners) callback(structuredClone(state)); };
       const publishWindowState = state => {
         windowState = { maximized: state.maximized === true };
@@ -60,7 +68,7 @@ async function main() {
         if (method !== 'getState') publish(state);
         return method === 'action' ? true : state;
       };
-      window.__settingsQA = { publish, windowControls, publishWindowState };
+      window.__settingsQA = { publish, windowControls, publishWindowState, publishVoice, voiceCalls, voiceSnapshot: () => structuredClone(voiceState) };
       window.elysiaSettings = Object.freeze({
         getState: () => invoke('getState'), setSettings: patch => invoke('setSettings', patch),
         action: action => invoke('action', action), resize: scale => invoke('resize', scale),
@@ -73,10 +81,14 @@ async function main() {
         getWindowState: async () => structuredClone(windowState),
         onWindowState: callback => { windowListeners.add(callback); return () => windowListeners.delete(callback); },
         onState: callback => { listeners.add(callback); return () => listeners.delete(callback); },
+        getVoiceState: async () => structuredClone(voiceState),
+        setVoiceSettings: async patch => { voiceCalls.push(['settings', patch]); return publishVoice({ settings: { ...voiceState.settings, ...patch } }); },
+        stopVoice: async () => { voiceCalls.push(['stop']); return publishVoice({ playback: { status: 'idle' }, queuedInteraction: null }); },
+        onVoiceState: callback => { voiceListeners.add(callback); return () => voiceListeners.delete(callback); },
       });
     });
     await page.goto(`http://127.0.0.1:${server.address().port}/renderer/settings.html`);
-    await page.waitForSelector('html[data-ready="true"]');
+    await page.waitForSelector('html[data-ready="true"][data-voice-ready="true"]');
     const settled = async () => { await page.waitForFunction(() => document.querySelector('#save-status').textContent === '自动保存'); };
     const check = (name, details = {}) => report.checks.push({ name, passed: true, ...details });
     const tab = async name => { await page.locator(`[data-tab="${name}"]`).click(); assert.equal(await page.locator(`[data-tab="${name}"]`).getAttribute('aria-selected'), 'true'); };
@@ -88,8 +100,8 @@ async function main() {
       await input.fill(String(value)); await input.press('Tab'); await settled();
       assert.equal(settings[key], expected ?? value);
     };
-    const capture = async name => {
-      await page.locator('main').evaluate(node => { node.scrollTop = 0; });
+    const capture = async (name, scrollToTop = true) => {
+      if (scrollToTop) await page.locator('main').evaluate(node => { node.scrollTop = 0; });
       const filename = path.join(output, `${name}.png`);
       await page.screenshot({ path: filename, animations: 'disabled' }); report.screenshots.push(filename);
     };
@@ -150,6 +162,7 @@ async function main() {
 
     assert.equal(await page.locator('.choice[data-action="expression"]').count(), 10);
     assert.equal(await page.locator('.choice[data-action="pose"]').count(), 4);
+    assert.deepEqual(await page.locator('[role=tab]').evaluateAll(tabs=>tabs.map(tab=>tab.dataset.tab)), ['appearance','animation','desktop','interaction','voice']);
     await layout('default window layout'); await capture('appearance-default');
     await choose('pose', 'tea');
     for (const expression of EXPRESSIONS) { await choose('expression', expression.id); assert.equal(pet.pose, 'tea'); }
@@ -208,6 +221,61 @@ async function main() {
     check('size accepts 1%, fractional and 100000%; presets, adjustments and restore route correctly');
     await capture('desktop-controls');
 
+    await tab('interaction');
+    assert.equal(await page.locator('[name="interactionsEnabled"]').isChecked(),true);
+    assert.equal(await page.locator('[name="cursorTrailEnabled"]').isChecked(),true);
+    const appearanceBeforeInteraction=snapshot().appearance;
+    const desktopBeforeInteraction={scale:settings.scale,clickThrough:settings.clickThrough,alwaysOnTop:settings.alwaysOnTop};
+    await toggle('interactionsEnabled',false);assert.equal(settings.cursorTrailEnabled,true);
+    await toggle('cursorTrailEnabled',false);assert.equal(settings.interactionsEnabled,false);
+    await toggle('interactionsEnabled',true);assert.equal(settings.cursorTrailEnabled,false);
+    await toggle('cursorTrailEnabled',true);assert.equal(settings.interactionsEnabled,true);
+    assert.deepEqual(snapshot().appearance,appearanceBeforeInteraction);
+    assert.deepEqual({scale:settings.scale,clickThrough:settings.clickThrough,alwaysOnTop:settings.alwaysOnTop},desktopBeforeInteraction);
+    check('interaction and cursor-trail switches default on, save independently, and preserve appearance and desktop settings');
+
+    assert.equal(await page.locator('[name="cursorTrailStyle"]').count(),3);
+    assert.equal(await page.locator('[name="cursorTrailStyle"][value="pink"]').isChecked(),true);
+    await toggle('cursorTrailEnabled',false); await toggle('interactionsEnabled',false);
+    for (const style of ['ribbon','stardust','pink']) {
+      const radio=page.locator(`[name="cursorTrailStyle"][value="${style}"]`);
+      assert.equal(await radio.isEnabled(),true,'Styles remain selectable while the trail is off');
+      await radio.check(); await settled(); assert.equal(settings.cursorTrailStyle,style);
+      assert.equal(await page.locator('[name="cursorTrailStyle"]:checked').count(),1);
+      assert.equal(settings.cursorTrailEnabled,false);assert.equal(settings.interactionsEnabled,false);
+    }
+    await page.locator('[name="cursorTrailStyle"][value="pink"]').focus();await page.keyboard.press('ArrowRight');await settled();
+    assert.equal(settings.cursorTrailStyle,'ribbon');
+    await toggle('cursorTrailEnabled',true);assert.equal(settings.cursorTrailStyle,'ribbon');assert.equal(settings.interactionsEnabled,false);
+    await toggle('interactionsEnabled',true);
+    assert.deepEqual(snapshot().appearance,appearanceBeforeInteraction);
+    check('three trail styles save independently, support keyboard selection while disabled, and survive re-enabling the trail');
+    const durationField=page.locator('[name="cursorTrailDurationValue"]');
+    assert.equal(await durationField.inputValue(),'0.6');
+    assert.equal(await durationField.getAttribute('min'),'0.1');
+    assert.equal(await durationField.getAttribute('max'),'5');
+    assert.equal(await durationField.getAttribute('step'),'0.1');
+    await toggle('cursorTrailEnabled',false);
+    assert.equal(await durationField.isEnabled(),true,'Duration remains editable while cursor trail is off');
+    await durationField.fill('1.4');await durationField.press('Enter');await settled();assert.equal(settings.cursorTrailDuration,1.4);
+    for(const value of [.1,5,1.7])await number('cursorTrailDuration',value);
+    await number('cursorTrailDuration',0,.1);await number('cursorTrailDuration',9,5);
+    await durationField.fill('');await durationField.press('Tab');await settled();
+    assert.equal(await durationField.inputValue(),'5');assert.equal(settings.cursorTrailDuration,5);
+    await page.getByRole('button',{name:'恢复默认轨迹保留时间'}).click();await settled();
+    assert.equal(settings.cursorTrailDuration,.6);assert.equal(await durationField.inputValue(),'0.6');
+    await page.locator('[name="cursorTrailDuration"]').evaluate(slider=>{slider.value='1.3';slider.dispatchEvent(new Event('input',{bubbles:true}));});
+    await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(resolve)));
+    await settled();assert.equal(settings.cursorTrailDuration,1.3);
+    assert.equal(settings.cursorTrailEnabled,false);assert.equal(settings.interactionsEnabled,true);assert.equal(settings.cursorTrailStyle,'ribbon');
+    await page.reload();await page.waitForSelector('html[data-ready="true"]');await tab('interaction');
+    assert.equal(await durationField.inputValue(),'1.3');assert.equal(await page.locator('[name="cursorTrailEnabled"]').isChecked(),false);
+    assert.equal(await page.locator('[name="cursorTrailStyle"]:checked').inputValue(),'ribbon');
+    await toggle('cursorTrailEnabled',true);assert.equal(settings.cursorTrailDuration,1.3);
+    check('trail duration accepts decimals and bounds, restores 0.6 by default, presets while disabled, and survives reopening without changing style or switches');
+    await capture('interaction-controls');
+    await tab('desktop');
+
     rejectNext = true;
     await page.locator('[data-scale="2"]').click();
     await page.waitForSelector('#error-message:not([hidden])');
@@ -227,13 +295,79 @@ async function main() {
     assert.equal(await page.locator('[name="eyeWarpStrengthValue"]').inputValue(), '63');
     check('external preference broadcasts keep inactive controls synchronized');
 
+    await tab('voice');
+    await page.waitForSelector('html[data-voice-ready="true"]');
+    assert.equal(await page.locator('[data-voice-play], [data-voice-simulate], #voice-sample-tools, #voice-category').count(),0);
+    assert.deepEqual(await page.evaluate(()=>[typeof window.elysiaSettings.playVoice,typeof window.elysiaSettings.simulateVoice]),['undefined','undefined']);
+    assert.doesNotMatch(await page.locator('#panel-voice').textContent(),/试听|模拟触发|本地样本/);
+    assert.equal(await page.locator('#voice-stop').isDisabled(),true);
+    check('production voice settings have no audition, simulation, sample panel or corresponding bridge');
+    await page.locator('#voice-enabled').uncheck();await page.waitForFunction(()=>window.__settingsQA.voiceSnapshot().settings.enabled===false);
+    assert.match(await page.locator('#voice-playback-status').textContent(),/自动问候已关闭/);
+    await page.locator('#voice-dnd').check();await page.waitForFunction(()=>window.__settingsQA.voiceSnapshot().settings.dnd===true);
+    assert.match(await page.locator('#voice-playback-status').textContent(),/勿扰/);
+    await page.locator('#voice-volume').evaluate(input=>{input.value='37';input.dispatchEvent(new Event('input',{bubbles:true}));input.dispatchEvent(new Event('change',{bubbles:true}));});
+    await page.waitForFunction(()=>window.__settingsQA.voiceSnapshot().settings.volume===.37);
+    assert.equal(await page.locator('#voice-volume-value').textContent(),'37%');
+    check('normal automatic greeting, DND and volume controls save independently');
+    await page.locator('#voice-birthday-month').fill('2');await page.locator('#voice-birthday-day').fill('29');
+    await page.locator('#voice-birthday-form [type=submit]').click();await page.waitForFunction(()=>window.__settingsQA.voiceSnapshot().settings.birthday==='02-29');
+    assert.match(await page.locator('#voice-birthday-hint').textContent(),/闰年/);
+    await page.locator('#voice-birthday-day').fill('30');await page.locator('#voice-birthday-form [type=submit]').click();
+    assert.equal(await page.locator('#voice-error').isVisible(),true);assert.equal(await page.evaluate(()=>window.__settingsQA.voiceSnapshot().settings.birthday),'02-29');
+    await page.locator('#voice-clear-birthday').click();await page.waitForFunction(()=>window.__settingsQA.voiceSnapshot().settings.birthday==='');
+    assert.equal(await page.locator('#voice-error').isHidden(),true);
+    check('birthday accepts leap day, rejects invalid dates without saving, and can be cleared');
+    await page.evaluate(()=>window.__settingsQA.publishVoice({playback:{kind:'automatic',status:'playing',lineId:'01-1',text:'早上好，新的一天开始了。'}}));
+    assert.match(await page.locator('#voice-playback-status').textContent(),/自动问候/);
+    assert.equal(await page.locator('#voice-playback-line').textContent(),'早上好，新的一天开始了。');
+    for(const textOnly of [false,true]){
+      await page.evaluate(textOnly=>window.__settingsQA.publishVoice({playback:{kind:'interaction',status:'playing',textOnly,text:'嗯，轻轻的就好啦。'}}),textOnly);
+      assert.match(await page.locator('#voice-playback-status').textContent(),textOnly?/互动字幕/:/互动语音/);
+    }
+    await page.locator('#voice-stop').click();await page.waitForFunction(()=>window.__settingsQA.voiceSnapshot().playback.status==='idle');
+    assert.equal(await page.locator('#voice-stop').isDisabled(),true);
+    await page.evaluate(()=>window.__settingsQA.publishVoice({queuedInteraction:{kind:'poke-annoyed',expiresAt:Date.now()+1000}}));
+    assert.match(await page.locator('#voice-playback-status').textContent(),/稍后回应/);assert.equal(await page.locator('#voice-stop').isEnabled(),true);
+    await page.locator('#voice-stop').click();await page.waitForFunction(()=>window.__settingsQA.voiceSnapshot().queuedInteraction===null);
+    check('normal playback displays host text without a catalog; stopping clears active speech and queued interactions');
+    await page.evaluate(()=>window.__settingsQA.publishVoice({settings:{enabled:true,dnd:false,volume:.8,birthday:''},interactionAvailable:false,interactionError:'互动录音暂不可用，文字回应保留。'}));
+    assert.equal(await page.locator('#voice-interaction-error').isVisible(),true);
+    await page.evaluate(()=>window.__settingsQA.publishVoice({interactionAvailable:true,interactionError:null,environment:{monitorReady:false}}));
+    assert.equal(await page.locator('#voice-interaction-error').isHidden(),true);assert.match(await page.locator('#voice-playback-status').textContent(),/暂未就绪/);
+    for(const [field,description] of [['locked','锁屏'],['suspended','休眠'],['fullscreen','全屏']]){
+      await page.evaluate(field=>window.__settingsQA.publishVoice({environment:{monitorReady:true,[field]:true}}),field);
+      assert.match(await page.locator('#voice-playback-status').textContent(),new RegExp(description));
+    }
+    await page.evaluate(()=>window.__settingsQA.publishVoice({environment:{monitorReady:true,locked:false,suspended:false,fullscreen:false}}));
+    check('normal voice status explains quiet desktop states and missing interaction recordings without test actions');
+    await capture('voice-controls');
+
     await page.locator('[data-tab="animation"]').focus(); await page.keyboard.press('ArrowRight');
     assert.equal(await page.locator('[data-tab="desktop"]').getAttribute('aria-selected'), 'true');
+    await page.keyboard.press('ArrowRight'); assert.equal(await page.locator('[data-tab="interaction"]').getAttribute('aria-selected'),'true');
+    await page.keyboard.press('ArrowRight'); assert.equal(await page.locator('[data-tab="voice"]').getAttribute('aria-selected'),'true');
+    await page.keyboard.press('ArrowRight'); assert.equal(await page.locator('[data-tab="appearance"]').getAttribute('aria-selected'),'true');
+    await page.keyboard.press('ArrowLeft'); assert.equal(await page.locator('[data-tab="voice"]').getAttribute('aria-selected'),'true');
     await page.keyboard.press('Home'); assert.equal(await page.locator('[data-tab="appearance"]').getAttribute('aria-selected'), 'true');
-    check('keyboard tab navigation selects and focuses panels');
+    await page.keyboard.press('End'); assert.equal(await page.locator('[data-tab="voice"]').getAttribute('aria-selected'),'true');
+    assert.equal(await page.locator('[role=tab][tabindex="0"]').count(),1);
+    assert.equal(await page.locator('[role=tabpanel]:visible').count(),1);
+    check('five-tab keyboard navigation supports both arrows, wraparound, Home and End with one active panel');
 
     await page.setViewportSize({ width: 500, height: 500 });
-    for (const name of ['appearance', 'animation', 'desktop']) { await tab(name); await layout(`minimum client layout: ${name}`); await capture(`${name}-compact`); }
+    for (const name of ['appearance', 'animation', 'desktop', 'interaction', 'voice']) { await tab(name); await layout(`minimum client layout: ${name}`); await capture(`${name}-compact`); }
+    await tab('interaction');
+    await page.locator('.trail-styles').scrollIntoViewIfNeeded();
+    const compactStyleCards=await page.locator('.trail-style-card').evaluateAll(cards=>cards.map(card=>({right:card.getBoundingClientRect().right,contentWidth:card.scrollWidth,width:card.clientWidth})));
+    for(const card of compactStyleCards){assert.ok(card.right<=500);assert.ok(card.contentWidth<=card.width);}
+    await capture('interaction-trail-styles-compact',false);
+    check('all three preview cards fit the 500px settings window');
+    await page.locator('.trail-duration').scrollIntoViewIfNeeded();
+    const compactDuration=await page.locator('.trail-duration').evaluate(node=>({right:node.getBoundingClientRect().right,contentWidth:node.scrollWidth,width:node.clientWidth}));
+    assert.ok(compactDuration.right<=500&&compactDuration.contentWidth<=compactDuration.width);
+    assert.equal(await durationField.isVisible(),true);await capture('interaction-trail-duration-compact',false);
+    check('duration number field, unit and slider fit the 500px settings window');
     await page.setViewportSize({ width: 900, height: 800 }); await tab('appearance'); await layout('large window layout'); await capture('appearance-large');
     assert.deepEqual(errors, []); check('no uncaught page errors');
     report.calls = calls; report.passed = true;

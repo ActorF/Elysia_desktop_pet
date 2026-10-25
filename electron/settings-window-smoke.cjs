@@ -55,6 +55,10 @@ async function checkSettingsWindow({ window: pet, getState, settingsFile, buildM
     assert.equal(preferences.sandbox, true); assert.equal(preferences.contextIsolation, true); assert.equal(preferences.nodeIntegration, false);
     const isolation = await panel.webContents.executeJavaScript(`({petBridge:typeof window.elysiaDesktop,node:typeof window.require})`);
     assert.deepEqual(isolation, {petBridge:'undefined',node:'undefined'});
+    const tabIds = await panel.webContents.executeJavaScript("[...document.querySelectorAll('[role=tab]')].map(tab=>tab.dataset.tab)");
+    assert.deepEqual(tabIds, ['appearance','animation','desktop','interaction','voice'], 'Settings exposes five independent categories');
+    const voiceSurface=await panel.webContents.executeJavaScript("({auditions:document.querySelectorAll('[data-voice-play], [data-voice-simulate], #voice-sample-tools, #voice-category').length,play:typeof window.elysiaSettings.playVoice,simulate:typeof window.elysiaSettings.simulateVoice,stop:typeof window.elysiaSettings.stopVoice,preferences:typeof window.elysiaSettings.setVoiceSettings})");
+    assert.deepEqual(voiceSurface,{auditions:0,play:'undefined',simulate:'undefined',stop:'function',preferences:'function'},'Production voice UI retains preferences and stop without audition or simulation entrypoints');
     assert.equal(panel.isMovable(), true); assert.equal(panel.isResizable(), true); assert.equal(panel.getParentWindow(), null);
     const outer=panel.getBounds(),content=panel.getContentBounds();
     assert.ok(outer.height-content.height<=4,'Frameless settings must not reserve a native title bar');
@@ -119,6 +123,50 @@ async function checkSettingsWindow({ window: pet, getState, settingsFile, buildM
     updateSettings({motionAmplitude:2,motionSpeed:3,eyeWarpStrength:0});
     await verifySettings('external host preference broadcast',expected);
 
+    await panel.webContents.executeJavaScript("document.querySelector('[data-tab=interaction]').click(); true");
+    for (const patch of [
+      {interactionsEnabled:false,cursorTrailEnabled:true},
+      {interactionsEnabled:false,cursorTrailEnabled:false},
+      {interactionsEnabled:true,cursorTrailEnabled:false},
+    ]) {
+      expected = {...expected,...patch};
+      await panel.webContents.executeJavaScript(`(() => {
+        const patch=${JSON.stringify(patch)};
+        for (const [key,value] of Object.entries(patch)) {
+          const input=document.querySelector('[data-setting="'+key+'"]');
+          if(input.checked!==value)input.click();
+        }
+        return true;
+      })()`);
+      await verifySettings('interaction and cursor-trail switches save independently',expected);
+      const checked = await panel.webContents.executeJavaScript("({interactionsEnabled:document.querySelector('[name=interactionsEnabled]').checked,cursorTrailEnabled:document.querySelector('[name=cursorTrailEnabled]').checked})");
+      assert.deepEqual(checked,patch,'The settings controls reflect both independently saved values');
+    }
+    const styleChoices = await panel.webContents.executeJavaScript("[...document.querySelectorAll('[name=cursorTrailStyle]')].map(input=>({value:input.value,disabled:input.disabled}))");
+    assert.deepEqual(styleChoices,[{value:'pink',disabled:false},{value:'ribbon',disabled:false},{value:'stardust',disabled:false}], 'All three styles stay selectable while cursor trail is off');
+    for (const style of ['pink','ribbon','stardust']) {
+      expected={...expected,cursorTrailStyle:style};
+      await panel.webContents.executeJavaScript(`document.querySelector('[name="cursorTrailStyle"][value="${style}"]').click(); true`);
+      await verifySettings('cursor-trail style saves while the trail is disabled',expected);
+      assert.equal(getState().settings.cursorTrailEnabled,false,'Selecting a style does not enable cursor trail');
+      assert.equal(getState().settings.interactionsEnabled,true,'Selecting a style does not change click interactions');
+      const selectedStyle=await panel.webContents.executeJavaScript("document.querySelector('[name=cursorTrailStyle]:checked')?.value");
+      assert.equal(selectedStyle,style);
+    }
+    const durationAttributes=await panel.webContents.executeJavaScript("(() => {const input=document.querySelector('[name=cursorTrailDurationValue]');return {disabled:input.disabled,min:input.min,max:input.max,step:input.step}})()");
+    assert.deepEqual(durationAttributes,{disabled:false,min:'0.1',max:'5',step:'0.1'},'Trail duration accepts decimal seconds while the trail is off');
+    for(const duration of [.1,5,1.7]) {
+      expected={...expected,cursorTrailDuration:duration};
+      await panel.webContents.executeJavaScript(`(() => {const input=document.querySelector('[name=cursorTrailDurationValue]');input.value='${duration}';input.dispatchEvent(new Event('change',{bubbles:true}));return true})()`);
+      await verifySettings('cursor-trail duration saves through UI, IPC and disk',expected);
+      assert.equal(getState().settings.cursorTrailEnabled,false);assert.equal(getState().settings.interactionsEnabled,true);assert.equal(getState().settings.cursorTrailStyle,'stardust');
+    }
+    await panel.webContents.executeJavaScript("document.querySelector('[aria-label=\"恢复默认轨迹保留时间\"]').click(); true");
+    expected={...expected,cursorTrailDuration:.6};await verifySettings('duration default button restores 0.6 seconds',expected);
+    await panel.webContents.executeJavaScript("(() => {const input=document.querySelector('[name=cursorTrailDurationValue]');input.value='1.3';input.dispatchEvent(new Event('change',{bubbles:true}));return true})()");
+    expected={...expected,cursorTrailDuration:1.3};await verifySettings('decimal duration persists while the trail stays off',expected);
+    await verifyPet('independent interaction settings');
+
     const tea={...originalAppearance,pose:'tea'};
     await request('action',{type:'pose',id:'tea'});await waitAppearance('settings action selects tea',tea);
     const heart={...tea,expression:'heart'};
@@ -148,6 +196,10 @@ async function checkSettingsWindow({ window: pet, getState, settingsFile, buildM
     assert.notEqual(panel.id,firstId,'Closing and reopening creates one fresh settings window');
     assert.equal((await settingsWindow.open()).id,panel.id,'Reopened settings is still a singleton');
     assert.deepEqual((await panelSnapshot()).state.settings,expected,'Reopened settings retains saved controls');
+    const reopenedInteractionSettings = await panel.webContents.executeJavaScript("({interactionsEnabled:document.querySelector('[name=interactionsEnabled]').checked,cursorTrailEnabled:document.querySelector('[name=cursorTrailEnabled]').checked})");
+    assert.deepEqual(reopenedInteractionSettings,{interactionsEnabled:expected.interactionsEnabled,cursorTrailEnabled:expected.cursorTrailEnabled},'Reopened controls retain the independently saved interaction switches');
+    assert.equal(await panel.webContents.executeJavaScript("document.querySelector('[name=cursorTrailStyle]:checked')?.value"),expected.cursorTrailStyle,'Reopening settings restores the saved trail style');
+    assert.equal(await panel.webContents.executeJavaScript("document.querySelector('[name=cursorTrailDurationValue]').valueAsNumber"),expected.cursorTrailDuration,'Reopening settings restores the saved decimal trail duration');
     assert.deepEqual(appearanceOf((await panelSnapshot()).state.appearance),smile,'Reopened settings retains current pet appearance');
     records.push({description:'move/resize/close/reopen preserve the independent pet',firstId,reopenedId:panel.id});
   } finally {
@@ -167,7 +219,7 @@ async function checkSettingsWindow({ window: pet, getState, settingsFile, buildM
     assert.equal(pet.isDestroyed(),false);assert.equal(pet.isVisible(),false);
   }
   return {checks:records,trayOnlySettingsAndExit:true,independentMovableWindow:true,frameless:true,customCloseKeepsPet:true,windowControlSenderValidation:true,windowStateBridge:true,maximizeNotInvokedWhileHidden:true,singletonReopen:true,petCanvasAndUrlPreserved:true,
-    isolatedSettingsBridge:true,ipcAndPersistence:true,externalActionSync:true,clickThroughRecovery:true,hiddenThroughout:true,
+    isolatedSettingsBridge:true,ipcAndPersistence:true,interactionSwitchPersistence:true,cursorTrailStylePersistence:true,cursorTrailDurationPersistence:true,productionVoiceControlsOnly:true,fiveSettingsTabs:true,externalActionSync:true,clickThroughRecovery:true,hiddenThroughout:true,
     originalSettingsAndAppearanceRestored:true,syntheticGlobalInput:false};
 }
 module.exports={checkSettingsWindow};
