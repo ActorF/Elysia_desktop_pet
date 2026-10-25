@@ -8,13 +8,11 @@
 
 ## 下载程序
 
-**[下载 Windows 便携版 · 已发布版本 1.1.0](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.1.0/Elysia_desktop_pet-1.1.0.exe)**
+**[下载 Windows 便携版 · 1.2.0](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.2.0/Elysia_desktop_pet-1.2.0.exe)**
 
-[更新说明](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.1.0) · [SHA256 校验文件](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.1.0/Elysia_desktop_pet-1.1.0.exe.sha256)
+[更新说明](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.2.0) · [SHA256 校验文件](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.2.0/Elysia_desktop_pet-1.2.0.exe.sha256)
 
-**1.2.0 已合并至 `main`。** 独立设置窗口、摆动幅度与速度调节、眼睛跟随幅度调节和任务栏层级选择已包含在主分支源码中，见 [1.2.0 更新说明](docs/releases/v1.2.0.md)。
-
-GitHub Releases 当前提供的 EXE 仍为 **1.1.0**；1.2.0 的 EXE 尚未发布。体验 1.2.0 请按下方说明[从 `main` 源码运行](#源码运行)，也可自行打包。
+**1.2.0 新增：** 独立设置窗口，自由调节摆动幅度、摆动速度和眼睛跟随幅度，还能选择让任务栏或桌宠显示在前面。详见 [1.2.0 更新说明](docs/releases/v1.2.0.md)。
 
 下载后双击 EXE 即可运行，无需安装 Node.js。升级前先从右下角托盘退出旧版；1.2.0 会保留已有的位置、大小、装扮开关和偏好，无需手动迁移。
 
@@ -23,7 +21,7 @@ GitHub Releases 当前提供的 EXE 仍为 **1.1.0**；1.2.0 的 EXE 尚未发�
 
 **下载提示：** 当前版本未进行数字签名。如果 Edge 提示“isn't commonly downloaded（不常下载）”，确认文件来自本仓库发布页后，在下载列表选择 **⋯ → 保留 → 显示更多 → 仍然保留**，等待下载完成。[微软操作说明](https://learn.microsoft.com/en-us/troubleshoot/microsoft-edge/development/download-failures#check-security-and-smartscreen-settings)
 
-**下载完成后，如果文件仍叫 `Unconfirmed 数字.crdownload`，可以将后缀改为 `.exe` 使用。** 先在文件资源管理器中显示“文件扩展名”，再将完整文件名改为 **`Elysia_desktop_pet-1.1.0.exe`**，不要保留末尾的 `.crdownload`。此操作只适用于已经完整下载的文件；仍在下载或下载中断时，请先完成下载。
+**下载完成后，如果文件仍叫 `Unconfirmed 数字.crdownload`，可以将后缀改为 `.exe` 使用。** 先在文件资源管理器中显示“文件扩展名”，再将完整文件名改为 **`Elysia_desktop_pet-1.2.0.exe`**，不要保留末尾的 `.crdownload`。此操作只适用于已经完整下载的文件；仍在下载或下载中断时，请先完成下载。
 
 </details>
 
@@ -61,8 +59,6 @@ GitHub Releases 当前提供的 EXE 仍为 **1.1.0**；1.2.0 的 EXE 尚未发�
 <p align="center"><a href="docs/media/megaphone-key-cloud.webm">观看喇叭按键特效</a> · 仅图像效果，无声音</p>
 
 ## 使用
-
-以下说明对应 **`main` 分支的 1.2.0**。上方可下载的 1.1.0 仍通过原有托盘菜单操作。
 
 ### 鼠标与托盘
 
@@ -145,10 +141,10 @@ Enter、Ctrl、Tab、方向键等功能键，以及 Ctrl／Alt／Win 快捷组�
 
 ## 源码运行
 
-需要 **Windows、Node.js 22 或更新版本**。克隆 `main` 分支即可运行 1.2.0；浏览器视觉检查还需要 Microsoft Edge。
+需要 **Windows、Node.js 22 或更新版本**。克隆仓库后安装依赖并启动；浏览器视觉检查还需要 Microsoft Edge。
 
 ```powershell
-git clone --branch main https://github.com/ActorF/Elysia_desktop_pet.git
+git clone https://github.com/ActorF/Elysia_desktop_pet.git
 cd Elysia_desktop_pet
 npm ci
 npm start
