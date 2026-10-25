@@ -12,7 +12,9 @@
 
 [更新说明](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.1.0) · [SHA256 校验文件](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.1.0/Elysia_desktop_pet-1.1.0.exe.sha256)
 
-**当前 `version-control` 分支为 1.2.0 预览版，等待审核合并。** 1.2.0 尚未发布 EXE，上方下载仍是 1.1.0。新版的独立设置窗口和动画调节可通过[源码运行](#源码运行)体验，改动见 [1.2.0 更新说明](docs/releases/v1.2.0.md)。
+**1.2.0 已合并至 `main`。** 独立设置窗口、摆动幅度与速度调节、眼睛跟随幅度调节和任务栏层级选择已包含在主分支源码中，见 [1.2.0 更新说明](docs/releases/v1.2.0.md)。
+
+GitHub Releases 当前提供的 EXE 仍为 **1.1.0**；1.2.0 的 EXE 尚未发布。体验 1.2.0 请按下方说明[从 `main` 源码运行](#源码运行)，也可自行打包。
 
 下载后双击 EXE 即可运行，无需安装 Node.js。升级前先从右下角托盘退出旧版；1.2.0 会保留已有的位置、大小、装扮开关和偏好，无需手动迁移。
 
@@ -60,7 +62,7 @@
 
 ## 使用
 
-以下说明对应 **1.2.0 分支预览版**。已发布的 1.1.0 仍通过原有托盘菜单操作。
+以下说明对应 **`main` 分支的 1.2.0**。上方可下载的 1.1.0 仍通过原有托盘菜单操作。
 
 ### 鼠标与托盘
 
@@ -143,10 +145,10 @@ Enter、Ctrl、Tab、方向键等功能键，以及 Ctrl／Alt／Win 快捷组�
 
 ## 源码运行
 
-需要 **Windows、Node.js 22 或更新版本**。克隆 `version-control` 分支即可运行 1.2.0 预览版；浏览器视觉检查还需要 Microsoft Edge。
+需要 **Windows、Node.js 22 或更新版本**。克隆 `main` 分支即可运行 1.2.0；浏览器视觉检查还需要 Microsoft Edge。
 
 ```powershell
-git clone --branch version-control https://github.com/ActorF/Elysia_desktop_pet.git
+git clone --branch main https://github.com/ActorF/Elysia_desktop_pet.git
 cd Elysia_desktop_pet
 npm ci
 npm start

@@ -13,7 +13,9 @@ A chibi Elysia companion for Windows, with a transparent full-body character, mo
 
 [Release notes](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.1.0) · [SHA256 checksum](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.1.0/Elysia_desktop_pet-1.1.0.exe.sha256)
 
-**The `version-control` branch contains the 1.2.0 preview, awaiting review and merge.** There is no published 1.2.0 EXE yet; the download above is still 1.1.0. To try the new settings window and animation controls, [run this branch from source](#run-from-source). See the [1.2.0 changes](docs/releases/v1.2.0.md).
+**Version 1.2.0 has been merged into `main`.** The main branch includes the independent settings window, adjustable sway amplitude and speed, eye-follow strength, and taskbar layering. See the [1.2.0 changes](docs/releases/v1.2.0.md).
+
+The EXE currently available on GitHub Releases is still **1.1.0**; a 1.2.0 EXE has not been published yet. To use 1.2.0, [run `main` from source](#run-from-source) or build the portable app using the instructions below.
 
 Download and double-click the EXE to run; no Node.js installation is needed. Before upgrading, quit the old version from the tray. Version 1.2.0 keeps your position, size, outfit switches, and preferences without manual migration.
 
@@ -66,7 +68,7 @@ A pale pink-and-white cloud shows a single character above her hand during Idle,
 
 ## Usage
 
-These instructions describe the **1.2.0 branch preview**. The published 1.1.0 release still uses its original tray menus.
+These instructions describe **version 1.2.0 on `main`**. The downloadable 1.1.0 release still uses its original tray menus.
 
 ### Mouse and system tray
 
@@ -149,10 +151,10 @@ Space shortcuts work while other windows are active and do not block those apps 
 
 ## Run from source
 
-Requires **Windows and Node.js 22 or later**. Clone the `version-control` branch to run the 1.2.0 preview. Browser-based visual checks also require Microsoft Edge.
+Requires **Windows and Node.js 22 or later**. Clone the `main` branch to run 1.2.0. Browser-based visual checks also require Microsoft Edge.
 
 ```powershell
-git clone --branch version-control https://github.com/ActorF/Elysia_desktop_pet.git
+git clone --branch main https://github.com/ActorF/Elysia_desktop_pet.git
 cd Elysia_desktop_pet
 npm ci
 npm start
