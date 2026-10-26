@@ -6,6 +6,7 @@ const { createHash, randomUUID } = require('node:crypto');
 const { spawn } = require('node:child_process');
 const manifestDefault = require('./chat-bootstrap-manifest.json');
 const { EXTRACT_SCRIPT } = require('./chat-runtime-extract.cjs');
+const { createRuntimeDependencies, validDependenciesManifest } = require('./chat-runtime-dependencies.cjs');
 
 const SETUP_MODEL = 'elysia-chat';
 const SETUP_BASE_URL = 'http://127.0.0.1:18434';
@@ -18,6 +19,8 @@ const ERRORS = Object.freeze({
   archive: '聊天运行环境解压失败，请检查磁盘空间后重试。',
   storage: '无法保存聊天资源，请检查用户目录权限和磁盘空间。',
   conflict: '暂时无法替换聊天运行环境，请关闭正在使用该目录的程序后重试。',
+  'dependencies-source': '安装包中的聊天运行库资源缺失或校验失败，请重新下载完整安装包后重试。无需自行安装系统运行库。',
+  dependencies: '聊天运行库准备失败，请退出桌宠后重试，并检查用户目录权限和磁盘空间。',
   port: '本地聊天端口 18434 已被其他程序占用，请关闭占用程序后重试。',
   start: '本地聊天服务未能启动，请检查可用内存和显卡驱动后重试。',
 });
@@ -27,6 +30,7 @@ const checkAbort = signal => { if (signal.aborted) throw cancelled(); };
 const ordinaryFile = file => { try { const s = fs.lstatSync(file); return s.isFile() && !s.isSymbolicLink(); } catch { return false; } };
 function validManifest(value) {
   return value?.version === 1 && value.backend === 'llama.cpp-v1' && value.runtime?.arch === 'x64'
+    && validDependenciesManifest(value.runtimeDependencies)
     && Array.isArray(value.runtime.required) && value.runtime.required.includes('llama-server.exe') && value.runtime.required.length < 100
     && value.runtime.required.every(file => /^[a-zA-Z0-9_-]+\.(?:exe|dll)$/.test(file))
     && ['runtime', 'model'].every(key => {
@@ -50,11 +54,14 @@ function allowedDownload(url) {
 
 function createModelSetup({ userData, onChange = () => {}, fetchImpl = globalThis.fetch, spawnImpl = spawn,
   platform = process.platform, arch = process.arch, env = process.env, manifest = manifestDefault,
+  resourcesPath = process.resourcesPath, assetDirectory,
   probeTimeoutMs = 1500, startTimeoutMs = 180000, pollIntervalMs = 500,
   downloadTimeoutMs = 4 * 60 * 60 * 1000, extractionTimeoutMs = 5 * 60 * 1000 } = {}) {
   if (typeof userData !== 'string' || !path.isAbsolute(userData)) throw new TypeError('userData must be an absolute directory.');
   let manifestValid = false;
   try { manifestValid = validManifest(manifest); } catch {}
+  const runtimeDependencies = createRuntimeDependencies({ manifest: manifest?.runtimeDependencies,
+    resourcesPath, assetDirectory, env, spawnImpl, extractionTimeoutMs });
   const runtimeRoot = path.join(userData, 'chat-runtime');
   const modelRoot = path.join(userData, 'chat-models');
   const modelPath = path.join(modelRoot, manifestValid ? manifest.model.file : 'invalid.gguf');
@@ -83,8 +90,11 @@ function createModelSetup({ userData, onChange = () => {}, fetchImpl = globalThi
         && (!payload || value.modifiedAt === fs.statSync(payload).mtimeMs);
     } catch { return false; }
   }
+  function runtimeInstalled() {
+    return manifestValid && manifest.runtime.required.every(file => ordinaryFile(path.join(runtimeRoot, file))) && markerMatches(runtimeMarker, manifest.runtime);
+  }
   function resources() {
-    const runtimeReady = manifestValid && manifest.runtime.required.every(file => ordinaryFile(path.join(runtimeRoot, file))) && markerMatches(runtimeMarker, manifest.runtime);
+    const runtimeReady = runtimeInstalled() && runtimeDependencies.ready(runtimeRoot);
     let modelReady = false;
     try { modelReady = manifestValid && ordinaryFile(modelPath) && fs.statSync(modelPath).size === manifest.model.bytes && markerMatches(modelMarker, manifest.model, modelPath); } catch {}
     return { runtimeReady, modelReady };
@@ -208,7 +218,7 @@ function createModelSetup({ userData, onChange = () => {}, fetchImpl = globalThi
   async function prepare(signal) {
     if (!manifestValid) throw failure('manifest');
     let available = resources();
-    if (!available.runtimeReady) {
+    if (!runtimeInstalled()) {
       if (fs.existsSync(runtimeRoot)) {
         const existing = await fs.promises.lstat(runtimeRoot);
         if (!existing.isDirectory() || existing.isSymbolicLink()) throw failure('conflict');
@@ -231,6 +241,7 @@ function createModelSetup({ userData, onChange = () => {}, fetchImpl = globalThi
         await fs.promises.rename(stage, runtimeRoot);
       } finally { await fs.promises.rm(stage, { recursive: true, force: true }).catch(() => {}); }
     }
+    await prepareRuntimeDependencies(signal);
     if (!available.modelReady) {
       await fs.promises.mkdir(modelRoot, { recursive: true });
       phase('pulling-model', '正在下载本地聊天模型，取消后可继续下载…');
@@ -239,6 +250,12 @@ function createModelSetup({ userData, onChange = () => {}, fetchImpl = globalThi
       const temp = modelMarker + `.${randomUUID()}.tmp`;
       await fs.promises.writeFile(temp, JSON.stringify({ bytes: manifest.model.bytes, sha256: manifest.model.sha256, modifiedAt: fs.statSync(modelPath).mtimeMs }));
       await fs.promises.rename(temp, modelMarker);
+    }
+  }
+  async function prepareRuntimeDependencies(signal) {
+    if (!runtimeDependencies.ready(runtimeRoot)) {
+      phase('installing', '正在准备桌宠专用的聊天运行库…');
+      await runtimeDependencies.prepare(runtimeRoot, signal);
     }
   }
   function stopServer() {
@@ -283,7 +300,7 @@ function createModelSetup({ userData, onChange = () => {}, fetchImpl = globalThi
       const device = await selectDevice(signal); checkAbort(signal);
       let child;
       const args = ['--model', modelPath, '--alias', SETUP_MODEL, '--host', '127.0.0.1', '--port', '18434',
-        '--ctx-size', '8192', '--parallel', '1', '--jinja', '--no-webui', '--fit', 'on', '--fit-target', '3072',
+        '--ctx-size', '16384', '--parallel', '1', '--jinja', '--no-webui', '--fit', 'on', '--fit-target', '3072',
         '--device', device, '--threads', '8', '--reasoning-budget', '0', '--reasoning-format', 'deepseek',
         '--chat-template-kwargs', '{"enable_thinking":false}'];
       const powershell = path.join(env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
@@ -325,6 +342,7 @@ function createModelSetup({ userData, onChange = () => {}, fetchImpl = globalThi
       if (platform !== 'win32' || arch !== 'x64') throw failure('unsupported');
       if (!manifestValid) throw failure('manifest');
       if (install) await prepare(signal);
+      else if (runtimeInstalled()) await prepareRuntimeDependencies(signal);
       const available = resources();
       if (!available.runtimeReady || !available.modelReady) {
         result = { phase: available.runtimeReady ? 'needs-model' : 'needs-install', ...available,

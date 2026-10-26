@@ -6,7 +6,7 @@ const path = require('node:path');
 const { createHash } = require('node:crypto');
 const { spawn, execFileSync } = require('node:child_process');
 const { createModelSetup, SETUP_BASE_URL } = require('../electron/model-setup.cjs');
-const { createChatService } = require('../electron/chat-service.cjs');
+const { createChatService, MAX_MESSAGE_LENGTH } = require('../electron/chat-service.cjs');
 const { createChatSpeech, getChatSpeechBlockReason, wavDuration } = require('../electron/chat-speech.cjs');
 
 const root = path.resolve(__dirname, '..');
@@ -102,6 +102,24 @@ async function startInstalled(name) {
   report.timings[name] = Date.now() - mark;
   note({ ready: true, durationMs: report.timings[name] });
 }
+function verifyLocalRuntimeLibraries() {
+  const servers = collectOwned().filter(item => item.Name.toLowerCase() === 'llama-server.exe');
+  assert.ok(servers.length, 'The managed llama.cpp process must be running');
+  const ids = servers.map(item => Number(item.ProcessId));
+  assert.ok(ids.every(Number.isSafeInteger));
+  const command = "$ErrorActionPreference = 'Stop'; ConvertTo-Json -InputObject @((Get-Process -Id " + ids.join(',')
+    + ").Modules | Where-Object { $_.ModuleName -match '^(msvcp140|vcruntime140|vcruntime140_1)\\.dll$' } | Select-Object ModuleName,FileName) -Compress";
+  const modules = JSON.parse(execFileSync('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', command],
+    { windowsHide: true, encoding: 'utf8', timeout: 15000 }));
+  const expected = ['msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll'];
+  for (const name of expected) {
+    const loaded = modules.filter(item => item.ModuleName.toLowerCase() === name);
+    assert.ok(loaded.length, `The managed server must load ${name}`);
+    for (const entry of loaded) assert.equal(path.dirname(entry.FileName).toLowerCase(), path.join(userData, 'chat-runtime').toLowerCase(),
+      `${name} must load from the app's prepared runtime, not depend on a system installation`);
+  }
+  report.appLocalVisualCpp = { passed: true, modules };
+}
 async function cleanup(name) {
   collectOwned();
   speech?.dispose(); speech = null; chat?.dispose(); chat = null; setup?.dispose(); setup = null;
@@ -140,6 +158,7 @@ function waveProperties(bytes) {
 }
 async function main() {
   await startInstalled('first-start');
+  verifyLocalRuntimeLibraries();
   stage = 'chat'; const chatStart = Date.now();
   chat = createChatService({ directory: path.join(directory, 'synthetic-history'), fetchImpl: localFetch });
   const configured = chat.setSettings({ username: '测试旅人' }); assert.equal(configured.storageError, null);
@@ -150,6 +169,23 @@ async function main() {
   assert.equal(reply.status, 'complete'); assert.match(reply.content, /[\u3400-\u9fff]/); assert.doesNotMatch(reply.content, /<think>/i);
   report.replies.push({ request: 'synthetic greeting and strawberry cake', text: reply.content });
   report.timings.chatMs = Date.now() - chatStart; note({ replyComplete: true, durationMs: report.timings.chatMs });
+
+  stage = 'long-message'; const longStart = Date.now();
+  // This exact fixture exceeded the former 8192-token context in the v1.4.2 audit.
+  let longFixture = '以下是完全虚构的测试记录，只用于验证消息长度，请只回复“测试完成”。\n';
+  for (let i = 0; longFixture.length < MAX_MESSAGE_LENGTH; i++) {
+    longFixture += `第${String(i).padStart(4, '0')}条合成记录：星空、花园、咖啡和学习进度仅为软件测试样例，不含个人资料。\n`;
+  }
+  const longMessage = longFixture.slice(0, MAX_MESSAGE_LENGTH);
+  assert.equal(chat.send(longMessage).busy, true);
+  await until('Maximum-length Chinese message with full persona', () => !chat.getState().busy);
+  const longState = chat.getState();
+  assert.equal(longState.error, null); assert.equal(longState.storageError, null);
+  const longReply = longState.conversations.find(item => item.id === longState.activeConversationId).messages.at(-1);
+  assert.equal(longReply.status, 'complete'); assert.ok(longReply.content.trim());
+  report.maximumLengthMessage = { characters: longMessage.length, replyCharacters: longReply.content.length, passed: true };
+  report.timings.longMessageMs = Date.now() - longStart;
+  note({ maximumLengthMessage: report.maximumLengthMessage, durationMs: report.timings.longMessageMs });
 
   stage = 'simultaneous-tts'; const speechStart = Date.now();
   const voice = { settings: { dnd: false, volume: .8 },
@@ -177,6 +213,19 @@ async function main() {
   report.workingSetAfterSpeechBytes = collectOwned().reduce((sum, item) => sum + Number(item.WorkingSetSize), 0);
   report.manualSpeechDuringBusyScreen = true;
   note({ speechComplete: true, durationMs: report.timings.speechMs, clipCount: clips.length });
+
+  stage = 'warm-manual-speech'; const warmStart = Date.now(), firstClipCount = clips.length;
+  const originalWorker = children.find(item => item.kind === 'tts');
+  assert.ok(originalWorker && !originalWorker.exited, 'Manual completion must retain its worker with automatic reading disabled');
+  speech.refreshPermission();
+  assert.equal(speech.getState().status, 'ready');
+  assert.equal(speech.speak('一起去看夜空中的星星吧。', { messageId: 'synthetic-warm-runtime-check' }), true, speech.getState().error);
+  await until('Second distinct manual reply reuses its warm worker', () => !speech.isActive(), 600000);
+  assert.equal(speech.getState().error, null); assert.ok(clips.length > firstClipCount);
+  assert.equal(children.filter(item => item.kind === 'tts').length, 1, 'Different manual replies must share one worker');
+  assert.equal(originalWorker.exited, false);
+  report.manualSpeechWorkerReused = true; report.timings.warmSpeechMs = Date.now() - warmStart;
+  note({ manualSpeechWorkerReused: true, durationMs: report.timings.warmSpeechMs });
 
   stage = 'first-dispose'; await cleanup(stage); note({ noOrphans: true });
   await startInstalled('restart-from-disk');

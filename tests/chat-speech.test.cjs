@@ -292,6 +292,79 @@ test('explicit reading survives a stale BUSY sample on first click and later for
   assert.equal(f.played.length, played);
 });
 
+test('manual completion retains a reusable worker across synchronous voice updates with auto reading off', async t => {
+  const voice = voiceSnapshot(), claims = [];
+  let controller;
+  const f = fixture(t, {
+    isEnabled: () => false, idleTimeoutMs: 20,
+    getBlockReason: manual => getChatSpeechBlockReason(voice, { manual }),
+    claimAudio: value => { claims.push(value); controller.refreshPermission(); },
+  });
+  controller = f.controller;
+  assert.equal(controller.speak('第一条手动回复'), true);
+  const child = f.children[0]; finish(f, child);
+  assert.deepEqual(claims, [true, false]);
+  assert.equal(child.killCount, 0, 'Finishing must not reinterpret the manual worker as automatic speech');
+  assert.equal(controller.getState().status, 'ready');
+  voice.environment.fullscreen = true;
+  controller.refreshPermission(); controller.refreshPermission();
+  assert.equal(child.killCount, 0, 'Passive screen notifications preserve the manual idle timeout');
+  assert.equal(controller.speak('另一条未缓存的手动回复'), true);
+  assert.equal(f.children.length, 1);
+  assert.deepEqual(child.writes.filter(packet => packet.type === 'speak').map(packet => packet.text),
+    ['第一条手动回复', '另一条未缓存的手动回复']);
+  finish(f, child);
+  assert.deepEqual(claims, [true, false, true, false]);
+  assert.equal(child.killCount, 0);
+  await waitFor(() => child.killCount === 1);
+  assert.equal(controller.getState().status, 'idle', 'Manual retention still has a bounded idle timeout');
+});
+
+test('idle manual workers still release immediately when a hard speech restriction changes', async t => {
+  for (const restriction of ['dnd', 'volume', 'locked', 'suspended', 'monitorReady', 'window']) {
+    await t.test(restriction, sub => {
+      const voice = voiceSnapshot(); let controller;
+      const f = fixture(sub, {
+        isEnabled: () => false,
+        getBlockReason: manual => getChatSpeechBlockReason(voice, { manual }),
+        claimAudio: () => controller.refreshPermission(),
+      });
+      controller = f.controller;
+      assert.equal(controller.speak('完成后改变状态'), true);
+      const child = f.children[0]; finish(f, child);
+      assert.equal(child.killCount, 0);
+      if (restriction === 'window') f.gates.open = false;
+      else if (restriction === 'dnd') voice.settings.dnd = true;
+      else if (restriction === 'volume') voice.settings.volume = 0;
+      else voice.environment[restriction] = restriction !== 'monitorReady';
+      controller.refreshPermission(); controller.refreshPermission();
+      assert.equal(child.killCount, 1);
+      assert.equal(controller.getState().status, 'idle');
+      assert.equal(controller.isActive(), false);
+      child.packet(audio());
+      assert.equal(f.played.length, 1, 'Released workers cannot emit a late extra clip');
+    });
+  }
+});
+
+test('automatic reuse and warmup do not inherit the previous manual worker permission', t => {
+  for (const next of ['reply', 'warmup']) {
+    const voice = voiceSnapshot(); let controller;
+    const f = fixture(t, {
+      getBlockReason: manual => getChatSpeechBlockReason(voice, { manual }),
+      claimAudio: () => controller.refreshPermission(),
+    });
+    controller = f.controller;
+    controller.speak('先手动读一句'); const child = f.children[0]; finish(f, child);
+    assert.equal(child.killCount, 0);
+    if (next === 'reply') { assert.equal(controller.start('新的自动回复'), true); finish(f, child); }
+    else assert.equal(controller.warmup(), true);
+    assert.equal(f.children.length, 1);
+    voice.environment.fullscreen = true; controller.refreshPermission();
+    assert.equal(child.killCount, 1, 'Automatic workers must still observe passive notification blocking');
+  }
+});
+
 test('automatic warmup and reading retain BUSY protection while manual playback retains hard blocks', t => {
   const voice = voiceSnapshot(); voice.environment.fullscreen = true;
   const f = fixture(t, { getBlockReason: manual => getChatSpeechBlockReason(voice, { manual }) });

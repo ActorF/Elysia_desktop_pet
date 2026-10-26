@@ -97,7 +97,10 @@ function createChatSpeech({ root, projectRoot = 'D:\\Elysia_AI', getProjectRoot 
     scheduleIdle(); return getState();
   }
   function refreshPermission() {
-    if ((active || worker) && !permitted(active?.manual === true)) release();
+    // A completed manual request keeps its worker warm until the idle timeout.
+    // Releasing audio ownership publishes voice state after active is cleared.
+    const manual = active ? active.manual : worker?.manual === true;
+    if ((active || worker) && !permitted(manual)) release();
     return getState();
   }
   function write(owner, packet) {
@@ -179,7 +182,7 @@ function createChatSpeech({ root, projectRoot = 'D:\\Elysia_AI', getProjectRoot 
     let child;
     try { child = spawnImpl(python, ['-u', script, '--project-root', project, '--parent-pid', String(process.pid)], { cwd: project, windowsHide: true, env, stdio: ['pipe', 'pipe', 'pipe'] }); }
     catch { fail('无法启动本地朗读，请检查所选语音项目的环境。'); return null; }
-    const owner = { child, project, buffer: '', exited: false, warming: true, deadline: null };
+    const owner = { child, project, buffer: '', exited: false, warming: true, manual: false, deadline: null };
     worker = owner;
     owner.deadline = setTimeout(() => { if (worker === owner) fail('本次朗读等待超时，文字回答已保留。'); }, timeoutMs);
     child.stdout.setEncoding('utf8');
@@ -209,7 +212,7 @@ function createChatSpeech({ root, projectRoot = 'D:\\Elysia_AI', getProjectRoot 
     if (!permitted(false) || active) return false;
     const project = currentProject();
     if (!project) { fail('请在设置中选择有效的语音项目路径。'); return false; }
-    if (worker?.project === project) { scheduleIdle(); return true; }
+    if (worker?.project === project) { worker.manual = false; scheduleIdle(); return true; }
     const owner = ensureWorker(project); if (!owner) return false;
     status('warming', { messageId: null, cached: false }); return write(owner, { type: 'warmup' });
   }
@@ -247,7 +250,9 @@ function createChatSpeech({ root, projectRoot = 'D:\\Elysia_AI', getProjectRoot 
       queueMicrotask(() => { if (active === job) { try { playClip(job, cached.clips[0]); } catch { fail('朗读缓存无效，请重新生成语音。'); } } });
       return true;
     }
-    const owner = ensureWorker(project); return owner ? write(owner, { type: 'speak', text }) : false;
+    const owner = ensureWorker(project); if (!owner) return false;
+    owner.manual = manual;
+    return write(owner, { type: 'speak', text });
   }
   function report(event) {
     const job = active;

@@ -10,16 +10,25 @@ const { createHash } = require('node:crypto');
 const { createModelSetup, SETUP_MODEL, SETUP_BASE_URL } = require('../electron/model-setup.cjs');
 const originalManifest = require('../electron/chat-bootstrap-manifest.json');
 const { EXTRACT_SCRIPT } = require('../electron/chat-runtime-extract.cjs');
+const { DEPENDENCIES_EXTRACT_SCRIPT } = require('../electron/chat-runtime-dependencies.cjs');
 const json = value => new Response(JSON.stringify(value));
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 
 function fixture(t, options = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'elysia-llama-test-'));
+  const assetDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'elysia-llama-assets-test-'));
   const runtime = Buffer.from('test runtime archive'), model = Buffer.from('GGUFtest model bytes');
   const manifest = structuredClone(originalManifest);
   for (const [key, bytes] of [['runtime', runtime], ['model', model]]) Object.assign(manifest[key], { bytes: bytes.length, sha256: hash(bytes) });
+  const dependencyArchive = Buffer.from('test dependency archive');
+  Object.assign(manifest.runtimeDependencies.archive, { bytes: dependencyArchive.length, sha256: hash(dependencyArchive) });
+  const dependencyFiles = new Map(manifest.runtimeDependencies.files.map(item => {
+    const bytes = Buffer.from(`test dependency: ${item.file}`);
+    Object.assign(item, { bytes: bytes.length, sha256: hash(bytes) }); return [item.file, bytes];
+  }));
+  fs.writeFileSync(path.join(assetDirectory, manifest.runtimeDependencies.archive.file), dependencyArchive);
   const calls = [], processes = [], notices = [];
-  const f = { root, manifest, runtime, model, calls, processes, notices, online: false };
+  const f = { root, assetDirectory, manifest, runtime, model, dependencyFiles, calls, processes, notices, online: false };
   const spawnImpl = (file, args, spawnOptions) => {
     const actualArgs = args;
     if (spawnOptions.env?.ELYSIA_CHAT_ARGS) args = JSON.parse(spawnOptions.env.ELYSIA_CHAT_ARGS);
@@ -28,6 +37,11 @@ function fixture(t, options = {}) {
     const record = { file, args, actualArgs, options: spawnOptions, child }; processes.push(record);
     if (options.spawn) { options.spawn(record, f); return child; }
     if (spawnOptions.env?.ELYSIA_CHAT_SERVER) f.online = true;
+    else if (spawnOptions.env?.ELYSIA_CHAT_DEPENDENCY_STAGE) {
+      assert.equal(Buffer.from(args.at(-1), 'base64').toString('utf16le'), DEPENDENCIES_EXTRACT_SCRIPT);
+      for (const [file, bytes] of dependencyFiles) fs.writeFileSync(path.join(spawnOptions.env.ELYSIA_CHAT_DEPENDENCY_STAGE, file), bytes);
+      process.nextTick(() => child.emit('exit', 0));
+    }
     else if (path.basename(file) === 'powershell.exe') {
       assert.equal(Buffer.from(args.at(-1), 'base64').toString('utf16le'), EXTRACT_SCRIPT);
       for (const file of manifest.runtime.required) fs.writeFileSync(path.join(spawnOptions.env.ELYSIA_CHAT_STAGE, file), 'runtime');
@@ -44,10 +58,10 @@ function fixture(t, options = {}) {
     if (url === `${SETUP_BASE_URL}/v1/models`) return json({ data: [{ id: SETUP_MODEL }] });
     return new Response(url === manifest.runtime.url ? runtime : model);
   };
-  f.service = createModelSetup({ userData: root, platform: 'win32', arch: 'x64', manifest,
+  f.service = createModelSetup({ userData: root, platform: 'win32', arch: 'x64', manifest, assetDirectory,
     env: { SystemRoot: 'C:\\Windows' }, fetchImpl, spawnImpl, onChange: value => notices.push(value),
     startTimeoutMs: 100, pollIntervalMs: 1, ...options.service });
-  t.after(() => { f.service.dispose(); fs.rmSync(root, { recursive: true, force: true }); });
+  t.after(() => { f.service.dispose(); fs.rmSync(root, { recursive: true, force: true }); fs.rmSync(assetDirectory, { recursive: true, force: true }); });
   return f;
 }
 async function settled(service) {
@@ -59,6 +73,7 @@ function installed(f) {
   const runtime = path.join(f.root, 'chat-runtime'), models = path.join(f.root, 'chat-models');
   fs.mkdirSync(runtime, { recursive: true }); fs.mkdirSync(models, { recursive: true });
   for (const file of f.manifest.runtime.required) fs.writeFileSync(path.join(runtime, file), 'runtime');
+  for (const [file, bytes] of f.dependencyFiles) fs.writeFileSync(path.join(runtime, file), bytes);
   fs.writeFileSync(path.join(runtime, 'elysia-runtime.json'), JSON.stringify(f.manifest.runtime));
   fs.writeFileSync(path.join(models, f.manifest.model.file), f.model);
   fs.writeFileSync(path.join(models, 'elysia-model.json'), JSON.stringify({ ...f.manifest.model, modifiedAt: fs.statSync(path.join(models, f.manifest.model.file)).mtimeMs }));
@@ -84,7 +99,7 @@ test('fresh pinned setup verifies resources and starts only its hidden llama-ser
   assert.equal(server.options.env.ELYSIA_CHAT_PARENT_PID, String(process.pid));
   assert.match(server.actualArgs.at(-1), /chat-runtime-host\.ps1$/);
   for (const item of f.processes) { assert.equal(item.options.windowsHide, true); assert.equal(item.options.shell, false); }
-  for (const [flag, value] of [['--alias', SETUP_MODEL], ['--host', '127.0.0.1'], ['--port', '18434'], ['--ctx-size', '8192'], ['--parallel', '1'], ['--fit-target', '3072'], ['--device', 'Vulkan0'], ['--reasoning-budget', '0']]) assert.equal(server.args[server.args.indexOf(flag) + 1], value);
+  for (const [flag, value] of [['--alias', SETUP_MODEL], ['--host', '127.0.0.1'], ['--port', '18434'], ['--ctx-size', '16384'], ['--parallel', '1'], ['--fit-target', '3072'], ['--device', 'Vulkan0'], ['--reasoning-budget', '0']]) assert.equal(server.args[server.args.indexOf(flag) + 1], value);
   assert.ok(server.args.includes('--no-webui'));
   assert.deepEqual(JSON.parse(server.args[server.args.indexOf('--chat-template-kwargs') + 1]), { enable_thinking: false });
   assert.equal(fs.readdirSync(f.root).some(name => name.startsWith('chat-staging-')), false);
@@ -96,6 +111,37 @@ test('completed resources restart without downloads and duplicate requests reuse
   const f = fixture(t); installed(f); f.service.ensureInstalledServer(); f.service.ensureInstalledServer();
   assert.equal((await settled(f.service)).phase, 'ready'); f.service.ensureInstalledServer(); assert.equal((await settled(f.service)).phase, 'ready');
   assert.equal(servers(f).length, 1); assert.equal(downloads(f).length, 0);
+});
+
+test('existing 1.4.2 resources gain private VC libraries on startup without model downloads', async t => {
+  const f = fixture(t); installed(f);
+  for (const file of f.dependencyFiles.keys()) fs.unlinkSync(path.join(f.root, 'chat-runtime', file));
+  assert.equal((await f.service.inspect()).runtimeReady, false);
+  f.service.ensureInstalledServer(); const state = await settled(f.service);
+  assert.equal(state.phase, 'ready'); assert.equal(state.runtimeReady, true);
+  assert.equal(downloads(f).length, 0); assert.equal(servers(f).length, 1);
+  assert.equal(f.processes.filter(item => item.options.env?.ELYSIA_CHAT_DEPENDENCY_STAGE).length, 1);
+  for (const [file, bytes] of f.dependencyFiles) assert.deepEqual(fs.readFileSync(path.join(f.root, 'chat-runtime', file)), bytes);
+});
+
+test('damaged private VC library is repaired from the pinned bundle before startup', async t => {
+  const f = fixture(t); installed(f);
+  const damaged = path.join(f.root, 'chat-runtime', 'vcruntime140.dll'); fs.writeFileSync(damaged, 'damaged');
+  f.service.ensureInstalledServer(); assert.equal((await settled(f.service)).phase, 'ready');
+  assert.deepEqual(fs.readFileSync(damaged), f.dependencyFiles.get('vcruntime140.dll'));
+  assert.equal(downloads(f).length, 0);
+  assert.ok(fs.readdirSync(path.dirname(damaged)).some(name => name.startsWith('vcruntime140.dll.unverified-')));
+});
+
+test('invalid bundled VC resources stop before model download and report a specific repair message', async t => {
+  const f = fixture(t);
+  const archive = path.join(f.assetDirectory, f.manifest.runtimeDependencies.archive.file);
+  const original = fs.readFileSync(archive); fs.writeFileSync(archive, Buffer.alloc(original.length));
+  f.service.installChatModel(); const failed = await settled(f.service);
+  assert.equal(failed.phase, 'error'); assert.match(failed.error, /聊天运行库资源缺失或校验失败/);
+  assert.deepEqual(downloads(f).map(item => item.url), [f.manifest.runtime.url]); assert.equal(servers(f).length, 0);
+  fs.writeFileSync(archive, original); f.service.installChatModel();
+  assert.equal((await settled(f.service)).phase, 'ready');
 });
 
 test('startup never downloads missing resources', async t => {
@@ -203,12 +249,14 @@ test('same-size model edits invalidate readiness and startup does not load the c
 });
 
 test('missing required DLL invalidates runtime and explicit retry repairs it', async t => {
+  for (const filename of ['llama-server-impl.dll', 'mtmd.dll']) {
   const f = fixture(t); installed(f);
-  fs.unlinkSync(path.join(f.root, 'chat-runtime', 'llama-server-impl.dll'));
+  fs.unlinkSync(path.join(f.root, 'chat-runtime', filename));
   f.service.ensureInstalledServer(); assert.equal((await settled(f.service)).phase, 'needs-install'); assert.equal(servers(f).length, 0);
   f.service.installChatModel(); assert.equal((await settled(f.service)).phase, 'ready');
-  assert.ok(fs.existsSync(path.join(f.root, 'chat-runtime', 'llama-server-impl.dll')));
+  assert.ok(fs.existsSync(path.join(f.root, 'chat-runtime', filename)));
   assert.deepEqual(downloads(f).map(call => call.url), [f.manifest.runtime.url]);
+  }
 });
 
 test('pinned Hugging Face model follows the official CDN redirect used by the live asset', async t => {

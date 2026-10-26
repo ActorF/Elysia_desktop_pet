@@ -4,11 +4,26 @@
   "runtime": {
     "version": "b11669",
     "arch": "x64",
-    "required": ["llama-server.exe", "llama-server-impl.dll", "llama-common.dll", "llama.dll", "ggml.dll", "ggml-base.dll", "ggml-cpu-x64.dll", "ggml-vulkan.dll", "libomp.dll"],
+    "required": ["llama-server.exe", "llama-server-impl.dll", "llama-common.dll", "llama.dll", "ggml.dll", "ggml-base.dll", "ggml-cpu-x64.dll", "ggml-vulkan.dll", "libomp.dll", "mtmd.dll"],
     "file": "llama-b11669-bin-win-vulkan-x64.zip",
     "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11669/llama-b11669-bin-win-vulkan-x64.zip",
     "bytes": 32182350,
     "sha256": "2c07574e7bde71321cb785282b20cc821e951132149eeceeea32ddebdbf0598e"
+  },
+  "runtimeDependencies": {
+    "archive": {
+      "file": "Elysia-voice-assets-v1.zip",
+      "bytes": 246377253,
+      "sha256": "412dba6ffcc399fd48b80f540f9c2d7a3e90e76cea3af026e09c9da931a11f2e"
+    },
+    "files": [
+      { "entry": "python/msvcp140.dll", "file": "msvcp140.dll", "bytes": 643512, "sha256": "7c26614e1d733892c2deac7e245ce115504b1d80592dd0a01b08e3e5a55f89ca" },
+      { "entry": "python/msvcp140_1.dll", "file": "msvcp140_1.dll", "bytes": 35768, "sha256": "206c931bf90fdad8816de3b5e2ef80b2bcaa9406c89ecc05fe6fddffe251e982" },
+      { "entry": "python/vcruntime140.dll", "file": "vcruntime140.dll", "bytes": 178616, "sha256": "d1f4225df2cd877dbf130d5668a021dce3f94118455ff5ec952061c30afc9ce7" },
+      { "entry": "python/vcruntime140_1.dll", "file": "vcruntime140_1.dll", "bytes": 50112, "sha256": "a7146c08f89fe5b04541ab507cdb59ff7b44534d4ba3c668a426c6450a03434e" },
+      { "entry": "python/MICROSOFT-VC-RUNTIME-LICENSE.txt", "file": "MICROSOFT-VC-RUNTIME-LICENSE.txt", "bytes": 12045, "sha256": "67574d66d2632c6ce248b8a5f92bebcfb2d630c40584d683327811397eeadd5d" },
+      { "entry": "python/MICROSOFT-VC-RUNTIME-NOTICE.txt", "file": "MICROSOFT-VC-RUNTIME-NOTICE.txt", "bytes": 402, "sha256": "98d89a887545de8ca6e70898c9731aad71f903cc96fb208240fbea106d43c7e9" }
+    ]
   },
   "model": {
     "file": "Qwen3.8-9B-Q4_K_M.gguf",

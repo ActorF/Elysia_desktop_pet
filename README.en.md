@@ -7,7 +7,7 @@
 
 A chibi Elysia companion for Windows, with a transparent full-body character, mouse-following eyes, and gentle motion. Mix expressions, cat mode, glasses, and four actions, with little clouds that respond to your typing. Includes local chat, optional read-aloud replies, automatic model setup, conversation history management, and body-region interactions. Version 1.4.2 switches to app-managed llama.cpp and fixes manual reading blocked by Windows busy-state detection.
 
-**Current test version: 1.4.2, not a stable release.** Installer and portable builds are available on `version-control`; no 1.4.2 GitHub Release has been created. Chat and read-aloud succeeded on the current PC; full verification on a second PC is pending. See [Local chat and read-aloud](#local-chat-and-read-aloud) and the [1.4.2 release notes and checklist](docs/releases/v1.4.2.md).
+**Current test version: 1.4.2, not a stable release.** The local builds in `release/` include fixes for manual speech reuse, long messages, and chat runtime dependencies. The remote downloads below do not yet include these local fixes; no 1.4.2 GitHub Release has been created. See [Local chat and read-aloud](#local-chat-and-read-aloud) and the [1.4.2 release notes and verification scope](docs/releases/v1.4.2.md).
 
 ## Download
 
