@@ -14,7 +14,7 @@ function fixture({ saved = {}, available = true, interactionAvailable = availabl
   let now = new Date(2026,9,26,8).getTime(), nextTimer = 0, quitCount = 0;
   let speechHooks, environmentHooks, active = null, replies;
   const intervals = new Map(), timeouts = new Map(), stored = new Map();
-  const lines = new Map(), played = [], stopped = [], published = [], volumeChanges = [];
+  const lines = new Map(), played = [], stopped = [], published = [], volumeChanges = [], environmentSamples = [];
   const interactionLines = new Map(INTERACTION_CATALOG.map(line=>[line.id,{...line,audioUrl:`file:///interaction/${line.id}.wav`} ]));
   const assetCalls = [];
   const environment = {idleSeconds:0,locked:false,suspended:false,fullscreen:false,monitorReady:true};
@@ -76,7 +76,7 @@ function fixture({ saved = {}, available = true, interactionAvailable = availabl
   const productionController=module.exports.createVoiceController({root:path.resolve(__dirname,'..'),userData:directory,
     interactionAssetDirectory:path.resolve('voice-controller-unit-interaction-assets'),
     getCharacterBounds:()=>({x:100,y:100,width:420,height:560}),getPreferences:()=>preferences,
-    publish:value=>published.push(value),quit:()=>quitCount++,testHooks});
+    publish:value=>published.push(value),onEnvironment:sample=>environmentSamples.push(sample),quit:()=>quitCount++,testHooks});
   const controller={...productionController,...testHooks};
   controller.start();
   const flush=async()=>{await Promise.resolve();await Promise.resolve();};
@@ -91,7 +91,7 @@ function fixture({ saved = {}, available = true, interactionAvailable = availabl
     now=target;await flush();
   }
   return {
-    controller,productionController,testHooks,played,stopped,published,volumeChanges,intervals,timeouts,environment,preferences,assetCalls,
+    controller,productionController,testHooks,played,stopped,published,volumeChanges,environmentSamples,intervals,timeouts,environment,preferences,assetCalls,
     replyHistory:()=>replies.snapshot(),
     get now(){return now;},get quitCount(){return quitCount;},
     persisted:()=>JSON.parse(stored.get(file)),
@@ -662,4 +662,15 @@ test('disabling interactions hides its trailing subtitle after the audio has alr
   const stops=f.stopped.length;f.preferences.interactionsEnabled=false;f.controller.preferencesChanged();
   assert.equal(f.stopped.length,stops+1,'The host also clears the text retained briefly after natural audio completion');
   assert.equal(f.controller.getState().queuedInteraction,null);f.controller.dispose();
+});
+
+test('passive mood observers reuse the voice timer and receive presence even with voices disabled',async()=>{
+  const f=fixture();f.controller.setSettings({enabled:false,dnd:true,volume:0});
+  await f.tick(1000,{idleSeconds:301});
+  assert.equal(f.environmentSamples.at(-1).idleSeconds,301);
+  assert.equal(f.intervals.size,1,'No second OS polling timer is needed');
+  assert.equal(f.played.length,0);
+  await f.tick(1000,{locked:true});assert.equal(f.environmentSamples.at(-1).locked,true);
+  const count=f.environmentSamples.length;f.controller.dispose();await f.tick();
+  assert.equal(f.environmentSamples.length,count);
 });

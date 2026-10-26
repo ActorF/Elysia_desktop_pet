@@ -408,7 +408,7 @@ else {
       assetDirectory: app.isPackaged ? path.join(process.resourcesPath, 'voice') : undefined,
       interactionAssetDirectory: app.isPackaged ? path.join(process.resourcesPath, 'interaction-voice') : undefined,
       userData: app.getPath('userData'), getCharacterBounds: () => characterBounds,
-      getPreferences: () => preferences, isSmokeTest, isPackaged: app.isPackaged, quit: () => app.quit(), testHooks: voiceTestHooks,
+      getPreferences: () => preferences, onEnvironment: sample => send('pet:environment', sample), isSmokeTest, isPackaged: app.isPackaged, quit: () => app.quit(), testHooks: voiceTestHooks,
       publish: snapshot => {
         const environment = snapshot.environment;
         cursorTrail?.setBlocked(environment.locked || environment.suspended || environment.fullscreen || environment.monitorReady === false);
@@ -430,8 +430,8 @@ else {
     registerIpc();
     tray = new Tray(createTrayImage(nativeImage));
     tray.setToolTip(`爱莉希雅桌宠 ${app.getVersion()} · Ctrl+Alt+P 恢复操作`);
-    tray.on('click', () => tray.popUpContextMenu(buildMenu()));
-    tray.on('right-click', () => tray.popUpContextMenu(buildMenu()));
+    tray.on('click', () => { send('pet:attention'); tray.popUpContextMenu(buildMenu()); });
+    tray.on('right-click', () => { send('pet:attention'); tray.popUpContextMenu(buildMenu()); });
     hotkeys.recovery = globalShortcut.register('CommandOrControl+Alt+P', () => recover());
     configureAlternateHotkeys();
     configureLegacyHotkeys();
