@@ -4,24 +4,23 @@
 <p align="center"><strong>简体中文</strong> · <a href="README.en.md">English</a></p>
 <p align="center"><a href="#下载程序">下载程序</a> · <a href="#角色展示">角色展示</a> · <a href="#使用">使用说明</a> · <a href="#源码运行">源码运行</a></p>
 
-透明全身立绘、鼠标目光跟随、轻柔摆动。表情、猫猫形态、眼镜和四种动作可以自由搭配，输入字符时还有小云朵回应。1.4.1 修复“任务栏在前”模式下的置顶顺序，保留 1.4.0 的本地聊天、回复朗读、模型自动配置与身体部位互动。
+透明全身立绘、鼠标目光跟随、轻柔摆动。表情、猫猫形态、眼镜和四种动作可以自由搭配，输入字符时还有小云朵回应。1.4.1 加入本地聊天、可选回复朗读、模型自动配置、可管理的聊天记录与身体部位互动，并修复“任务栏在前”模式下的置顶顺序。
 
-**1.4.1 正式源码、README、程序与校验文件在 `version-control` 分支同步。** 程序可通过下方分支下载入口获取；`main` 分支和 GitHub Release 保持不变，未创建 1.4.1 Release。使用方法见[本地聊天与朗读](#本地聊天与朗读)，完整变化见 [1.4.1 更新说明](docs/releases/v1.4.1.md)。
+**当前版本：1.4.1。** 使用方法见[本地聊天与朗读](#本地聊天与朗读)，完整变化见 [1.4.1 更新说明](docs/releases/v1.4.1.md)。
 
 ## 下载程序
 
-**1.4.1 · `version-control` 分支下载：**
+| 版本 | 程序 | 功能 | 校验文件 |
+| --- | --- | --- | --- |
+| 1.4.1 Windows 安装版 | [下载安装器](https://media.githubusercontent.com/media/ActorF/Elysia_desktop_pet/main/release/Elysia_desktop_pet-1.4.1-setup.exe) | 完整功能，含聊天与可选回复朗读 | [SHA256](https://raw.githubusercontent.com/ActorF/Elysia_desktop_pet/main/release/Elysia_desktop_pet-1.4.1-setup.exe.sha256) |
+| 1.4.1 Windows 便携版 | [下载 EXE](https://media.githubusercontent.com/media/ActorF/Elysia_desktop_pet/main/release/Elysia_desktop_pet-1.4.1.exe) | 相同功能，双击即可运行 | [SHA256](https://raw.githubusercontent.com/ActorF/Elysia_desktop_pet/main/release/Elysia_desktop_pet-1.4.1.exe.sha256) |
+| 1.3.0 Windows 便携版 | [下载 EXE](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.3.0/Elysia_desktop_pet-1.3.0.exe) | **不含聊天及回复朗读**，保留日常与点击互动录音 | [SHA256](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.3.0/Elysia_desktop_pet-1.3.0.exe.sha256) |
 
-| 版本 | 程序 | 校验文件 |
-| --- | --- | --- |
-| Windows 便携版 | [下载 1.4.1 EXE](https://media.githubusercontent.com/media/ActorF/Elysia_desktop_pet/version-control/release/Elysia_desktop_pet-1.4.1.exe) | [SHA256](https://raw.githubusercontent.com/ActorF/Elysia_desktop_pet/version-control/release/Elysia_desktop_pet-1.4.1.exe.sha256) |
-| Windows 安装版 | [下载 1.4.1 安装器](https://media.githubusercontent.com/media/ActorF/Elysia_desktop_pet/version-control/release/Elysia_desktop_pet-1.4.1-setup.exe) | [SHA256](https://raw.githubusercontent.com/ActorF/Elysia_desktop_pet/version-control/release/Elysia_desktop_pet-1.4.1-setup.exe.sha256) |
+点击上述链接即可下载完整程序，无需安装 Git、Git LFS 或 Node.js。1.4.1 的安装版与便携版均会在首次运行时自动准备聊天与语音环境，首次配置需要联网；1.3.0 无需下载聊天或语音合成模型。
 
-点击上述链接即可下载完整程序，无需安装 Git、Git LFS 或 Node.js。两种版本均会在首次运行时自动准备聊天与语音环境，首次配置需要联网。
+安装版运行 `Elysia_desktop_pet-1.4.1-setup.exe` 完成安装；便携版双击 EXE 即可运行。升级前先从右下角托盘退出旧版，已有正式配置中的位置、大小、装扮开关和偏好会保留，无需手动迁移。
 
-便携版下载后双击 `Elysia_desktop_pet-1.4.1.exe` 即可运行；安装版运行 `Elysia_desktop_pet-1.4.1-setup.exe` 完成安装。升级前先从右下角托盘退出旧版，已有正式配置中的位置、大小、装扮开关和偏好会保留，无需手动迁移。
-
-历史功能说明：[1.4.0](docs/releases/v1.4.0.md)。历史 GitHub Release：[1.3.0 发布页](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.3.0)（不含聊天功能）。历史 [1.3.0 更新说明](docs/releases/v1.3.0.md)与 [1.2.0 更新说明](docs/releases/v1.2.0.md)保留，也可按下方[源码运行与构建步骤](#源码运行)自行构建。
+[1.3.0 更新说明](docs/releases/v1.3.0.md) · [1.3.0 发布页](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.3.0) · [源码运行与构建步骤](#源码运行)
 
 <details>
 <summary>下载提示与文件后缀</summary>
@@ -138,11 +137,11 @@
 
 在 **设置 → 聊天** 修改用户名、模型名和 Ollama 服务地址，默认连接 `http://localhost:11434`。消息下方的复制图标可复制正文；爱莉希雅回复下方另有手动朗读图标，悬停或键盘聚焦可查看说明。**设置 → 聊天记录** 左侧选择对话，右侧查看详情，可删除单段或清空所有记录，删除前会确认且保留用户名与设置。用户名和聊天记录保存在 `%APPDATA%/Elysia Desktop Pet/chat-state.json`。模型调用会使用当前用户名和所选对话的近期内容；默认本地服务不需要 API 密钥。
 
-人设沿用本地 `D:\Elysia_AI\core\elysia_system_prompt_zh.md`，副本随程序保存在 `electron/chat-persona.md`，文字聊天不依赖原项目目录。
+人设 system prompt 位于 [electron/chat-persona.md](electron/chat-persona.md)。
 
 **可选朗读：** 自动朗读默认关闭，普通文字聊天不会加载语音模型；明确点击回复的朗读图标可单独读这一条，不改变自动朗读设置。开启自动朗读可提前预热，在完整回答生成后朗读；同情绪模型短时复用，闲置 45 秒释放，最近 8 条/24 MiB 以内的合成音频仅在内存缓存，删除记录会清除缓存。根据正文线索选择已有情绪参考，否定和不明确表达回到中性；这不是额外的大模型情绪分类。当前机器 CPU 实测冷启动或切换情绪约 25 秒，暖模型新回复首音约 1.8–2.4 秒，重复朗读无需重新合成；其他电脑耗时可能不同。发送新消息会停止旧朗读；关闭自动朗读、关闭聊天或退出立即释放模型。音量与勿扰沿用“语音”设置，朗读期间暂停日常与点击录音，点击仍可显示表情和静默字幕。
 
-**首次自动配置：** 便携版与安装版均携带约 246 MB 的独立 Python 和爱莉希雅语音资源，首次运行自动安装/启动 Ollama、下载约 6.7 GB 的默认聊天模型及约 5.7 GB 的 GPT-SoVITS 运行环境。设置里显示各自进度、取消与重试；Ollama 安装阶段不能取消，下载和解压不启动声音模型。语音环境放在用户数据目录的 `voice-runtime`，无需原 D 盘项目；本机已有环境仍可作为高级选项使用。资源校验 SHA256 后部署，失败不会报告已就绪。语音权重随程序携带，大型运行环境从固定上游来源下载。当前已完成本机自动化、真实模型与语音验证，但尚未在干净 Windows 虚拟机上完成从零首次安装验收。
+**首次自动配置：** 便携版与安装版均携带约 246 MB 的独立 Python 和爱莉希雅语音资源，首次运行自动安装/启动 Ollama、下载约 6.7 GB 的默认聊天模型及约 5.7 GB 的 GPT-SoVITS 运行环境。设置里显示各自进度、取消与重试；Ollama 安装阶段不能取消，下载和解压不启动声音模型。语音环境放在用户数据目录的 `voice-runtime`；也可在高级设置中指定已有的兼容语音环境。资源校验 SHA256 后部署，失败不会报告已就绪。语音权重随程序携带，大型运行环境从固定上游来源下载。当前已完成本机自动化、真实模型与语音验证，但尚未在干净 Windows 虚拟机上完成从零首次安装验收。
 
 `npm run test:chat-tts` 验证实际语音预热、复用、情绪、缓存及进程释放，结果保存在忽略的 `artifacts/chat-tts-check/`，不播放。可通过 `ELYSIA_VOICE_PROJECT_ROOT` 指定完整的可移动语音环境。
 
@@ -218,7 +217,7 @@ Enter、Ctrl、Tab、方向键等功能键，以及 Ctrl／Alt／Win 快捷组�
 
 ```powershell
 git lfs install
-git clone --branch version-control https://github.com/ActorF/Elysia_desktop_pet.git
+git clone --branch main https://github.com/ActorF/Elysia_desktop_pet.git
 cd Elysia_desktop_pet
 git lfs pull
 npm ci
@@ -245,7 +244,7 @@ npm run verify:release
 
 `npm run make:release`（`node scripts/package-release.cjs`）生成 `release/Elysia_desktop_pet-1.4.1.exe` 和 `release/Elysia_desktop_pet-1.4.1-setup.exe`。也可分别运行 `npm run make:portable`、`npm run make:setup`。`npm run verify:release`（`node scripts/verify-package.cjs`）校验正式包；这些命令不会发布到 GitHub。构建需先准备语音资源包，`npm run package` 可生成未封装的应用目录。
 
-1.4.1 的置顶修复与验证范围见 [1.4.1 更新说明](docs/releases/v1.4.1.md#验证范围)，聊天、朗读和身体部位互动的原有验证记录保留在 [1.4.0 更新说明](docs/releases/v1.4.0.md#验证范围)。首次自动配置尚未在全新 Windows 环境中完成从零安装的全链路验收。完整命令与检查范围见[验证说明](docs/verification.md)。
+聊天、朗读、身体部位互动与置顶修复的验证范围见 [1.4.1 更新说明](docs/releases/v1.4.1.md#验证范围)。首次自动配置尚未在全新 Windows 环境中完成从零安装的全链路验收。完整命令与检查范围见[验证说明](docs/verification.md)。
 
 ## 项目结构
 
@@ -259,7 +258,7 @@ npm run verify:release
 | `scripts/` | 启动、构建验证与预览工具 |
 | `tests/` | 自动测试 |
 | `docs/` | 角色预览与验证说明 |
-| `release/` | Windows 便携版、安装版与校验文件；EXE 通过 Git LFS 同步到 `version-control` |
+| `release/` | Windows 安装版、便携版与校验文件；EXE 通过 Git LFS 保存在 `main` |
 | `LICENSE` | MIT 代码许可证 |
 
 项目使用 Electron 透明窗口、PNG 素材合成与 WebGL 网格动画。WebGL 不可用时显示静态合成角色。

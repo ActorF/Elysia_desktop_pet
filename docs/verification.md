@@ -1,6 +1,8 @@
 # 验证说明
 
-本文件说明 **1.4.1** 的检查范围与执行方式，包含已有桌宠、54 条原录音、部位互动、聊天与历史管理、按需朗读和首次自动配置。正式产物为 `release/Elysia_desktop_pet-1.4.1.exe` 和 `release/Elysia_desktop_pet-1.4.1-setup.exe`，通过 Git LFS 保存到 `version-control` 分支；源码与对应 SHA256 文件随同提交，尚未创建 1.4.1 GitHub Release。检查报告位于 `artifacts/validation-v1.4.1/`，历史版本说明保留在 `docs/releases/`。
+本文件说明 **1.4.1** 的检查范围与执行方式，包含已有桌宠、54 条原录音、部位互动、聊天与历史管理、按需朗读和首次自动配置。正式产物为安装版 `release/Elysia_desktop_pet-1.4.1-setup.exe` 和便携版 `release/Elysia_desktop_pet-1.4.1.exe`，通过 Git LFS 保存到 `main` 分支；源码与对应 SHA256 文件随同合并，尚未创建 1.4.1 GitHub Release。下载入口与完整功能说明见 [1.4.1 更新说明](releases/v1.4.1.md)。检查报告位于 `artifacts/validation-v1.4.1/`。
+
+本次通过 **394 项单元测试**、程序包内的 **196 项真实 Windows 窗口层级检查**及 **9 项打包检查**，用户已亲自测试并确认原置顶问题修复。旧版 1.3.0 不含文字聊天和回复朗读，仍保留日常问候及点击互动录音。
 
 `npm run make:release` 同时生成便携版与安装版；`npm run verify:release` 校验完整文件清单、源码字节、原录音、语音资源包摘要、更新配置及隐藏窗口行为，并验证重复启动不会删除现有实例的临时文件。`npm run verify:setup` 核对安装器中的程序和资源与已验证的便携版完全一致。所需语音构建资源保留在被忽略的 `build-resources/voice-bootstrap/`，不依赖旧样本或草稿目录。
 
@@ -10,7 +12,7 @@
 
 ## 环境与命令
 
-需要 Windows、Node.js 22 或更新版本；浏览器检查使用 Microsoft Edge。先执行 `npm ci` 安装依赖。
+需要 Windows、Node.js 22 或更新版本；浏览器检查使用 Microsoft Edge。源码取自 `main`；通过克隆获取完整 EXE 时需安装 Git LFS 并执行 `git lfs pull`。先执行 `npm ci` 安装开发依赖。
 
 ```powershell
 npm test

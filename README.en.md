@@ -5,24 +5,23 @@
 <p align="center"><a href="README.md">简体中文</a> · <strong>English</strong></p>
 <p align="center"><a href="#download">Download</a> · <a href="#character-gallery">Gallery</a> · <a href="#usage">Usage</a> · <a href="#run-from-source">Run from source</a></p>
 
-A chibi Elysia companion for Windows, with a transparent full-body character, mouse-following eyes, and gentle motion. Mix expressions, cat mode, glasses, and four actions, with little clouds that respond to your typing. Version 1.4.1 fixes window ordering in Taskbar in front mode, retaining the local chat, read-aloud replies, automatic model setup, and body-region interactions introduced in 1.4.0.
+A chibi Elysia companion for Windows, with a transparent full-body character, mouse-following eyes, and gentle motion. Mix expressions, cat mode, glasses, and four actions, with little clouds that respond to your typing. Version 1.4.1 adds local chat, optional read-aloud replies, automatic model setup, conversation history management, and body-region interactions, and fixes window ordering in Taskbar in front mode.
 
-**Version 1.4.1 source, README, executables, and checksums are synchronized on the `version-control` branch.** Download the programs through the branch links below. The `main` branch and GitHub Release are unchanged; no 1.4.1 Release has been created. See [Local chat and read-aloud](#local-chat-and-read-aloud) and the [1.4.1 release notes](docs/releases/v1.4.1.md).
+**Current version: 1.4.1.** See [Local chat and read-aloud](#local-chat-and-read-aloud) and the [1.4.1 release notes](docs/releases/v1.4.1.md).
 
 ## Download
 
-**1.4.1 downloads from the `version-control` branch:**
+| Edition | Program | Features | Checksum |
+| --- | --- | --- | --- |
+| 1.4.1 Windows installer | [Download installer](https://media.githubusercontent.com/media/ActorF/Elysia_desktop_pet/main/release/Elysia_desktop_pet-1.4.1-setup.exe) | Full features, including chat and optional read-aloud replies | [SHA256](https://raw.githubusercontent.com/ActorF/Elysia_desktop_pet/main/release/Elysia_desktop_pet-1.4.1-setup.exe.sha256) |
+| 1.4.1 Windows portable | [Download EXE](https://media.githubusercontent.com/media/ActorF/Elysia_desktop_pet/main/release/Elysia_desktop_pet-1.4.1.exe) | Same features; double-click to run | [SHA256](https://raw.githubusercontent.com/ActorF/Elysia_desktop_pet/main/release/Elysia_desktop_pet-1.4.1.exe.sha256) |
+| 1.3.0 Windows portable | [Download EXE](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.3.0/Elysia_desktop_pet-1.3.0.exe) | **No chat or read-aloud replies**; daily and click-interaction recordings remain included | [SHA256](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.3.0/Elysia_desktop_pet-1.3.0.exe.sha256) |
 
-| Edition | Program | Checksum |
-| --- | --- | --- |
-| Windows portable | [Download 1.4.1 EXE](https://media.githubusercontent.com/media/ActorF/Elysia_desktop_pet/version-control/release/Elysia_desktop_pet-1.4.1.exe) | [SHA256](https://raw.githubusercontent.com/ActorF/Elysia_desktop_pet/version-control/release/Elysia_desktop_pet-1.4.1.exe.sha256) |
-| Windows installer | [Download 1.4.1 installer](https://media.githubusercontent.com/media/ActorF/Elysia_desktop_pet/version-control/release/Elysia_desktop_pet-1.4.1-setup.exe) | [SHA256](https://raw.githubusercontent.com/ActorF/Elysia_desktop_pet/version-control/release/Elysia_desktop_pet-1.4.1-setup.exe.sha256) |
+Click these links to download the complete program; Git, Git LFS, and Node.js are not required. Both 1.4.1 editions automatically prepare chat and speech dependencies on first run, which requires an internet connection. Version 1.3.0 does not download chat or speech-synthesis models.
 
-Click these links to download the complete program; Git, Git LFS, and Node.js are not required. Both editions automatically prepare chat and speech dependencies on first run, which requires an internet connection.
+Run `Elysia_desktop_pet-1.4.1-setup.exe` to install the app, or double-click the portable EXE to run it. Before upgrading, quit the old version from the tray. Position, size, outfit switches, and preferences in your existing release profile are preserved without manual migration.
 
-Double-click `Elysia_desktop_pet-1.4.1.exe` to run the portable app, or run `Elysia_desktop_pet-1.4.1-setup.exe` to install it. Before upgrading, quit the old version from the tray. Position, size, outfit switches, and preferences in your existing release profile are preserved without manual migration.
-
-Historical feature notes: [1.4.0](docs/releases/v1.4.0.md). Historical GitHub Release: [1.3.0 release page](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.3.0), which does not include chat. The [1.3.0 notes](docs/releases/v1.3.0.md) and [1.2.0 notes](docs/releases/v1.2.0.md) remain available. You can also use the [source and build instructions](#run-from-source) below.
+[1.3.0 release notes](docs/releases/v1.3.0.md) · [1.3.0 release page](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.3.0) · [Source and build instructions](#run-from-source)
 
 <details>
 <summary>Download warnings and files ending in .crdownload</summary>
@@ -144,11 +143,11 @@ Choose **Open chat (`打开聊天框`)** from the system tray to type messages t
 
 Use **Settings → Chat (`聊天`)** to change your username, model, and Ollama address; the default address is `http://localhost:11434`. Messages have copy icons; assistant replies also have a manual read-aloud icon, with hover/focus descriptions. **Settings → Chat history (`聊天记录`)** shows a narrow conversation list beside the detail pane. Delete one conversation or clear all history with confirmation, retaining preferences. Data stays in `%APPDATA%/Elysia Desktop Pet/chat-state.json`. Model requests include your username and recent messages from the selected conversation. The default local service needs no API key.
 
-The persona comes from the local `D:\Elysia_AI\core\elysia_system_prompt_zh.md` and is bundled as `electron/chat-persona.md`; text chat works without the original project directory.
+The persona system prompt is in [electron/chat-persona.md](electron/chat-persona.md).
 
 **Optional read-aloud:** Automatic reading defaults off, so ordinary text chat does not load the voice model. Clicking a reply's speaker reads it once without changing that preference. Automatic reading can prewarm the model and reads the completed reply; replies with the same emotion reuse it until 45 seconds of inactivity. An in-memory cache holds at most eight replies/24 MiB and is cleared when history is deleted. Conservative text rules select available emotion references; this is not a separate LLM classifier. On the tested CPU, cold loading or emotion changes take about 25 seconds, and new warm replies take about 1.8–2.4 seconds to first audio. Cached playback needs no new inference; timings vary by machine. Sending another message stops the old reading. Disabling automatic reading, closing chat, or quitting releases the model immediately. Voice volume and Do Not Disturb apply; daily and interaction recordings pause during chat speech, while clicks can still show expressions and silent captions.
 
-**Automatic first-run setup:** Both the portable app and installer carry roughly 246 MB of embedded Python and Elysia voice assets. They automatically prepare Ollama and download the roughly 6.7 GB default chat model and 5.7 GB GPT-SoVITS runtime. Settings show independent progress, cancellation, and retry; the Ollama installation stage cannot be cancelled. Downloading and extracting do not start the speech model. Speech files live in the user-data `voice-runtime` directory; the original D: project is optional. Resources are SHA256-checked before deployment, and failures never report readiness. Voice weights are bundled, and the large runtime comes from a pinned upstream source. Local automation, real-model chat, and speech checks have passed; a complete first installation on a clean Windows VM has not yet been tested.
+**Automatic first-run setup:** Both the portable app and installer carry roughly 246 MB of embedded Python and Elysia voice assets. They automatically prepare Ollama and download the roughly 6.7 GB default chat model and 5.7 GB GPT-SoVITS runtime. Settings show independent progress, cancellation, and retry; the Ollama installation stage cannot be cancelled. Downloading and extracting do not start the speech model. Speech files live in the user-data `voice-runtime` directory; existing compatible environments can be selected in advanced settings. Resources are SHA256-checked before deployment, and failures never report readiness. Voice weights are bundled, and the large runtime comes from a pinned upstream source. Local automation, real-model chat, and speech checks have passed; a complete first installation on a clean Windows VM has not yet been tested.
 
 `npm run test:chat-tts` checks actual prewarm, reuse, emotion selection, replay caching and process cleanup without playing audio. Results stay under ignored `artifacts/chat-tts-check/`; `ELYSIA_VOICE_PROJECT_ROOT` selects a relocated voice environment.
 
@@ -224,7 +223,7 @@ Requires **Windows and Node.js 22 or later**. Executables in `release/` use Git 
 
 ```powershell
 git lfs install
-git clone --branch version-control https://github.com/ActorF/Elysia_desktop_pet.git
+git clone --branch main https://github.com/ActorF/Elysia_desktop_pet.git
 cd Elysia_desktop_pet
 git lfs pull
 npm ci
@@ -251,7 +250,7 @@ npm run verify:release
 
 `npm run make:release` (`node scripts/package-release.cjs`) creates `release/Elysia_desktop_pet-1.4.1.exe` and `release/Elysia_desktop_pet-1.4.1-setup.exe`. Build them individually with `npm run make:portable` or `npm run make:setup`. `npm run verify:release` (`node scripts/verify-package.cjs`) verifies the release package. These commands do not publish to GitHub. Prepare the speech asset archive before building; `npm run package` produces an unpacked application directory.
 
-See the [1.4.1 release notes](docs/releases/v1.4.1.md#verification-and-limits) for the window-order fix and verification scope. Earlier chat, speech, and body-region validation remains in the [1.4.0 notes](docs/releases/v1.4.0.md#verification-and-limits). A complete first installation on a fresh Windows environment has not yet been tested. Full commands and checks are in the [verification guide](docs/verification.md), currently in Chinese.
+See the [1.4.1 release notes](docs/releases/v1.4.1.md#verification-and-limits) for chat, speech, body-region interaction, and window-order verification. A complete first installation on a fresh Windows environment has not yet been tested. Full commands and checks are in the [verification guide](docs/verification.md), currently in Chinese.
 
 ## Project structure
 
@@ -265,7 +264,7 @@ See the [1.4.1 release notes](docs/releases/v1.4.1.md#verification-and-limits) f
 | `scripts/` | Launch, package verification, and preview tools |
 | `tests/` | Automated tests |
 | `docs/` | Character previews, release notes, and verification documentation |
-| `release/` | Windows portable app, installer, and checksums; EXEs are synchronized to `version-control` through Git LFS |
+| `release/` | Windows installer, portable app, and checksums; EXEs are stored on `main` through Git LFS |
 | `LICENSE` | MIT license for the code |
 
 The app uses an Electron transparent window, composited PNG artwork, and WebGL mesh animation. When WebGL is unavailable, it displays the statically composited character.
