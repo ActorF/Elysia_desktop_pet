@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches: [main, version-control]
+  pull_request:
+    branches: [main, version-control]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit-tests:
+    name: Unit tests (Windows, Node ${{ matrix.node }})
+    runs-on: windows-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22', '24']
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          lfs: false
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - name: Set up Python for speech worker tests
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+      # These tests use mocks and standard libraries, not the Electron binary.
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Run unit tests
+        run: npm test
+
+  browser-tests:
+    name: Browser UI tests (Windows, Edge)
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          lfs: false
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          cache: npm
+      # Hosted Windows runners include Edge; no Electron/model download is needed.
+      - name: Install locked dependencies
+        id: dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Check settings UI
+        run: npm run test:settings
+      - name: Check chat UI
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
+        run: npm run test:chat
+      - name: Check click interactions
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
+        run: npm run test:interactions
+      - name: Upload browser reports and screenshots
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: browser-test-reports
+          path: |
+            artifacts/settings-window-check/
+            artifacts/chat-window-check/
+            artifacts/validation-v*/interaction-browser/
+          if-no-files-found: ignore
+          retention-days: 7

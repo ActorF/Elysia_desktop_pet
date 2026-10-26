@@ -10,6 +10,16 @@
 
 首次安装逻辑已覆盖下载来源、摘要/签名验证、取消、重试与自动部署；可移动语音环境已实际合成验证。尚未在全新 Windows 实机或虚拟机中完成全部大型资源的首次下载安装，不把模拟安装检查表述为该项验收。
 
+## GitHub Actions
+
+[CI 工作流](../.github/workflows/ci.yml) 在推送到 `main`、`version-control` 或提交面向这两个分支的 Pull Request 时自动运行，也可在 [Actions 页面](https://github.com/ActorF/Elysia_desktop_pet/actions/workflows/ci.yml) 手动触发。
+
+- Windows 上分别使用 Node.js 22、24 运行 `npm test`，并配置 Python 3.13，覆盖语音工作脚本和 Windows 键盘监听器的自检。
+- Windows + Edge 运行设置、聊天及点击互动浏览器回归。结果和截图作为 `browser-test-reports` 附件保留 7 天；上传范围仅限三个测试专用目录。
+- 通过 `npm ci --ignore-scripts` 按锁文件安装测试依赖，不下载 Electron 二进制、LFS 安装包或运行模型。完整 EXE 打包、真实 Electron 窗口层级、模型推理和语音合成仍按下文进行本地验证，CI 通过不代表这些项目已经验收。
+
+`main` 的 [Protect main 规则](https://github.com/ActorF/Elysia_desktop_pet/rules/25894047) 禁止强制推送和删除，没有豁免用户。普通推送仍可使用；当前未强制 Pull Request 审批或将 CI 设为合并门槛。
+
 ## 环境与命令
 
 需要 Windows、Node.js 22 或更新版本；浏览器检查使用 Microsoft Edge。源码取自 `main`；通过克隆获取完整 EXE 时需安装 Git LFS 并执行 `git lfs pull`。先执行 `npm ci` 安装开发依赖。
