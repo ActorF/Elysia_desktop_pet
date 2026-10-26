@@ -8,3 +8,4 @@
 *.vbs text eol=crlf
 *.png binary
 *.webm binary
+release/*.exe filter=lfs diff=lfs merge=lfs -text

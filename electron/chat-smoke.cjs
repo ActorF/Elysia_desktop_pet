@@ -1,0 +1,127 @@
+/** Real hidden Electron windows, IPC and persisted history against a deterministic loopback model. */
+'use strict';
+const assert = require('node:assert/strict');
+const path = require('node:path');
+const { createServer } = require('node:http');
+const { createChatService } = require('./chat-service.cjs');
+
+async function checkChatRuntime({ chat, chatWindow, chatSpeech, chatSpeechTestHooks, settingsWindow, pet, buildMenu, directory }) {
+  assert.match(path.basename(directory), /chat-smoke$/);
+  assert.equal(pet.isVisible(), false);
+  const originalPet = pet.webContents.id;
+  const requests = [];
+  const server = createServer(async (request, response) => {
+    let body = '';
+    for await (const chunk of request) body += chunk;
+    requests.push(JSON.parse(body));
+    assert.equal(request.url, '/api/chat');
+    response.writeHead(200, { 'Content-Type': 'application/x-ndjson' });
+    response.write(JSON.stringify({ message: { content: '你好，测试旅人。' }, done: false }) + '\n');
+    setTimeout(() => response.end(JSON.stringify({ message: { content: `<img src=x onerror=alert(1)> 一起聊聊吧♪（${requests.length}）` }, done: true }) + '\n'), 300);
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const poll = async (label, read, matches) => {
+    const deadline = Date.now() + 10000;
+    while (Date.now() < deadline) {
+      const value = await read();
+      if (matches(value)) return value;
+      await new Promise(resolve => setTimeout(resolve, 30));
+    }
+    throw new Error(`${label} did not settle`);
+  };
+  const requestChat = (window, method, argument) => window.webContents.executeJavaScript(`window.elysiaChat[${JSON.stringify(method)}](${argument === undefined ? '' : JSON.stringify(argument)})`);
+  const requestSettings = (window, method, argument) => window.webContents.executeJavaScript(`window.elysiaSettings[${JSON.stringify(method)}](${argument === undefined ? '' : JSON.stringify(argument)})`);
+  const ready = window => poll('chat renderer', () => window.webContents.executeJavaScript('document.documentElement.dataset.chatReady'), value => value === 'true');
+  try {
+    assert.deepEqual(buildMenu().items.map(item => item.label), ['设置', '打开聊天框', '退出']);
+    const first = await chatWindow.open(); await ready(first);
+    assert.equal(first, await chatWindow.open()); assert.equal(first.isVisible(), false);
+    assert.equal(settingsWindow.getWindow(), null, 'Start with chat alone, as when using its settings gear');
+    assert.equal(await requestChat(first, 'openSettings'), true);
+    let settings = settingsWindow.getWindow();
+    assert.ok(settings, 'The real chat bridge opens the first settings window');
+    await poll('chat settings renderer', () => settings.webContents.executeJavaScript('document.documentElement.dataset.chatReady'), value => value === 'true');
+    const configured = await requestSettings(settings, 'setChatSettings', { username: '测试旅人', baseUrl: `http://127.0.0.1:${server.address().port}`, model: 'smoke-model', readAloud: false });
+    assert.equal(configured.error, null); assert.equal(configured.settings.username, '测试旅人');
+    const firstSettings = settings;
+    await requestSettings(settings, 'windowControl', 'close');
+    await poll('close settings from its controls', () => settingsWindow.getWindow(), value => value === null);
+    assert.equal(await requestChat(first, 'openSettings'), true);
+    settings = settingsWindow.getWindow();
+    assert.ok(settings); assert.notEqual(settings, firstSettings);
+    await poll('reopened chat settings renderer', () => settings.webContents.executeJavaScript('document.documentElement.dataset.chatReady'), value => value === 'true');
+    assert.equal((await requestSettings(settings, 'getChatState')).settings.username, '测试旅人');
+    const isolation = await first.webContents.executeJavaScript('({node:typeof window.require,pet:typeof window.elysiaDesktop,settings:typeof window.elysiaSettings})');
+    assert.deepEqual(isolation, { node: 'undefined', pet: 'undefined', settings: 'undefined' });
+    const preferences = first.webContents.getLastWebPreferences();
+    assert.equal(preferences.sandbox, true); assert.equal(preferences.contextIsolation, true); assert.equal(preferences.nodeIntegration, false);
+    await requestChat(first, 'newConversation');
+    const initial = await requestChat(first, 'send', '今天可以陪我聊聊天吗？');
+    assert.equal(initial.busy, true);
+    const selectedId = initial.activeConversationId;
+    await poll('streaming model response', () => chat.getState(), value => value.conversations.find(item => item.id === selectedId).messages.at(-1).content.length > 0);
+    await requestChat(first, 'windowControl', 'close');
+    await poll('close composer', () => chatWindow.getWindow(), value => value === null);
+    assert.equal(pet.isDestroyed(), false); assert.equal(pet.webContents.id, originalPet);
+    const reopened = await chatWindow.open(); await ready(reopened);
+    assert.notEqual(reopened, first);
+    const complete = await poll('finished model response', () => requestChat(reopened, 'getState'), value => !value.busy);
+    assert.equal(complete.error, null);
+    const messages = complete.conversations.find(item => item.id === selectedId).messages;
+    assert.equal(messages.length, 2); assert.equal(messages[0].username, '测试旅人');
+    assert.equal(messages[1].status, 'complete'); assert.match(messages[1].content, /一起聊聊吧/);
+    await poll('rendered answer', () => reopened.webContents.executeJavaScript('document.body.textContent'), value => value.includes('<img src=x onerror=alert(1)>'));
+    assert.equal(await reopened.webContents.executeJavaScript('document.querySelectorAll("img[src=x]").length'), 0);
+    assert.equal(requests.length, 1); assert.equal(requests[0].think, false);
+    assert.match(requests[0].messages[0].content, /测试旅人/);
+    const restored = createChatService({ directory });
+    assert.deepEqual(restored.getState().conversations, complete.conversations); restored.dispose();
+    await requestChat(reopened, 'newConversation');
+    const history = await requestSettings(settings, 'selectChatConversation', selectedId);
+    assert.equal(history.activeConversationId, selectedId);
+    assert.equal(await requestSettings(settings, 'openChat'), true);
+    await settings.webContents.executeJavaScript('document.querySelector("[data-tab=history]").click(); true');
+    await poll('settings history', () => settings.webContents.executeJavaScript('document.querySelector("#panel-history").textContent'), value => value.includes('今天可以陪我聊聊天吗？'));
+    assert.equal(chatSpeechTestHooks.calls.length, 0, 'Text-only replies never start a voice worker');
+    await requestSettings(settings, 'setChatSettings', { readAloud: true });
+    await poll('silent preheat', () => chatSpeech.getState(), value => value.status === 'ready');
+    assert.equal(chatSpeechTestHooks.calls.length, 1);
+    assert.equal(chatSpeechTestHooks.calls[0].requests, 0, 'Preheat does not replay history or synthesize text');
+    await requestChat(reopened, 'send', '用一句话回应。');
+    await poll('silent WAV decoded and acknowledged', () => chatSpeechTestHooks.calls, calls => calls.length === 1 && calls[0].acknowledged);
+    await poll('speech completed with warm worker', () => chatSpeech.getState(), value => value.status === 'ready');
+    await requestChat(reopened, 'send', '这次会在朗读时关闭开关。');
+    await poll('second speech started', () => chatSpeech.getState(), value => value.status === 'playing');
+    assert.equal(chatSpeechTestHooks.calls.length, 1, 'The second fresh reply reuses the first worker');
+    assert.equal(chatSpeechTestHooks.calls[0].requests, 2);
+    await requestSettings(settings, 'setChatSettings', { readAloud: false });
+    assert.equal(chatSpeech.getState().status, 'idle'); assert.equal(chatSpeechTestHooks.calls[0].killed, true);
+    await requestChat(reopened, 'send', '关闭后只显示文字。');
+    await poll('text after disabling speech', () => chat.getState(), value => !value.busy);
+    assert.equal(chatSpeechTestHooks.calls.length, 1, 'Disabled speech does not start another worker');
+    const manualMessage = chat.getState().conversations.find(item => item.id === selectedId).messages.at(-1);
+    await requestChat(reopened, 'readAloud', { conversationId: selectedId, messageId: manualMessage.id });
+    await poll('manual speech with auto preference off', () => chatSpeech.getState(), value => value.status === 'playing' && value.messageId === manualMessage.id);
+    assert.equal(chat.getState().settings.readAloud, false);
+    assert.equal(chatSpeechTestHooks.calls.length, 2);
+    assert.equal(reopened.isVisible(), false); assert.equal(settings.isVisible(), false); assert.equal(pet.isVisible(), false);
+    await requestChat(reopened, 'windowControl', 'close');
+    await poll('manual speech stops with closed chat', () => chatWindow.getWindow(), value => value === null);
+    assert.equal(chatSpeech.getState().status, 'idle'); assert.equal(chatSpeechTestHooks.calls[1].killed, true);
+    const originalSettings = chat.getState().settings;
+    const remainingIds = chat.getState().conversations.filter(item => item.id !== selectedId).map(item => item.id);
+    const deleted = await requestSettings(settings, 'deleteChatConversation', selectedId);
+    assert.deepEqual(deleted.conversations.map(item => item.id), remainingIds);
+    const cleared = await requestSettings(settings, 'clearChatHistory');
+    assert.deepEqual(cleared.conversations, []); assert.equal(cleared.activeConversationId, null);
+    assert.deepEqual(cleared.settings, originalSettings);
+    const afterDeletion = createChatService({ directory });
+    assert.deepEqual(afterDeletion.getState().conversations, []); afterDeletion.dispose();
+    return { isolatedProfile: true, ipc: true, settingsOpenedFromChat: true, settingsReopenedFromChat: true, streaming: true, closeAndReopenDuringReply: true, persistence: true, history: true, textOnlyRendering: true, petPreserved: true, hiddenThroughout: true,
+      silentAudioPlayback: true, disabledSpeechNeverStartsModel: true, speechOffCancelsWorker: true, speechWarmup: true, speechWorkerReused: true, manualSpeechWithoutAuto: true, closeReleasesSpeech: true, deleteHistory: true, clearHistoryPersisted: true };
+  } finally {
+    chat.cancel(); chatWindow.getWindow()?.close(); settingsWindow.getWindow()?.close();
+    server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
+  }
+}
+module.exports = { checkChatRuntime };

@@ -30,6 +30,8 @@
     <button id="tab-desktop" role="tab" aria-selected="false" aria-controls="panel-desktop" tabindex="-1" data-tab="desktop">桌面</button>
     <button id="tab-interaction" role="tab" aria-selected="false" aria-controls="panel-interaction" tabindex="-1" data-tab="interaction">互动</button>
     <button id="tab-voice" role="tab" aria-selected="false" aria-controls="panel-voice" tabindex="-1" data-tab="voice">语音</button>
+    <button id="tab-chat" role="tab" aria-selected="false" aria-controls="panel-chat" tabindex="-1" data-tab="chat">聊天</button>
+    <button id="tab-history" role="tab" aria-selected="false" aria-controls="panel-history" tabindex="-1" data-tab="history">聊天记录</button>
   </nav>
   <main>
     <p id="error-message" role="alert" hidden></p>
@@ -112,15 +114,16 @@
       <div class="card interaction-guide">
         <h2>轻点互动方式</h2>
         <dl>
-          <div><dt>轻点头部</dt><dd>摸摸头，收到温柔的回应。</dd></div>
-          <div><dt>轻点身体</dt><dd>戳一下，向她打个招呼。</dd></div>
+          <div><dt>轻点头部</dt><dd>头部、脸部或手部随机展示害羞、Wink、爱心眼、微笑。</dd></div>
+          <div><dt>轻点身体</dt><dd>身体或腿部随机展示惊讶、害羞；轻点道具展示微笑。</dd></div>
+          <div><dt>表情停留</dt><dd>普通表情显示约 1.8 秒，期间连点不切换表情或重复回应，但仍累计点击次数。</dd></div>
           <div><dt>连续点击</dt><dd>头部与身体一起计数，3 秒内第 5 次点击会让她有点生气，随后休息 3 秒。</dd></div>
         </dl>
         <p class="hint">语音页可调整音量，或用勿扰保留文字回应。</p>
       </div>
     </section>
     <section id="panel-voice" role="tabpanel" aria-labelledby="tab-voice" hidden>
-      <div class="section-heading"><h2>日常与互动语音</h2><span class="voice-badge">1.3.0</span></div>
+      <div class="section-heading"><h2>日常与互动语音</h2><span class="voice-badge">1.4.0</span></div>
       <p class="section-hint">36 句日常问候与 18 句互动语音。说话时，台词会出现在爱莉希雅身旁。</p>
       <p id="voice-error" class="voice-error" role="alert" hidden></p>
       <div class="card">
@@ -148,6 +151,48 @@
       <p id="voice-interaction-error" class="voice-error" role="alert" hidden></p>
       <p class="voice-rules hint">自动语音至少间隔 20 分钟，每天最多 6 次，生日与主动告别单独计数。锁屏、休眠或全屏时暂停自动问候，错过的时段不补播。</p>
     </section>
+    <section id="panel-chat" role="tabpanel" aria-labelledby="tab-chat" hidden>
+      <div class="section-heading"><h2>和爱莉希雅聊一聊</h2><button id="settings-open-chat" class="text-button" type="button" disabled>打开聊天框</button></div>
+      <p class="section-hint">从右下角托盘也能打开输入框。她会记住当前对话的上下文。</p>
+      <p id="chat-settings-error" class="voice-error" role="alert" hidden></p>
+      <form id="chat-settings-form" class="card chat-settings-form">
+        <label for="chat-username">怎么称呼你</label>
+        <input id="chat-username" name="username" type="text" maxlength="50" placeholder="你" autocomplete="off" required disabled>
+        <p class="hint">爱莉希雅会用这个名字称呼你。已保存的消息保留当时的名字。</p>
+        <details class="chat-connection">
+          <summary>模型与连接</summary>
+          <label for="chat-base-url">Ollama 服务地址</label>
+          <input id="chat-base-url" name="baseUrl" type="url" maxlength="2048" placeholder="http://localhost:11434" autocomplete="off" spellcheck="false" required disabled>
+          <label for="chat-model-name">模型名称</label>
+          <input id="chat-model-name" name="model" type="text" maxlength="200" placeholder="tobestyledintro/qwen3.8-9b-distill:latest" autocomplete="off" spellcheck="false" required disabled>
+          <p class="hint">默认使用本机的 Qwen 3.8 9B。发送前请启动 Ollama，并确认模型已安装。若改为远程地址，对话会发送到该服务。</p>
+          <label for="chat-voice-project">语音项目目录</label>
+          <input id="chat-voice-project" name="voiceProjectRoot" type="text" maxlength="2048" placeholder="D:\Elysia_AI" autocomplete="off" spellcheck="false" disabled aria-describedby="chat-voice-project-hint">
+          <p id="chat-voice-project-hint" class="hint">检测已有的 Elysia_AI 语音环境。</p>
+        </details>
+        <div class="chat-settings-actions"><button id="chat-settings-save" class="primary-button" type="submit" disabled>保存聊天设置</button><span id="chat-settings-status" class="hint" role="status">正在读取…</span></div>
+      </form>
+      <div class="card chat-read-aloud-card">
+        <label class="toggle-row"><span class="toggle-copy"><span class="toggle-title">朗读聊天回复</span><span class="toggle-description" id="chat-read-aloud-hint">完整回答后自动朗读。关闭后不启动语音模型，音量和勿扰沿用“语音”设置。</span></span><span class="switch"><input id="chat-read-aloud" name="readAloud" type="checkbox" aria-label="朗读聊天回复" aria-describedby="chat-read-aloud-hint" disabled><i aria-hidden="true"></i></span></label>
+      </div>
+      <div class="card chat-persona-note"><h2>熟悉的她</h2><p class="hint">沿用 Elysia_AI 项目中的爱莉希雅人设。聊天记录保存在这台电脑。</p></div>
+    </section>
+    <section id="panel-history" role="tabpanel" aria-labelledby="tab-history" hidden>
+      <div class="section-heading"><h2>聊天记录</h2><div class="history-overview"><span id="chat-history-count" class="hint"></span><button id="chat-history-clear" class="text-button history-danger" type="button" disabled>清空</button></div></div>
+      <p class="section-hint">选择一段对话，回看你们聊过的内容。</p>
+      <p id="chat-history-error" class="voice-error" role="alert" hidden></p>
+      <div id="chat-history-confirm" class="history-confirm" role="alertdialog" aria-labelledby="chat-history-confirm-text" hidden>
+        <p id="chat-history-confirm-text"></p><div><button id="chat-history-confirm-cancel" class="text-button" type="button">取消</button><button id="chat-history-confirm-delete" class="secondary-button history-danger" type="button">删除</button></div>
+      </div>
+      <p id="chat-history-empty" class="chat-history-empty">还没有聊天记录。打开聊天框，和她说声你好吧。</p>
+      <div id="chat-history-layout" class="chat-history-layout" hidden>
+        <div id="chat-history-list" class="chat-history-list" aria-label="选择历史对话"></div>
+        <div id="chat-history-detail" class="card chat-history-detail" hidden>
+          <div class="history-detail-header"><h2 id="chat-history-title"></h2><p id="chat-history-date" class="hint"></p><div class="history-detail-actions"><button id="chat-history-continue" class="text-button" type="button">继续聊天</button><button id="chat-history-delete" class="text-button history-danger" type="button">删除对话</button></div></div>
+          <div id="chat-history-messages" tabindex="0" aria-label="历史消息"></div>
+        </div>
+      </div>
+    </section>
   </main>
   <footer>
     <span class="footer-hint">关闭此窗口，桌宠会继续运行。</span>
@@ -155,5 +200,7 @@
   </footer>
   <script type="module" src="./settings.mjs"></script>
   <script type="module" src="./voice-settings.mjs"></script>
+  <script type="module" src="./chat-settings.mjs"></script>
+  <script type="module" src="./model-setup.mjs"></script>
 </body>
 </html>

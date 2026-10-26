@@ -6,18 +6,32 @@ const crypto = require('node:crypto');
 const assert = require('node:assert/strict');
 const { spawn, execFileSync } = require('node:child_process');
 const asar = require('@electron/asar');
+const yaml = require('js-yaml');
 
 const root = path.resolve(__dirname, '..');
 const manifest = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+const chatOnly = process.argv.includes('--chat-only');
+assert.ok(process.argv.slice(2).every(argument => argument === '--chat-only'), 'Only --chat-only is supported');
 const output = path.resolve(root, manifest.build.directories.output);
-const artifacts = path.join(root, 'artifacts');
-const filename = manifest.build.portable.artifactName.replace('${version}', manifest.version);
+const artifacts = path.join(root, 'artifacts', `validation-v${manifest.version}`);
+const filename = manifest.build.portable.artifactName.replaceAll('${version}', manifest.version);
+assert.equal(path.basename(filename), filename); assert.ok(!filename.includes('${'));
 const executable = path.join(output, filename);
 const digest = buffer => crypto.createHash('sha256').update(buffer).digest('hex');
 const relative = file => path.relative(root, file).replaceAll('\\', '/');
 
 function command(program, args) {
-  return execFileSync(program, args, { cwd: root, windowsHide: true, encoding: 'utf8' });
+  return execFileSync(program, args, { cwd: root, windowsHide: true, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+}
+
+function verifyUpdateTarget(file) {
+  const repository = new URL((typeof manifest.repository === 'string' ? manifest.repository : manifest.repository.url).replace(/^git\+/, ''));
+  assert.equal(repository.hostname, 'github.com', 'The release repository must be GitHub');
+  const [owner, repo, ...extra] = repository.pathname.replace(/^\//, '').replace(/\.git$/, '').split('/');
+  assert.ok(owner && repo && extra.length === 0, 'Invalid release repository');
+  const configuration = yaml.load(fs.readFileSync(file, 'utf8'));
+  for (const [key, expected] of Object.entries({ provider: 'github', owner, repo })) assert.equal(configuration[key], expected, `Unexpected update target: ${key}`);
+  return { provider: configuration.provider, owner: configuration.owner, repo: configuration.repo };
 }
 
 function desktopProcesses() {
@@ -77,9 +91,9 @@ function verifyAudioPack(pack, directories) {
     mapSha256: digest(mapBytes), fileHashes: hashes, resourceFiles: expectedFiles.map(file => `${pack.folder}/${file}`) };
 }
 
-function smoke(program, consoleRequired, flag, resultKey) {
+function smoke(program, consoleRequired, flag, resultKey, extraEnvironment = {}) {
   return new Promise((resolve, reject) => {
-    const env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE;
+    const env = { ...process.env, ...extraEnvironment }; delete env.ELECTRON_RUN_AS_NODE;
     const child = spawn(program, [flag], { cwd: root, env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '', stderr = '', settled = false;
     child.stdout.on('data', chunk => { stdout += chunk; });
@@ -96,7 +110,7 @@ function smoke(program, consoleRequired, flag, resultKey) {
       clearTimeout(timeout);
       try {
         const output = stdout + (stderr ? `\n[stderr]\n${stderr}` : '');
-        assert.equal(exitCode, 0, output);
+        assert.equal(exitCode, 0, `${flag} failed (${program})\n${output}`);
         const results = stdout.split(/\r?\n/).flatMap(line => { try { const value = JSON.parse(line.trim()); return value && typeof value === 'object' && Object.hasOwn(value, resultKey) ? [value] : []; } catch { return []; } });
         const result = results.at(-1) ?? null;
         if (consoleRequired) assert.ok(result, `${flag} did not report its ${resultKey} JSON on stdout`);
@@ -127,7 +141,10 @@ function smoke(program, consoleRequired, flag, resultKey) {
   const payloadFiles = listing.slice(separator).split(/\r?\n/).filter(line => line.startsWith('Path = ')).map(line => line.slice(7));
   assert.ok(payloadFiles.length > 0, 'Portable payload is empty');
   excludesPrivateArtifacts(payloadFiles, 'Portable payload');
-  command(sevenZip, ['x', payload, 'resources/*', `-o${inspection}`, '-y']);
+  const appExecutableName = `${manifest.productName}.exe`;
+  command(sevenZip, ['x', payload, 'resources/*', appExecutableName, `-o${inspection}`, '-y']);
+  const appExecutableSha256 = digest(fs.readFileSync(path.join(output, 'win-unpacked', appExecutableName)));
+  assert.equal(digest(fs.readFileSync(path.join(inspection, appExecutableName))), appExecutableSha256, 'Portable application executable differs from the directory build');
   const archive = path.join(inspection, 'resources/app.asar');
   const expected = [...new Set(manifest.build.files.flatMap(pattern => fs.globSync(pattern, { cwd: root })))]
     .filter(file => fs.statSync(path.join(root, file)).isFile()).map(file => file.replaceAll('\\', '/')).sort();
@@ -157,7 +174,12 @@ function smoke(program, consoleRequired, flag, resultKey) {
   ].map(pack => verifyAudioPack(pack, [directoryResources, portableResources]));
   const unpacked = actual.filter(file => asar.statFile(archive, path.normalize(file)).unpacked).map(file => `app.asar.unpacked/${file}`);
   // electron-builder bundles its NSIS elevation helper alongside app resources.
-  const expectedResources = ['app.asar', 'elevate.exe', ...unpacked, ...audioPacks.flatMap(pack => pack.resourceFiles)].sort();
+  const tools = ['7za.exe', 'LICENSE.txt', 'COPYING'].map(file => `tools/${file}`);
+  const voiceManifest = JSON.parse(fs.readFileSync(path.join(root, 'electron/voice-bootstrap-manifest.json'), 'utf8'));
+  const voiceArchive = voiceManifest.assets.fileName;
+  // Building portable + NSIS together writes the same update metadata into the
+  // common runtime. Both payloads must retain it and point at this repository.
+  const expectedResources = ['app.asar', 'app-update.yml', 'elevate.exe', voiceArchive, ...unpacked, ...tools, ...audioPacks.flatMap(pack => pack.resourceFiles)].sort();
   const resourceFiles = filesWithin(directoryResources);
   assert.deepEqual(resourceFiles, expectedResources, 'Directory build has missing or unexpected resources');
   assert.deepEqual(filesWithin(portableResources), expectedResources, 'Portable resources differ from the directory allowlist');
@@ -168,15 +190,29 @@ function smoke(program, consoleRequired, flag, resultKey) {
     assert.ok(bytes.equals(fs.readFileSync(path.join(portableResources, file))), `Portable and directory resource bytes differ: ${file}`);
     resourceHashes[file] = digest(bytes);
   }
+  const voiceBuildResources = path.join(root, 'build-resources', 'voice-bootstrap');
+  for (const file of tools) assert.equal(resourceHashes[file], digest(fs.readFileSync(path.join(voiceBuildResources, file))), `Packaged extraction tool differs: ${file}`);
+  assert.equal(resourceHashes['tools/7za.exe'], voiceManifest.extractor.sha256, 'Extraction tool differs from the pinned manifest');
+  assert.equal(resourceHashes[voiceArchive], voiceManifest.assets.sha256, 'Bundled voice assets differ from the pinned manifest');
+  assert.equal(fs.statSync(path.join(portableResources, voiceArchive)).size, voiceManifest.assets.bytes);
+  const sourceVoiceArchive = path.join(voiceBuildResources, voiceArchive);
+  assert.equal(fs.statSync(sourceVoiceArchive).size, voiceManifest.assets.bytes);
+  assert.equal(digest(fs.readFileSync(sourceVoiceArchive)), voiceManifest.assets.sha256, 'Local voice build resource differs from the pinned manifest');
+  const voiceContents = command(sevenZip, ['l', '-slt', path.join(portableResources, voiceArchive)])
+    .split(/\r?\n/).filter(line => line.startsWith('Path = ')).slice(1).map(line => line.slice(7));
+  assert.ok(voiceContents.length > 0); excludesPrivateArtifacts(voiceContents, 'Voice bootstrap archive');
+  const updateTarget = verifyUpdateTarget(path.join(directoryResources, 'app-update.yml'));
+  assert.deepEqual(verifyUpdateTarget(path.join(portableResources, 'app-update.yml')), updateTarget);
 
   const before = desktopProcesses();
   const modes = [
     { name: 'desktop', flag: '--smoke-test', key: 'smoke' },
     { name: 'voice', flag: '--voice-smoke-test', key: 'voiceSmoke' },
     { name: 'interaction', flag: '--interaction-smoke-test', key: 'interactionSmoke' },
-  ];
+    { name: 'chat', flag: '--chat-smoke-test', key: 'chatSmoke' },
+  ].filter(mode => !chatOnly || mode.name === 'chat');
   const directory = {}, portable = {}, smokeLog = [];
-  // All six runs are sequential. NSIS forwards exit status, not child stdout.
+  // All runs are sequential. NSIS forwards exit status, not child stdout.
   for (const build of [
     { name: 'Directory', program: path.join(output, 'win-unpacked', `${manifest.productName}.exe`), consoleRequired: true, results: directory },
     { name: 'Portable', program: executable, consoleRequired: false, results: portable },
@@ -186,6 +222,21 @@ function smoke(program, consoleRequired, flag, resultKey) {
     smokeLog.push(`${build.name} ${mode.flag} (exit ${result.exitCode}):\n${result.output}`);
     fs.writeFileSync(path.join(artifacts, 'package-smoke.log'), smokeLog.join('\n\n'));
   }
+  // Keep the first portable app alive while two subsequent launches exit and
+  // clean up. This catches shared-temp deletion that sequential smoke misses.
+  const relaunchReportFile = path.join(inspection, 'portable-relaunch.json');
+  const relaunch = await smoke(executable, false, '--portable-relaunch-smoke-test', 'portableRelaunchSmoke', {
+    ELYSIA_PORTABLE_RELAUNCH_REPORT: relaunchReportFile,
+  });
+  relaunch.result = JSON.parse(fs.readFileSync(relaunchReportFile, 'utf8'));
+  assert.equal(relaunch.result.portableRelaunchSmoke, 'ok');
+  assert.equal(relaunch.result.distinctTempDirectories, true);
+  assert.equal(relaunch.result.runtimeFilesPreserved, true);
+  assert.equal(relaunch.result.settingsOpenedViaChat, true);
+  assert.equal(relaunch.result.settingsReopened, true);
+  portable.relaunch = relaunch;
+  smokeLog.push(`Portable repeat launch (exit ${relaunch.exitCode}):\n${JSON.stringify(relaunch.result, null, 2)}\n${relaunch.output}`);
+  fs.writeFileSync(path.join(artifacts, 'package-smoke.log'), smokeLog.join('\n\n'));
   const after = desktopProcesses();
   const previousIds = new Set(before.map(process => process.ProcessId));
   const newRemainingProcesses = after.filter(process => !previousIds.has(process.ProcessId));
@@ -201,14 +252,15 @@ function smoke(program, consoleRequired, flag, resultKey) {
     licenseFiles: expected.filter(file => ['LICENSE', 'ASSET-NOTICE.md'].includes(file)),
     exactFileList: true, exactSourceBytes: true, fileHashes: hashes,
     recordings: 54, dailyRecordings: 36, interactionRecordings: 18, originalAudioBytes: true, audioPacks,
-    portableMatchesDirectory: true, excludesOtherArtifacts: true, resourceHashes, inspection: relative(inspection),
-    smoke: { directoryExitCode: directory.desktop.exitCode, portableExitCode: portable.desktop.exitCode,
-      renderer: directory.desktop.result.renderer, desktopChecks: directory.desktop.result.desktopChecks, security: directory.desktop.result.security,
-      directory, portable, runs: 6, portableLogNote: 'The byte-identical directory build supplies detailed desktop, voice and interaction JSON; NSIS forwards each portable smoke child exit code.' },
+    portableMatchesDirectory: true, excludesOtherArtifacts: true, resourceHashes, appExecutableSha256, updateTarget, inspection: relative(inspection),
+    smoke: { directoryExitCode: (directory.desktop ?? directory.chat).exitCode, portableExitCode: (portable.desktop ?? portable.chat).exitCode,
+      renderer: directory.desktop?.result.renderer, desktopChecks: directory.desktop?.result.desktopChecks, security: directory.desktop?.result.security,
+      modes: [...modes.map(mode => mode.name), 'portable-relaunch'], directory, portable, runs: modes.length * 2 + 1,
+      portableLogNote: 'The byte-identical directory build supplies detailed JSON for the selected checks; NSIS forwards each portable smoke child exit code.' },
     processes: { previousCount: before.length, previousInstancesPreserved: true, newRemainingProcesses },
     syntheticGlobalInput: false,
   };
   fs.writeFileSync(path.join(artifacts, 'release-check.json'), JSON.stringify(report, null, 2) + '\n');
   fs.writeFileSync(executable + '.sha256', `${exeHash}  ${filename}\n`);
-  console.log(JSON.stringify({ executable: report.executable, bytes: report.bytes, sha256: exeHash, runtimeFiles: report.runtimeFiles.length, pngFiles: report.assetFiles.filter(file => file.endsWith('.png')).length, licenseFiles: report.licenseFiles, recordings: 54, smokeRuns: 6, smoke: 'passed', report: 'artifacts/release-check.json' }));
+  console.log(JSON.stringify({ executable: report.executable, bytes: report.bytes, sha256: exeHash, runtimeFiles: report.runtimeFiles.length, pngFiles: report.assetFiles.filter(file => file.endsWith('.png')).length, licenseFiles: report.licenseFiles, recordings: 54, smokeRuns: report.smoke.runs, smoke: 'passed', report: relative(path.join(artifacts, 'release-check.json')) }));
 })().catch(error => { console.error(error); process.exitCode = 1; });

@@ -663,3 +663,69 @@ test('disabling interactions hides its trailing subtitle after the audio has alr
   assert.equal(f.stopped.length,stops+1,'The host also clears the text retained briefly after natural audio completion');
   assert.equal(f.controller.getState().queuedInteraction,null);f.controller.dispose();
 });
+
+test('external speech blocks daily greetings without changing preferences or spending a voice quota, then releases the slot', async()=>{
+  const f=fixture();
+  const original={...f.controller.getState().settings};
+  assert.equal(f.controller.getState().externalSpeechBusy,false);
+  f.controller.setExternalSpeechBusy(true);
+  assert.equal(f.controller.getState().externalSpeechBusy,true);
+  await f.tick(5000);await f.tick(5000);
+  assert.equal(f.played.length,0);assert.equal(playedToday(f),0);
+  assert.deepEqual({...f.controller.getState().settings},original);
+  assert.deepEqual(f.persisted().settings,original);
+  assert.equal(Object.hasOwn(f.persisted(),'externalSpeechBusy'),false);
+  assert.equal(Object.hasOwn(f.persisted().settings,'externalSpeechBusy'),false);
+  for(const value of [null,undefined,1,'false',{}])f.controller.setExternalSpeechBusy(value);
+  assert.equal(f.controller.getState().externalSpeechBusy,true);
+  f.controller.setExternalSpeechBusy(false);await f.tick(1000);
+  assert.equal(f.played.length,1);assert.equal(f.played[0].kind,'automatic');
+  f.started();assert.equal(playedToday(f),1);f.controller.dispose();
+});
+
+test('external speech stops an active interaction and drops the annoyed queue, while clicks retain immediate silent captions', async()=>{
+  const f=fixture();
+  await f.controller.interact('head-pat');await f.advance(300);const spoken=f.played[0];f.started(spoken);
+  await f.controller.interact('poke-annoyed');assert.equal(f.controller.getState().queuedInteraction.kind,'poke-annoyed');
+  f.controller.setExternalSpeechBusy(true);
+  assert.equal(f.stopped.at(-1),'external-speech');
+  assert.equal(f.controller.getState().playback.status,'idle');assert.equal(f.controller.getState().queuedInteraction,null);
+  await f.advance(250);
+  assert.equal(await f.controller.interact('poke'),true,'A text response need not wait for the interrupted audio gap');
+  const caption=f.played.at(-1);assert.equal(caption.textOnly,true);f.started(caption);
+  assert.equal(await f.controller.interact('poke-annoyed'),true);assert.equal(f.played.at(-1).textOnly,true);
+  const count=f.played.length,stops=f.stopped.length;
+  f.controller.setExternalSpeechBusy(true);
+  assert.equal(f.stopped.length,stops,'Repeated busy broadcasts must not clear a visible caption');
+  f.finish(spoken);f.started(spoken);await f.advance(7200);
+  assert.equal(f.played.length,count);assert.equal(f.controller.getState().queuedInteraction,null);
+  assert.equal(f.played.filter(record=>!record.textOnly).length,1);
+  f.finish();f.controller.setExternalSpeechBusy(false);
+  assert.equal(await f.controller.interact('head-pat'),true);await f.advance(300);
+  assert.equal(f.played.at(-1).textOnly,undefined);assert.equal(f.played.at(-1).kind,'interaction');
+  f.controller.dispose();
+});
+
+test('external speech cancels queued timers and late loading callbacks cannot restore audio or consume history', async()=>{
+  const queued=fixture();await queued.controller.interact('head-pat');
+  const stale=[...queued.timeouts.values()].find(entry=>entry.delay===300).fn;
+  queued.controller.setExternalSpeechBusy(true);await queued.advance(300);stale();await queued.flush();
+  assert.equal(queued.played.length,0);assert.equal(queued.controller.getState().queuedInteraction,null);
+  queued.controller.setExternalSpeechBusy(false);stale();await queued.flush();
+  assert.equal(queued.played.length,0,'Releasing the external slot cannot resurrect an obsolete request');queued.controller.dispose();
+  const loading=fixture({delayed:true});await loading.tick(5000);const old=loading.played[0];
+  loading.controller.setExternalSpeechBusy(true);
+  loading.started(old);old.reject(new Error('obsolete load'));loading.finish(old);await loading.flush();
+  assert.equal(loading.controller.getState().playback.status,'idle');assert.equal(playedToday(loading),0);
+  await loading.tick(10000);assert.equal(loading.played.length,1);
+  loading.controller.setExternalSpeechBusy(false);await loading.tick(1000);
+  assert.equal(loading.played.length,2);loading.played[1].resolve({ok:true});await loading.flush();loading.controller.dispose();
+});
+
+test('developer audition and simulation cannot bypass the external audio slot', async()=>{
+  const f=fixture();f.controller.setExternalSpeechBusy(true);
+  await f.controller.playVoice('01-1');await f.controller.playVoice('H01');await f.controller.simulateVoice('01');
+  assert.equal(f.played.length,0);
+  f.controller.setExternalSpeechBusy(false);await f.controller.playVoice('01-1');
+  assert.equal(f.played.length,1);assert.equal(f.played[0].kind,'manual');f.controller.dispose();
+});

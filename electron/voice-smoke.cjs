@@ -5,9 +5,8 @@ const path = require('node:path');
 const { INTERACTION_CATALOG } = require('./interaction-replies.cjs');
 
 async function checkVoiceRuntime({ voices, voiceTestHooks, settingsWindow, pet, screen, placePet, root }) {
-  const output = path.join(root, 'artifacts', 'validation-v1.3.0');
   // Packaged ASAR is read-only; reports belong alongside the launch workspace.
-  const reportDir = root.includes('app.asar') ? path.join(process.cwd(), 'artifacts', 'validation-v1.3.0-packaged') : output;
+  const reportDir = path.join(root.includes('app.asar') ? process.cwd() : root, 'artifacts', `validation-v${require('../package.json').version}`, 'voice');
   await fs.mkdir(reportDir, { recursive: true });
   const errors = [], checks = [];
   const capture = async window => {

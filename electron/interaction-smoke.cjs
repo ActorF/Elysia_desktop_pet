@@ -6,7 +6,7 @@ const { execFileSync } = require('node:child_process');
 
 async function checkInteractionSettings({ pet, voices, voiceTestHooks, cursorTrail, settingsWindow, screen, root, getState, updateSettings,
   settingsFile, buildMenu, action, ipcMain }) {
-  const output = path.join(root.includes('app.asar') ? process.cwd() : root, 'artifacts', 'validation-v1.3.0-r9');
+  const output = path.join(root.includes('app.asar') ? process.cwd() : root, 'artifacts', `validation-v${require('../package.json').version}`, 'interaction');
   await fs.mkdir(output, { recursive: true });
   const checks = [], errors = [], original = getState().settings, originalVoice = voices.getState().settings;
   const delay = ms => new Promise(resolve => setTimeout(resolve, ms));

@@ -175,14 +175,20 @@ export function drawCharacter(ctx,rigs,state,settings={}) {
   ctx.clearRect(0,0,600,800);
   ctx.save();ctx.translate(RIG.x,RIG.y);ctx.scale(RIG.scale,RIG.scale);
   ctx.drawImage(frame,0,0,W,H);ctx.restore();
+  drawCharacterDecorations(ctx,rigs.images,state,settings);
+}
+
+/** Screen-plane artwork is shared by painting and on-demand click exclusion. */
+export function drawCharacterDecorations(ctx,images,state,settings={}) {
+  const expression=state.expression??null;
   // Decorations live in their own screen plane, outside the character rig.
   const drift=Math.sin(motionTime(state,settings)*.8)*2*motionAmplitude(settings);
   if(expression==='sleep') {
-    ctx.drawImage(rigs.images.sleepDecoration,427,8+drift,170,170);
+    ctx.drawImage(images.sleepDecoration,427,8+drift,170,170);
     ctx.save();ctx.lineJoin='round';ctx.strokeStyle='#fff4f8';ctx.fillStyle='#663650';ctx.lineWidth=4;
     for(const [x,y,size] of [[78,145,30],[91,165,23],[103,181,17]]) {
       ctx.font=`italic bold ${size}px Georgia`;ctx.strokeText('z',x,y+drift);ctx.fillText('z',x,y+drift);
     }
     ctx.restore();
-  } else if(expression==='dizzy')ctx.drawImage(rigs.images.dizzyDecoration,57,6+drift,486,162);
+  } else if(expression==='dizzy')ctx.drawImage(images.dizzyDecoration,57,6+drift,486,162);
 }

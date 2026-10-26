@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "assets": {
+    "fileName": "Elysia-voice-assets-v1.zip",
+    "bytes": 246377253,
+    "sha256": "412dba6ffcc399fd48b80f540f9c2d7a3e90e76cea3af026e09c9da931a11f2e",
+    "url": null
+  },
+  "runtime": {
+    "fileName": "GPT-SoVITS-v2-240821.7z",
+    "bytes": 5744891255,
+    "sha256": "9d9ba79de6aca0cf28a3635ccb1dbbb08b6aef362c4352e32fad99bb49e3000a",
+    "url": "https://huggingface.co/lj1995/GPT-SoVITS-windows-package/resolve/42b55dd0c41f0d23218f8f7c1e9e0636a0e386e8/GPT-SoVITS-v2-240821.7z"
+  },
+  "extractor": {
+    "relativePath": "tools/7za.exe",
+    "sha256": "223b873c50380fe9a39f1a22b6abf8d46db506e1c08d08312902f6f3cd1f7ac3"
+  }
+}

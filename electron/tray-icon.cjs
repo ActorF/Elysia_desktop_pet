@@ -8,7 +8,8 @@ function trayPng() {
   return png;
 }
 
-function createTrayImage(nativeImage) {
+function createAppImage(nativeImage, size = 256) {
+  if (!Number.isInteger(size) || size < 1 || size > 256) throw new RangeError('Icon size must be between 1 and 256.');
   const source = nativeImage.createFromBuffer(trayPng());
   const { width, height } = source.getSize();
   const bitmap = source.toBitmap();
@@ -29,7 +30,9 @@ function createTrayImage(nativeImage) {
     const y = Math.max(0, Math.min(height - side, Math.floor((top + bottom + 1 - side) / 2)));
     image = source.crop({ x, y, width: side, height: side });
   }
-  return image.resize({ width: 32, height: 32, quality: 'best' });
+  return image.resize({ width: size, height: size, quality: 'best' });
 }
 
-module.exports = { trayPng, createTrayImage };
+function createTrayImage(nativeImage) { return createAppImage(nativeImage, 32); }
+
+module.exports = { trayPng, createAppImage, createTrayImage };

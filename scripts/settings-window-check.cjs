@@ -162,7 +162,7 @@ async function main() {
 
     assert.equal(await page.locator('.choice[data-action="expression"]').count(), 10);
     assert.equal(await page.locator('.choice[data-action="pose"]').count(), 4);
-    assert.deepEqual(await page.locator('[role=tab]').evaluateAll(tabs=>tabs.map(tab=>tab.dataset.tab)), ['appearance','animation','desktop','interaction','voice']);
+    assert.deepEqual(await page.locator('[role=tab]').evaluateAll(tabs=>tabs.map(tab=>tab.dataset.tab)), ['appearance','animation','desktop','interaction','voice','chat','history']);
     await layout('default window layout'); await capture('appearance-default');
     await choose('pose', 'tea');
     for (const expression of EXPRESSIONS) { await choose('expression', expression.id); assert.equal(pet.pose, 'tea'); }
@@ -347,16 +347,18 @@ async function main() {
     assert.equal(await page.locator('[data-tab="desktop"]').getAttribute('aria-selected'), 'true');
     await page.keyboard.press('ArrowRight'); assert.equal(await page.locator('[data-tab="interaction"]').getAttribute('aria-selected'),'true');
     await page.keyboard.press('ArrowRight'); assert.equal(await page.locator('[data-tab="voice"]').getAttribute('aria-selected'),'true');
+    await page.keyboard.press('ArrowRight'); assert.equal(await page.locator('[data-tab="chat"]').getAttribute('aria-selected'),'true');
+    await page.keyboard.press('ArrowRight'); assert.equal(await page.locator('[data-tab="history"]').getAttribute('aria-selected'),'true');
     await page.keyboard.press('ArrowRight'); assert.equal(await page.locator('[data-tab="appearance"]').getAttribute('aria-selected'),'true');
-    await page.keyboard.press('ArrowLeft'); assert.equal(await page.locator('[data-tab="voice"]').getAttribute('aria-selected'),'true');
+    await page.keyboard.press('ArrowLeft'); assert.equal(await page.locator('[data-tab="history"]').getAttribute('aria-selected'),'true');
     await page.keyboard.press('Home'); assert.equal(await page.locator('[data-tab="appearance"]').getAttribute('aria-selected'), 'true');
-    await page.keyboard.press('End'); assert.equal(await page.locator('[data-tab="voice"]').getAttribute('aria-selected'),'true');
+    await page.keyboard.press('End'); assert.equal(await page.locator('[data-tab="history"]').getAttribute('aria-selected'),'true');
     assert.equal(await page.locator('[role=tab][tabindex="0"]').count(),1);
     assert.equal(await page.locator('[role=tabpanel]:visible').count(),1);
-    check('five-tab keyboard navigation supports both arrows, wraparound, Home and End with one active panel');
+    check('seven-tab keyboard navigation supports both arrows, wraparound, Home and End with one active panel');
 
     await page.setViewportSize({ width: 500, height: 500 });
-    for (const name of ['appearance', 'animation', 'desktop', 'interaction', 'voice']) { await tab(name); await layout(`minimum client layout: ${name}`); await capture(`${name}-compact`); }
+    for (const name of ['appearance', 'animation', 'desktop', 'interaction', 'voice', 'chat', 'history']) { await tab(name); await layout(`minimum client layout: ${name}`); await capture(`${name}-compact`); }
     await tab('interaction');
     await page.locator('.trail-styles').scrollIntoViewIfNeeded();
     const compactStyleCards=await page.locator('.trail-style-card').evaluateAll(cards=>cards.map(card=>({right:card.getBoundingClientRect().right,contentWidth:card.scrollWidth,width:card.clientWidth})));

@@ -56,7 +56,7 @@ async function checkSettingsWindow({ window: pet, getState, settingsFile, buildM
     const isolation = await panel.webContents.executeJavaScript(`({petBridge:typeof window.elysiaDesktop,node:typeof window.require})`);
     assert.deepEqual(isolation, {petBridge:'undefined',node:'undefined'});
     const tabIds = await panel.webContents.executeJavaScript("[...document.querySelectorAll('[role=tab]')].map(tab=>tab.dataset.tab)");
-    assert.deepEqual(tabIds, ['appearance','animation','desktop','interaction','voice'], 'Settings exposes five independent categories');
+    assert.deepEqual(tabIds, ['appearance','animation','desktop','interaction','voice','chat','history'], 'Settings exposes seven independent categories');
     const voiceSurface=await panel.webContents.executeJavaScript("({auditions:document.querySelectorAll('[data-voice-play], [data-voice-simulate], #voice-sample-tools, #voice-category').length,play:typeof window.elysiaSettings.playVoice,simulate:typeof window.elysiaSettings.simulateVoice,stop:typeof window.elysiaSettings.stopVoice,preferences:typeof window.elysiaSettings.setVoiceSettings})");
     assert.deepEqual(voiceSurface,{auditions:0,play:'undefined',simulate:'undefined',stop:'function',preferences:'function'},'Production voice UI retains preferences and stop without audition or simulation entrypoints');
     assert.equal(panel.isMovable(), true); assert.equal(panel.isResizable(), true); assert.equal(panel.getParentWindow(), null);
@@ -91,8 +91,8 @@ async function checkSettingsWindow({ window: pet, getState, settingsFile, buildM
   };
   try {
     const menu = buildMenu();
-    assert.deepEqual(menu.items.map(item => item.label), ['设置', '退出'], 'Native tray contains exactly settings and exit');
-    assert.ok(menu.items.every(item => item.enabled && !item.submenu), 'Both tray actions are directly available');
+    assert.deepEqual(menu.items.map(item => item.label), ['设置', '打开聊天框', '退出'], 'Native tray exposes settings, the chat composer and exit');
+    assert.ok(menu.items.every(item => item.enabled && !item.submenu), 'All three tray actions are directly available');
     menu.items[0].click(menu.items[0], pet, {});
     await preparePanel(await settingsWindow.open());
     const firstId = panel.id;
@@ -218,8 +218,8 @@ async function checkSettingsWindow({ window: pet, getState, settingsFile, buildM
     } else updateSettings(original.settings);
     assert.equal(pet.isDestroyed(),false);assert.equal(pet.isVisible(),false);
   }
-  return {checks:records,trayOnlySettingsAndExit:true,independentMovableWindow:true,frameless:true,customCloseKeepsPet:true,windowControlSenderValidation:true,windowStateBridge:true,maximizeNotInvokedWhileHidden:true,singletonReopen:true,petCanvasAndUrlPreserved:true,
-    isolatedSettingsBridge:true,ipcAndPersistence:true,interactionSwitchPersistence:true,cursorTrailStylePersistence:true,cursorTrailDurationPersistence:true,productionVoiceControlsOnly:true,fiveSettingsTabs:true,externalActionSync:true,clickThroughRecovery:true,hiddenThroughout:true,
+  return {checks:records,traySettingsChatAndExit:true,independentMovableWindow:true,frameless:true,customCloseKeepsPet:true,windowControlSenderValidation:true,windowStateBridge:true,maximizeNotInvokedWhileHidden:true,singletonReopen:true,petCanvasAndUrlPreserved:true,
+    isolatedSettingsBridge:true,ipcAndPersistence:true,interactionSwitchPersistence:true,cursorTrailStylePersistence:true,cursorTrailDurationPersistence:true,productionVoiceControlsOnly:true,sevenSettingsTabs:true,externalActionSync:true,clickThroughRecovery:true,hiddenThroughout:true,
     originalSettingsAndAppearanceRestored:true,syntheticGlobalInput:false};
 }
 module.exports={checkSettingsWindow};

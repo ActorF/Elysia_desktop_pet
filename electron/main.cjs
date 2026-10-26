@@ -1,12 +1,12 @@
 // Independent transparent Electron host. Character animation lives entirely in the local renderer.
 'use strict';
-const { app, BrowserWindow, Menu, Tray, nativeImage, screen, ipcMain, globalShortcut, session, powerMonitor } = require('electron');
+const { app, BrowserWindow, Menu, Tray, nativeImage, screen, ipcMain, globalShortcut, session, powerMonitor, clipboard } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { spawn } = require('node:child_process');
 const { DEFAULT_SETTINGS, EXPRESSION_KEYS, SKIN_KEYS, POSE_KEYS, sanitizeAppearance, sanitizeSettings, freeBounds, restoreBounds, recoverBounds, actionForKey, isLocalResource } = require('./host-policy.cjs');
-const { trayPng, createTrayImage } = require('./tray-icon.cjs');
+const { createTrayImage, createAppImage } = require('./tray-icon.cjs');
 const {createDesktopPointer,POINTER_INTERVAL_MS,DRAG_INTERVAL_MS}=require('./desktop-pointer.cjs');
 const {createDragLifecycle}=require('./drag-lifecycle.cjs');
 const {createTopmostController}=require('./window-layer.cjs');
@@ -20,13 +20,24 @@ const {settingsAction,isSettingsSender}=require('./settings-policy.cjs');
 const {createVoiceController}=require('./voice-controller.cjs');
 const {createCursorTrail}=require('./cursor-trail.cjs');
 const {migrateSampleProfile}=require('./profile-migration.cjs');
+const {createChatService}=require('./chat-service.cjs');
+const {createChatWindow}=require('./chat-window.cjs');
+const {registerChatIpc}=require('./chat-ipc.cjs');
+const {createChatSpeech}=require('./chat-speech.cjs');
+const {createModelSetup}=require('./model-setup.cjs');
+const {registerModelSetupIpc}=require('./model-setup-ipc.cjs');
+const {createVoiceSetup}=require('./voice-setup.cjs');
+const {createFirstRunSetup}=require('./first-run-setup.cjs');
 
 const root = path.resolve(__dirname, '..');
 const rendererUrl = pathToFileURL(path.join(root, 'renderer', 'index.html')).href;
 const smokeNativeHotkeys = process.argv.includes('--smoke-native-hotkeys');
 const isVoiceSmoke = process.argv.includes('--voice-smoke-test');
 const isInteractionSmoke = process.argv.includes('--interaction-smoke-test');
-const isSmokeTest = process.argv.includes('--smoke-test') || smokeNativeHotkeys || isVoiceSmoke || isInteractionSmoke;
+const isChatSmoke = process.argv.includes('--chat-smoke-test');
+const isPortableRelaunchSmoke = process.argv.includes('--portable-relaunch-smoke-test');
+const isSmokeTest = process.argv.includes('--smoke-test') || smokeNativeHotkeys || isVoiceSmoke || isInteractionSmoke || isChatSmoke || isPortableRelaunchSmoke;
+const portableRelaunchInstances = [];
 if (isSmokeTest) app.commandLine.appendSwitch('mute-audio');
 const voiceTestHooks = isSmokeTest ? {} : undefined;
 // Keep production preferences across upgrades; smoke tests use an isolated profile.
@@ -34,9 +45,10 @@ app.setName('爱莉希雅桌宠');
 app.setAppUserModelId('io.actorf.elysia.standalonepet');
 if (!isSmokeTest) migrateSampleProfile(app.getPath('appData'));
 app.setPath('userData', isSmokeTest
-  ? path.join(app.getPath('temp'), isVoiceSmoke ? 'elysia-pet-voice-smoke' : isInteractionSmoke ? 'elysia-pet-interaction-smoke' : 'elysia-pet-host-smoke')
+  ? path.join(app.getPath('temp'), isPortableRelaunchSmoke ? 'elysia-pet-portable-relaunch-smoke' : isChatSmoke ? 'elysia-pet-chat-smoke' : isVoiceSmoke ? 'elysia-pet-voice-smoke' : isInteractionSmoke ? 'elysia-pet-interaction-smoke' : 'elysia-pet-host-smoke')
   : path.join(app.getPath('appData'), 'Elysia Desktop Pet'));
-let voices, cursorTrail;
+let voices, cursorTrail, chat, chatWindow, chatSpeech, chatSpeechTestHooks, modelSetup, voiceSetup, firstRunSetup;
+let lastChatSettings = null;
 let pet, tray, settingsWindow, settingsFile, pointerTimer, saveTimer, desktopPointer, dragLifecycle, topmost, windowShape, legacyProcess, typingListener;
 let preferences = { ...DEFAULT_SETTINGS };
 let appearance = sanitizeAppearance();
@@ -52,6 +64,14 @@ function send(channel, data) {
   if (pet && !pet.isDestroyed() && !pet.webContents.isDestroyed()) pet.webContents.send(channel, data);
 }
 function publishSettings() { const snapshot=state();send('pet:settings',snapshot);settingsWindow?.publish(snapshot); }
+function chatState() { return { ...chat.getState(), speech: chatSpeech?.getState() ?? { status: 'idle', error: null } }; }
+function publishChat() {
+  if (!chat) return;
+  const snapshot = chatState();
+  chatWindow?.publish(snapshot);
+  const panel = settingsWindow?.getWindow();
+  if (panel && !panel.webContents.isDestroyed()) panel.webContents.send('settings:chat-state', snapshot);
+}
 function action(typeOrAction) { send('pet:action', typeof typeOrAction === 'string' ? { type: typeOrAction } : typeOrAction); }
 function pollPointer(dragging=false) {
   clearInterval(pointerTimer);
@@ -250,7 +270,11 @@ function configureAlternateHotkeys() {
 }
 
 function buildMenu() {
-  return Menu.buildFromTemplate(trayTemplate({openSettings:()=>settingsWindow.open().catch(error=>console.error('Could not open settings:',error)),quit:()=>voices?voices.requestQuit():app.quit()}));
+  return Menu.buildFromTemplate(trayTemplate({
+    openSettings:()=>settingsWindow.open().catch(error=>console.error('Could not open settings:',error)),
+    openChat:()=>chatWindow.open().catch(error=>console.error('Could not open chat:',error)),
+    quit:()=>{ chatSpeech?.release(); return voices?voices.requestQuit():app.quit(); },
+  }));
 }
 
 function registerIpc() {
@@ -300,6 +324,8 @@ function registerIpc() {
     recover(resetScale);
     return state();
   });
+  registerChatIpc({ ipcMain, chat, chatWindow, settingsWindow, speech: chatSpeech, clipboard, getState: chatState });
+  registerModelSetupIpc({ ipcMain, settingsWindow, setup: modelSetup, voiceSetup });
 }
 
 async function createWindow() {
@@ -313,7 +339,7 @@ async function createWindow() {
     show: false, frame: false, thickFrame: false, transparent: true, backgroundColor: '#00000000',
     resizable: false, maximizable: false, fullscreenable: false,
     alwaysOnTop: preferences.alwaysOnTop, skipTaskbar: true, hasShadow: false,
-    title: '爱莉希雅桌宠', icon: nativeImage.createFromBuffer(trayPng()),
+    title: '爱莉希雅桌宠', icon: createAppImage(nativeImage),
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false, webSecurity: true, backgroundThrottling: false, devTools: !app.isPackaged },
   });
   topmost=createTopmostController(pet,{enabled:preferences.alwaysOnTop,taskbarInFront:preferences.taskbarInFront,
@@ -351,9 +377,22 @@ async function createWindow() {
   voices?.start();
   if (isSmokeTest) {
     await pet.webContents.executeJavaScript(`new Promise((resolve,reject)=>{const deadline=Date.now()+15000;const timer=setInterval(()=>{if(document.documentElement.dataset.ready==='true'){clearInterval(timer);resolve(true)}else if(Date.now()>deadline){clearInterval(timer);reject(new Error('Renderer did not become ready'))}},50)})`);
+    if (isPortableRelaunchSmoke) {
+      const report = await require('./portable-relaunch-smoke.cjs').checkPortableRelaunchRuntime({
+        app, pet, chatWindow, settingsWindow, root, directory: app.getPath('userData'),
+        getSecondInstances: () => portableRelaunchInstances.slice(),
+      });
+      console.log(JSON.stringify(report));
+      app.quit(); return;
+    }
     if (isVoiceSmoke) {
       const report = await require('./voice-smoke.cjs').checkVoiceRuntime({ voices, voiceTestHooks, settingsWindow, pet, screen, placePet, root, ipcMain });
       console.log(JSON.stringify({ voiceSmoke: 'ok', ...report }));
+      app.quit(); return;
+    }
+    if (isChatSmoke) {
+      const report = await require('./chat-smoke.cjs').checkChatRuntime({ chat, chatWindow, chatSpeech, chatSpeechTestHooks, settingsWindow, pet, root, buildMenu, directory: app.getPath('userData') });
+      console.log(JSON.stringify({ chatSmoke: 'ok', ...report }));
       app.quit(); return;
     }
     if (isInteractionSmoke) {
@@ -397,13 +436,69 @@ async function createWindow() {
   }
 }
 
-if (!app.requestSingleInstanceLock()) app.quit();
+const hasInstanceLock = isPortableRelaunchSmoke
+  ? app.requestSingleInstanceLock({ runtimeDirectory: path.dirname(process.execPath) })
+  : app.requestSingleInstanceLock();
+if (!hasInstanceLock) app.quit();
 else {
-  app.on('second-instance', () => recover());
+  app.on('second-instance', (_event, _argv, _workingDirectory, additionalData) => {
+    if (isPortableRelaunchSmoke) portableRelaunchInstances.push({ runtimeDirectory: additionalData?.runtimeDirectory });
+    recover();
+  });
   app.whenReady().then(async () => {
     settingsFile = path.join(app.getPath('userData'), 'settings.json');
     loadSettings();
-    settingsWindow=createSettingsWindow({BrowserWindow,screen,root,isSmokeTest,isPackaged:app.isPackaged,getState:state});
+    const firstChatSetup = !isSmokeTest && app.isPackaged && !fs.existsSync(path.join(app.getPath('userData'), 'chat-state.json'));
+    firstRunSetup = createFirstRunSetup({ directory: app.getPath('userData'), firstRun: firstChatSetup, enabled: !isSmokeTest && app.isPackaged });
+    const windowIcon = createAppImage(nativeImage);
+    settingsWindow=createSettingsWindow({BrowserWindow,screen,root,icon:windowIcon,isSmokeTest,isPackaged:app.isPackaged,getState:state});
+    chat = createChatService({ directory: app.getPath('userData'), onChange: snapshot => {
+      if (lastChatSettings?.readAloud && !snapshot.settings.readAloud) chatSpeech?.release();
+      if (lastChatSettings && lastChatSettings.voiceProjectRoot !== snapshot.settings.voiceProjectRoot) { chatSpeech?.release(); chatSpeech?.clearCache(); }
+      const enable = !lastChatSettings?.readAloud && snapshot.settings.readAloud;
+      lastChatSettings = snapshot.settings;
+      if (enable) chatSpeech?.warmup();
+      publishChat();
+    }, onReplyCompleted: reply => {
+      if (chat.getState().activeConversationId === reply.conversationId) chatSpeech?.start(reply.text, { messageId: reply.messageId });
+    } });
+    lastChatSettings = chat.getState().settings;
+    modelSetup = createModelSetup({ userData: app.getPath('userData'), onChange: snapshot => {
+      firstRunSetup.update('chat', snapshot);
+      const panel = settingsWindow?.getWindow();
+      if (panel && !panel.webContents.isDestroyed()) panel.webContents.send('settings:model-setup-state', snapshot);
+    } });
+    voiceSetup = createVoiceSetup({ userData: app.getPath('userData'),
+      resourcesPath: app.isPackaged ? process.resourcesPath : path.join(root, 'build-resources', 'voice-bootstrap'),
+      assetDirectory: app.isPackaged ? process.env.PORTABLE_EXECUTABLE_DIR || path.dirname(process.execPath) : path.join(root, 'build-resources', 'voice-bootstrap'),
+      onChange: snapshot => {
+        firstRunSetup.update('voice', snapshot);
+        if (snapshot.phase === 'ready' && snapshot.ready) {
+          const current = chat.getState().settings.voiceProjectRoot;
+          if (current === 'D:\\Elysia_AI' || current === voiceSetup.getProjectRoot()) {
+            if (current !== voiceSetup.getProjectRoot()) chat.setSettings({ voiceProjectRoot: voiceSetup.getProjectRoot() });
+          }
+        }
+        const panel = settingsWindow?.getWindow();
+        if (panel && !panel.webContents.isDestroyed()) panel.webContents.send('settings:voice-setup-state', snapshot);
+      },
+    });
+    chatWindow = createChatWindow({ BrowserWindow, screen, root, icon:windowIcon, isSmokeTest, isPackaged: app.isPackaged, getState: chatState, onClosed: () => chatSpeech?.release() });
+    if (isChatSmoke) chatSpeechTestHooks = require('./chat-speech-smoke.cjs').createChatSpeechSmokeWorker();
+    chatSpeech = createChatSpeech({ root, ...(chatSpeechTestHooks ?? {}),
+      getProjectRoot: () => chat.getState().settings.voiceProjectRoot,
+      isEnabled: () => chat.getState().settings.readAloud === true && (!isSmokeTest || isChatSmoke),
+      isWindowOpen: () => !!chatWindow.getWindow(),
+      canSpeak: () => {
+        const state = voices?.getState();
+        return !!state && !state.settings.dnd && state.settings.volume > 0 && !state.environment.locked && !state.environment.suspended && !state.environment.fullscreen;
+      },
+      volume: () => voices?.getState().settings.volume ?? .8,
+      sendAudio: packet => chatWindow.getWindow()?.webContents.send('chat:speech-audio', packet),
+      stopAudio: packet => chatWindow.getWindow()?.webContents.send('chat:speech-stop', packet),
+      claimAudio: value => voices?.setExternalSpeechBusy(value),
+      onChange: publishChat,
+    });
     voices = createVoiceController({ BrowserWindow, screen, ipcMain, powerMonitor, root,
       assetDirectory: app.isPackaged ? path.join(process.resourcesPath, 'voice') : undefined,
       interactionAssetDirectory: app.isPackaged ? path.join(process.resourcesPath, 'interaction-voice') : undefined,
@@ -411,6 +506,7 @@ else {
       getPreferences: () => preferences, isSmokeTest, isPackaged: app.isPackaged, quit: () => app.quit(), testHooks: voiceTestHooks,
       publish: snapshot => {
         const environment = snapshot.environment;
+        if (snapshot.settings.dnd || snapshot.settings.volume === 0 || environment.locked || environment.suspended || environment.fullscreen) chatSpeech?.release();
         cursorTrail?.setBlocked(environment.locked || environment.suspended || environment.fullscreen || environment.monitorReady === false);
         const panel = settingsWindow?.getWindow();
         if (panel && !panel.webContents.isDestroyed()) panel.webContents.send('settings:voice-state', snapshot);
@@ -437,6 +533,11 @@ else {
     configureLegacyHotkeys();
     configureTypedKeys();
     await createWindow();
+    if (firstRunSetup.needsSetup()) {
+      firstRunSetup.start({ chat: modelSetup, voice: voiceSetup });
+      const setupWindow = await settingsWindow.open();
+      await setupWindow?.webContents.executeJavaScript('document.querySelector("[data-tab=chat]")?.click(); true');
+    }
     const constrainToScreen = () => { if (pet && !pet.isDestroyed()) { dragLifecycle?.cancelDrag();placePet(restoreBounds(characterBounds??pet.getBounds(),screen.getAllDisplays(),bounds=>bounds));topmost?.refresh(); } };
     screen.on('display-removed', constrainToScreen);
     screen.on('display-metrics-changed', constrainToScreen);
@@ -444,6 +545,11 @@ else {
 }
 app.on('before-quit', () => {
   quitting = true;
+  chatSpeech?.dispose();
+  modelSetup?.dispose();
+  voiceSetup?.dispose();
+  chat?.dispose();
+  chatWindow?.dispose();
   voices?.dispose();
   cursorTrail?.dispose();
   settingsWindow?.dispose();

@@ -164,3 +164,92 @@ test('cancelling without restore leaves the current expression and invalid react
     assert.equal(reaction.react(expression,duration),false);assert.equal(state.expression,'blush');
   }
 });
+
+test('fine regions select the requested expression groups without changing voice groups',()=>{
+  for(const [parts,expected] of [[['head','face','hand'],['blush','wink','heart','smile']],[['body','legs'],['surprise','blush']],[['prop'],['smile']]]){
+    for(const part of parts)for(let i=0;i<expected.length;i++){
+      const interaction=createInteractions({random:()=>(i+.5)/expected.length});
+      interaction.pointerDown({part,screenX:10,screenY:10,pointerId:1,now:0});
+      const result=interaction.pointerUp({screenX:10,screenY:10,pointerId:1,now:20});
+      assert.equal(result.expression,expected[i]);assert.equal(result.part,part);
+      assert.equal(result.type,['head','face'].includes(part)?'head-pat':'poke');
+    }
+  }
+});
+
+function heldReactionFixture() {
+  let time=0,draws=0;
+  const state={expression:'smile'},events=[];
+  const reaction=createExpressionReaction(state,{now:()=>time});
+  const interactions=createInteractions({now:()=>time,random:()=>{draws++;return .4;},
+    canReact:at=>{reaction.tick(at);return !reaction.snapshot();},
+    onReaction:event=>{events.push(event);reaction.react(event.expression,event.duration);},
+  });
+  const click=(at,part='head')=>{
+    time=at;interactions.pointerDown({part,screenX:10,screenY:10,now:time});
+    time=at+20;return interactions.pointerUp({screenX:10,screenY:10,now:time});
+  };
+  return {state,events,reaction,interactions,click,draws:()=>draws};
+}
+
+test('ordinary clicks keep the first expression and expiry while counting all regions without extra replies',()=>{
+  const f=heldReactionFixture();f.click(0,'head');
+  const first=f.state.expression,expiresAt=f.reaction.snapshot().expiresAt;
+  for(const [at,part] of [[200,'body'],[400,'hand'],[600,'legs']])assert.equal(f.click(at,part),null);
+  assert.equal(f.events.length,1);assert.equal(f.draws(),1);
+  assert.equal(f.interactions.snapshot().pokeCount,4);
+  assert.equal(f.state.expression,first);assert.equal(f.reaction.snapshot().expiresAt,expiresAt);
+  f.reaction.tick(expiresAt);assert.equal(f.state.expression,'smile');
+});
+
+test('fifth mixed click interrupts the held face and later clicks cannot extend anger or cooldown',()=>{
+  const f=heldReactionFixture();
+  ['head','hand','body','legs','face'].forEach((part,index)=>f.click(index*100,part));
+  assert.deepEqual(f.events.map(event=>event.type),['head-pat','poke-annoyed']);
+  assert.equal(f.state.expression,'angry');
+  const expiresAt=f.reaction.snapshot().expiresAt,cooldown=f.interactions.snapshot().pokeCooldownUntil;
+  assert.equal(f.click(600,'prop'),null);assert.equal(f.click(1500,'head'),null);
+  assert.equal(f.events.length,2);assert.equal(f.reaction.snapshot().expiresAt,expiresAt);
+  assert.equal(f.interactions.snapshot().pokeCooldownUntil,cooldown);
+  f.reaction.tick(expiresAt);assert.equal(f.state.expression,'smile');
+  assert.equal(f.click(cooldown,'body').type,'poke');assert.notEqual(f.state.expression,'angry');
+});
+
+test('the next ordinary click works at exact expiry even before the next animation frame',()=>{
+  const f=heldReactionFixture();f.click(0,'head');
+  const expiresAt=f.reaction.snapshot().expiresAt;
+  assert.equal(f.click(500,'body'),null);
+  assert.equal(f.click(expiresAt-20,'body').type,'poke');
+  assert.equal(f.events.length,2);assert.equal(f.state.expression,'surprise');
+});
+
+test('manual selection or disabling releases the hold but a cancelled gesture alone does not',()=>{
+  const f=heldReactionFixture();f.click(0);
+  f.interactions.cancel();assert.equal(f.click(200,'body'),null);
+  f.interactions.cancel();f.reaction.cancel({restore:true});f.state.expression='heart';
+  assert.equal(f.click(400,'body').type,'poke');
+  f.reaction.tick(f.reaction.snapshot().expiresAt);assert.equal(f.state.expression,'heart');
+  f.interactions.reset();f.reaction.cancel({restore:true});
+  assert.equal(f.click(3000,'hand').type,'poke');
+});
+
+test('a first body or leg click never randomly selects anger',()=>{
+  for(const part of ['body','legs'])for(const draw of [0,.25,.5,.75,.999999]){
+    const interactions=createInteractions({random:()=>draw});
+    interactions.pointerDown({part,screenX:10,screenY:10,now:0});
+    const result=interactions.pointerUp({screenX:10,screenY:10,now:20});
+    assert.ok(['surprise','blush'].includes(result.expression));assert.equal(result.type,'poke');
+  }
+});
+test('fine regions retain shared fifth-click annoyance, cooldown and transparent-pixel rejection',()=>{
+  const interaction=createInteractions({random:()=>0});let result;
+  for(const [i,part] of ['head','hand','body','legs','face'].entries()){
+    interaction.pointerDown({part,screenX:10,screenY:10,now:i*100});
+    result=interaction.pointerUp({screenX:10,screenY:10,now:i*100+20});
+  }
+  assert.equal(result.type,'poke-annoyed');assert.equal(result.expression,'angry');
+  interaction.pointerDown({part:'hand',screenX:10,screenY:10,now:500});
+  assert.equal(interaction.pointerUp({screenX:10,screenY:10,now:520}),null);
+  interaction.reset();interaction.pointerDown({part:null,screenX:10,screenY:10,now:1000});
+  assert.equal(interaction.pointerUp({screenX:10,screenY:10,now:1020}),null);
+});

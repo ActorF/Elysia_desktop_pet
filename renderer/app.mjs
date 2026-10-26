@@ -1,10 +1,11 @@
 /** Desktop IPC, tray-selected appearance, native dragging and right-button wheel zoom. */
 import { EXPRESSIONS, POSES, createPetState, applyAction, actionForKey, advance } from './state.mjs';
-import { loadCharacter, drawCharacter, RIG } from './faithful-character.mjs';
+import { loadCharacter, drawCharacter, drawCharacterDecorations, composeCharacterFrame, RIG } from './faithful-character.mjs';
 import { createPointerTracking } from './pointer-tracking.mjs';
 import { createCharacterHitRegion, prepareCharacterHitRegions, withKeyCloudRegion } from './hit-region.mjs';
 import { characterView, canvasBacking } from './viewport.mjs';
 import { createKeyDisplay, drawKeyCloud, KEY_EFFECT_BOUNDS } from './key-cloud.mjs';
+import { sourceAtPointer, partAtSource } from './body-regions.mjs';
 import { createInteractions, createExpressionReaction } from './interactions.mjs';
 
 const desktop = window.elysiaDesktop;
@@ -24,16 +25,52 @@ const pendingActions = [];
 const keyDisplay=createKeyDisplay();
 let keyCloudVisible=false;
 const expressionReaction = createExpressionReaction(state, { onChange: syncAppearance, now: () => performance.now() });
-const interactions = createInteractions({ now: () => performance.now(), onReaction(reaction) {
+const interactions = createInteractions({ now: () => performance.now(),
+  canReact: time => { expressionReaction.tick(time); return !expressionReaction.snapshot(); }, onReaction(reaction) {
   if (restoringAppearance || settings.clickThrough || settings.interactionsEnabled === false) return;
   expressionReaction.react(reaction.expression, reaction.duration);
   void Promise.resolve(desktop?.interact?.(reaction.type)).catch(console.error);
 } });
-function interactionPoint(event) {
+let pickSource = null, pickSourceKey = null, paintedOverlay = null, overlayPixel = null;
+function overlayAtPointer(x,y) {
+  const frame=paintedOverlay;
+  if(!frame||(!frame.display&&!['sleep','dizzy'].includes(frame.state.expression)))return false;
+  const logicalX=(x-frame.view.x)/frame.view.scale,logicalY=(y-frame.view.y)/frame.view.scale;
+  if(!Number.isFinite(logicalX)||!Number.isFinite(logicalY))return false;
+  if(!overlayPixel){overlayPixel=document.createElement('canvas');overlayPixel.width=overlayPixel.height=1;}
+  const pixel=overlayPixel.getContext('2d',{willReadFrequently:true});
+  pixel.setTransform(1,0,0,1,0,0);pixel.clearRect(0,0,1,1);
+  // Clipped views are painted from a 2x logical bitmap, including extreme zoom.
+  // Otherwise use the same backing-pixel scale as the visible canvas.
+  pixel.setTransform(frame.sx,0,0,frame.sy,.5-logicalX*frame.sx,.5-logicalY*frame.sy);
+  drawCharacterDecorations(pixel,characterAtlas.images,frame.state,frame.settings);
+  drawKeyCloud(pixel,frame.display,{pose:frame.state.pose});
+  return pixel.getImageData(0,0,1,1).data[3]>0;
+}
+function partAtPointer(x, y) {
+  if (!characterAtlas) return null;
+  // Test the artwork actually on screen, including cloud positions frozen by a drag.
+  if (overlayAtPointer(x,y)) return null;
+  const point = sourceAtPointer(x,y,innerWidth,innerHeight,viewport,RIG,state,settings,characterAtlas.mesh.accelerated);
+  if (!point) return null;
+  const key = JSON.stringify([state.pose,state.expression,state.cat,state.glasses]);
+  if (key !== pickSourceKey) { pickSource = composeCharacterFrame(characterAtlas.images,state,false); pickSourceKey = key; }
+  const sx = Math.floor(point.x), sy = Math.floor(point.y);
+  // Native shapes cover the complete motion envelope. Check source alpha too,
+  // so a transparent gap, decoration or key cloud is never treated as a body part.
+  if (sx < 0 || sy < 0 || sx >= RIG.width || sy >= RIG.height
+    || pickSource.getContext('2d').getImageData(sx,sy,1,1).data[3] < 32) return null;
+  return partAtSource(point.x,point.y,state.pose);
+}
+function interactionPoint(event, pick = false) {
   const view = characterView(innerWidth, innerHeight, viewport);
+  const blocked = restoringAppearance || settings.clickThrough || settings.interactionsEnabled === false || spaceHeld || rightPointer !== null;
+  // Mesh inversion runs once at press, never for every pointermove/animation frame.
+  const part = pick && !blocked ? partAtPointer(event.clientX,event.clientY) : undefined;
   return { x: (event.clientX - view.x) / view.scale, y: (event.clientY - view.y) / view.scale,
     screenX: event.screenX, screenY: event.screenY, button: event.button, buttons: event.buttons,
-    pointerId: event.pointerId, now: performance.now(), blocked: restoringAppearance || settings.clickThrough || settings.interactionsEnabled === false || spaceHeld };
+    pointerId: event.pointerId, now: performance.now(), blocked: blocked || (pick && part === null),
+    ...(pick ? {part} : {}) };
 }
 
 function receiveTypedKey(character){
@@ -141,7 +178,7 @@ canvas.addEventListener('pointerleave', () => { if (!dragging) interactions.samp
 canvas.addEventListener('pointerdown', event => {
   if (event.button === 2) { interactions.cancel(); rightPointer = event.pointerId; canvas.setPointerCapture(event.pointerId); return; }
   if (event.button !== 0) return;
-  interactions.pointerDown({...interactionPoint(event),blocked:restoringAppearance||settings.clickThrough||settings.interactionsEnabled===false||spaceHeld||rightPointer!==null});
+  interactions.pointerDown(interactionPoint(event,true));
   dragging = {pointerId:event.pointerId}; pauseDragRendering(true);
   canvas.setPointerCapture(event.pointerId); desktop?.dragStart();
 });
@@ -220,6 +257,8 @@ try {
   function paintCharacter(display) {
     const view = characterView(innerWidth, innerHeight, viewport);
     const rx = canvas.width / innerWidth, ry = canvas.height / innerHeight;
+    paintedOverlay={state:{...state},settings:{...settings},display:display?{...display}:null,
+      view:{...view},sx:viewport?.clipped?2:rx*view.scale,sy:viewport?.clipped?2:ry*view.scale};
     if (!viewport?.clipped) {
       if(clearCanvasBeforePaint){ctx.setTransform(1,0,0,1,0,0);ctx.clearRect(0,0,canvas.width,canvas.height);}
       clearCanvasBeforePaint=false;
@@ -270,6 +309,7 @@ try {
     snapshot:() => JSON.parse(JSON.stringify(state)),
     settings:() => ({...settings}),
     viewport:() => viewport ? {...viewport} : null,
+    partAt:(x,y)=>partAtPointer(x,y),
     keyDisplay:()=>keyDisplay.snapshot(performance.now()),
     render:(expressionOrOptions,megaphone=false,time=0,resolutionScale=1) => {
       const options = expressionOrOptions && typeof expressionOrOptions==='object' ? expressionOrOptions : {expression:expressionOrOptions,pose:megaphone?'megaphone':'idle',time};

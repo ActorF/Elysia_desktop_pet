@@ -11,11 +11,16 @@ export function isHeadPoint(x,y) {
     && ((x-HEAD_ZONE.x)/HEAD_ZONE.radiusX)**2+((y-HEAD_ZONE.y)/HEAD_ZONE.radiusY)**2 <= 1;
 }
 
-export function createInteractions({onReaction=()=>{},now=clock}={}) {
+const PART_EXPRESSIONS = Object.freeze({
+  head: ['blush','wink','heart','smile'], face: ['blush','wink','heart','smile'], hand: ['blush','wink','heart','smile'],
+  body: ['surprise','blush'], legs: ['surprise','blush'], prop: ['smile'],
+});
+
+export function createInteractions({onReaction=()=>{},now=clock,random=Math.random,canReact=()=>true}={}) {
   let pressed=null,pokes=[],lastTime=-Infinity,pokeCooldownUntil=-Infinity;
   const timeOf = value => Number.isFinite(value?.now) ? value.now : now();
-  function emit(type,expression,duration,time) {
-    const result={type,expression,duration,now:time};onReaction(result);return result;
+  function emit(type,expression,duration,time,part) {
+    const result={type,expression,duration,now:time,...(part?{part}:{})};onReaction(result);return result;
   }
   function cancel() {pressed=null;pokes=[];}
   function reset() {cancel();pokeCooldownUntil=-Infinity;lastTime=-Infinity;}
@@ -29,9 +34,10 @@ export function createInteractions({onReaction=()=>{},now=clock}={}) {
   }
   function pointerDown(value={}) {
     const time=timeOf(value);if(!acceptTime(time))return null;
-    if(value.blocked||(value.button??0)!==0||!hasScreen(value)){cancel();return null;}
+    if(value.blocked||value.part===null||(value.button??0)!==0||!hasScreen(value)){cancel();return null;}
     pressed={pointerId:value.pointerId??0,screenX:value.screenX,screenY:value.screenY,startedAt:time,
-      maximumDistance:0,head:isHeadPoint(value.x,value.y)};
+      maximumDistance:0,part:Object.hasOwn(PART_EXPRESSIONS,value.part)?value.part:undefined,
+      head:value.part===undefined?isHeadPoint(value.x,value.y):value.part==='head'||value.part==='face'};
     return null;
   }
   function pointerUp(value={}) {
@@ -45,7 +51,17 @@ export function createInteractions({onReaction=()=>{},now=clock}={}) {
     pokes=pokes.filter(value=>time-value<=INTERACTION_LIMITS.pokeWindow);
     pokes.push(time);
     if(pokes.length>=INTERACTION_LIMITS.pokeThreshold){pokes=[];pokeCooldownUntil=time+INTERACTION_LIMITS.pokeCooldown;return emit('poke-annoyed','angry',2600,time);}
-    return click.head?emit('head-pat','blush',2400,time):emit('poke','surprise',1600,time);
+    // Keep counting real clicks during the current expression, but do not
+    // replace it, extend its lifetime or send another ordinary voice request.
+    // The fifth-click reaction above deliberately bypasses this gate.
+    if(!canReact(time))return null;
+    // Preserve the upstream three voice groups and fifth-click cooldown.
+    // Fine body regions vary only the expression; callers without a part retain
+    // the original head/body behavior (including older preview integrations).
+    const choices = PART_EXPRESSIONS[click.part];
+    if (!choices) return click.head?emit('head-pat','blush',2400,time):emit('poke','surprise',1600,time);
+    const draw=Number(random()),index=Math.min(choices.length-1,Math.floor(Math.max(0,Number.isFinite(draw)?draw:0)*choices.length));
+    return emit(click.head?'head-pat':'poke',choices[index],1800,time,click.part);
   }
   function sample(value={}) {
     const time=timeOf(value);if(!acceptTime(time))return null;

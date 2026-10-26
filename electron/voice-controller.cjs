@@ -40,6 +40,7 @@ function createVoiceController({ BrowserWindow, screen, ipcMain, powerMonitor, r
   const interactionReplies = createInteractionReplies();
   let timer = null, sequence = 0, pending = null, disposed = false, farewellPending = false, quitTimer = null;
   let quitRequested = false;
+  let externalSpeechBusy = false;
   let lastPlaybackEndedAt = 0, retryAt = 0, lastPersistedAt = 0;
   let environmentKey = '';
   let lastInteractionAt = -Infinity;
@@ -72,7 +73,7 @@ function createVoiceController({ BrowserWindow, screen, ipcMain, powerMonitor, r
       }
       playback = { ...playback, status: event.status === 'error' ? 'error' : 'idle', error: event.error ?? null };
       pending = null;
-      if (event.status !== 'ended') clearInteractionQueue();
+      if (event.status !== 'ended' || externalSpeechBusy) clearInteractionQueue();
       if (event.status === 'error') retryAt = Date.now() + 30000;
       scheduleInteraction();
       notify();
@@ -88,13 +89,14 @@ function createVoiceController({ BrowserWindow, screen, ipcMain, powerMonitor, r
   } });
   function getState() {
     return { settings: { ...settings }, available: assets.available, error: assets.error,
+      externalSpeechBusy,
       interactionAvailable: interactionAssets.available, interactionError: interactionAssets.error,
       queuedInteraction: queuedInteraction ? { kind: queuedInteraction.kind, expiresAt: queuedInteraction.expiresAt } : null,
       playback: { ...playback }, environment: environment.sample() };
   }
   function notify() { if (!disposed) publish(getState()); }
   async function play(lineId, kind, candidate = null) {
-    if (disposed || quitRequested || (farewellPending && kind !== 'farewell')) return getState();
+    if (disposed || quitRequested || externalSpeechBusy || (farewellPending && kind !== 'farewell')) return getState();
     const line = assets.lines.get(lineId) ?? (kind === 'manual' ? interactionAssets.lines.get(lineId) : null), sample = environment.sample();
     if (!line || sample.locked || sample.suspended) return getState();
     if (kind === 'automatic' && (pending || queuedInteraction || sample.now < audioQuietUntil)) return getState();
@@ -125,12 +127,12 @@ function createVoiceController({ BrowserWindow, screen, ipcMain, powerMonitor, r
     clearTimeout(interactionTimer); interactionTimer = null; queuedInteraction = null;
   }
   function canSpeakInteraction(sample) {
-    return interactionAssets.available && !settings.dnd && settings.volume > 0
+    return !externalSpeechBusy && interactionAssets.available && !settings.dnd && settings.volume > 0
       && sample.monitorReady !== false && !sample.fullscreen && !sample.locked && !sample.suspended;
   }
   function scheduleInteraction() {
     clearTimeout(interactionTimer); interactionTimer = null;
-    if (!queuedInteraction || pending || disposed || quitRequested || farewellPending) return;
+    if (!queuedInteraction || pending || disposed || quitRequested || farewellPending || externalSpeechBusy) return;
     const request = queuedInteraction;
     const delay = Math.max(0, request.dueAt - Date.now(), audioQuietUntil - Date.now());
     interactionTimer = setTimeout(() => {
@@ -170,7 +172,7 @@ function createVoiceController({ BrowserWindow, screen, ipcMain, powerMonitor, r
       if (pending?.textOnly) speech.stop('replaced');
       return queueInteraction(kind, sample.now);
     }
-    if (sample.now < audioQuietUntil) return false;
+    if (sample.now < audioQuietUntil && !externalSpeechBusy) return false;
     clearInteractionQueue();
     const escalatesReaction = kind === 'poke-annoyed' && pending?.interactionType !== kind;
     if (!escalatesReaction && sample.now - lastInteractionAt < 250) return false;
@@ -209,7 +211,7 @@ function createVoiceController({ BrowserWindow, screen, ipcMain, powerMonitor, r
     const nextEnvironmentKey = JSON.stringify([sample.monitorReady, sample.locked, sample.suspended, sample.fullscreen]);
     if (nextEnvironmentKey !== environmentKey) { environmentKey = nextEnvironmentKey; notify(); }
     const candidate = engine.evaluate({ ...sample, ...settings, enabled: settings.enabled && settings.volume > 0,
-      busy: !!pending || !!queuedInteraction || !assets.available || sample.now < retryAt || sample.now < audioQuietUntil });
+      busy: externalSpeechBusy || !!pending || !!queuedInteraction || !assets.available || sample.now < retryAt || sample.now < audioQuietUntil });
     if (sample.now - lastPersistedAt >= 15000) persist();
     if (candidate && !isSmokeTest) void play(candidate.lineId, 'automatic', candidate);
   }
@@ -227,6 +229,17 @@ function createVoiceController({ BrowserWindow, screen, ipcMain, powerMonitor, r
       clearInteractionQueue();
       lastInteractionAt = -Infinity;
       if (pending?.kind === 'interaction' || (!pending && playback.kind === 'interaction')) speech.stop();
+    }
+    notify(); return getState();
+  }
+  function setExternalSpeechBusy(value) {
+    if (disposed || typeof value !== 'boolean' || externalSpeechBusy === value) return getState();
+    externalSpeechBusy = value;
+    if (value) {
+      // Claim the audio slot before stopping the old line: its synchronous
+      // completion callback must not schedule a queued interaction behind it.
+      clearInteractionQueue();
+      speech.stop('external-speech');
     }
     notify(); return getState();
   }
@@ -259,7 +272,7 @@ function createVoiceController({ BrowserWindow, screen, ipcMain, powerMonitor, r
     },
   });
   return {
-    getState, setSettings, requestQuit, interact, preferencesChanged,
+    getState, setSettings, requestQuit, interact, preferencesChanged, setExternalSpeechBusy,
     stopVoice: () => { clearInteractionQueue(); speech.stop(); notify(); return getState(); },
     start: () => { if (!timer && !isSmokeTest) timer = setInterval(tick, 1000); },
     reposition: () => speech.reposition(),

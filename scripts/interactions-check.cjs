@@ -10,7 +10,7 @@ const { chromium } = require('playwright');
 const { DEFAULT_SETTINGS } = require('../electron/host-policy.cjs');
 
 const root = path.resolve(__dirname, '..');
-const output = path.join(root, 'artifacts', 'validation-v1.3.0-interactions');
+const output = path.join(root, 'artifacts', `validation-v${require('../package.json').version}`, 'interaction-browser');
 const report = { passed: false, kind: 'real character renderer with browser-local mouse and mock desktop bridge', checks: [], screenshots: [], errors: [] };
 const server = createServer(async (request, response) => {
   try {
@@ -27,17 +27,19 @@ async function main() {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   let browser, activePage;
   try {
-    browser = await chromium.launch({ channel: 'msedge', headless: true });
+    browser = await chromium.launch({ channel: process.platform === 'darwin' ? 'chrome' : 'msedge', headless: true });
     async function freshPage({ scale = 1, characterX = 140, characterY = 0, interactionsEnabled = true } = {}) {
       if (activePage) await activePage.close();
       const page = activePage = await browser.newPage({ viewport: { width: 740, height: 800 }, deviceScaleFactor: 1 });
       page.on('pageerror', error => report.errors.push(error.message));
       await page.addInitScript(({ defaults, scale, characterX, characterY, interactionsEnabled }) => {
+        // Keep fixed-expression upstream assertions deterministic; unit tests cover all draws.
+        Math.random = () => window.__interactionsQA?.random ?? 0;
         const callbacks = {};
         const host = { settings: { ...defaults, scale, interactionsEnabled }, hotkeys: { legacy: { active: false }, typing: { active: false } },
           viewport: { width: 740, height: 800, characterX, characterY, characterWidth: 600 * scale, characterHeight: 800 * scale, clipped: false } };
         const qa = window.__interactionsQA = {
-          calls: [], appearances: [], starts: 0, ends: 0, zooms: [], hitRegions: [],
+          calls: [], appearances: [], starts: 0, ends: 0, zooms: [], hitRegions: [], random: 0,
           action: value => callbacks.action(value),
           settings: patch => { Object.assign(host.settings, patch); callbacks.settings(structuredClone(host)); },
           nativePointer: value => callbacks.pointer(value),
@@ -137,20 +139,20 @@ async function main() {
     assert.equal(result.state.expression, 'surprise');
     assert.deepEqual(kinds(result), ['poke']);
     await click(page, 295, 230);
-    assert.equal((await snapshot(page)).state.expression, 'blush');
+    assert.equal((await snapshot(page)).state.expression, 'surprise');
     await click(page); await click(page, 295, 230);
     result = await snapshot(page);
-    assert.equal(result.state.expression, 'blush');
-    assert.deepEqual(kinds(result), ['poke', 'head-pat', 'poke', 'head-pat']);
-    check('the first four mixed head and body clicks keep their own reactions');
+    assert.equal(result.state.expression, 'surprise');
+    assert.deepEqual(kinds(result), ['poke']);
+    check('the first four mixed clicks keep the first face and send only one ordinary reply');
     await click(page);
     result = await snapshot(page);
-    assert.equal(result.state.expression, 'angry'); assert.deepEqual(kinds(result), ['poke', 'head-pat', 'poke', 'head-pat', 'poke-annoyed']);
+    assert.equal(result.state.expression, 'angry'); assert.deepEqual(kinds(result), ['poke', 'poke-annoyed']);
     assert.equal(result.starts, 5); assert.equal(result.ends, 5);
     await capture(page, 'five-mixed-clicks');
     check('head and body share the three-second counter; the fifth mixed click annoys', { kinds: kinds(result) });
     await click(page, 295, 230); await click(page);
-    assert.equal((await snapshot(page)).calls.length, 5, 'The three-second cooldown ignores further clicks');
+    assert.equal((await snapshot(page)).calls.length, 2, 'The three-second cooldown ignores further clicks');
     check('clicks during the annoyance cooldown cannot replace the angry face');
     await move(page, 530, 600);
     await page.waitForFunction(() => window.elysiaPreview.snapshot().expression === null, undefined, { timeout: 4000 });
@@ -158,10 +160,30 @@ async function main() {
 
     page = await freshPage();
     for (let i = 0; i < 4; i++) await click(page, 295, 230);
-    result = await snapshot(page); assert.deepEqual(kinds(result), ['head-pat', 'head-pat', 'head-pat', 'head-pat']);
+    result = await snapshot(page); assert.deepEqual(kinds(result), ['head-pat']);
     assert.equal(result.state.expression, 'blush'); await click(page, 295, 230);
     result = await snapshot(page); assert.equal(kinds(result).at(-1), 'poke-annoyed'); assert.equal(result.state.expression, 'angry');
     check('head-only clicks also become angry on the fifth click');
+
+    page = await freshPage();
+    await action(page, { type:'expression', id:'smile' });
+    await click(page,295,230);
+    const firstReplyAt=(await snapshot(page)).calls[0].at;
+    await page.waitForTimeout(900);
+    await page.evaluate(()=>{window.__interactionsQA.random=.4;});
+    await click(page,295,230);
+    result=await snapshot(page);
+    assert.equal(result.state.expression,'blush');assert.equal(result.calls.length,1);
+    await page.waitForFunction(()=>window.elysiaPreview.snapshot().expression==='smile',undefined,{timeout:1400});
+    const restoredAfter=await page.evaluate(first=>performance.now()-first,firstReplyAt);
+    assert.ok(restoredAfter<2400,`Repeated clicks must not extend the first 1.8s expression: ${restoredAfter}`);
+    await click(page,295,230);result=await snapshot(page);
+    assert.equal(result.state.expression,'wink');assert.equal(result.calls.length,2);
+    await action(page,{type:'expression',id:'heart'});
+    await click(page);result=await snapshot(page);
+    assert.equal(result.state.expression,'surprise');assert.equal(result.calls.length,3);
+    await page.waitForFunction(()=>window.elysiaPreview.snapshot().expression==='heart',undefined,{timeout:2600});
+    check('ordinary face holds 1.8 seconds without rerolls or extension; expiry and manual selection allow a fresh reply');
 
     page = await freshPage();
     for (let i = 0; i < 5; i++) { if (i) await page.waitForTimeout(850); await click(page); }
@@ -240,10 +262,10 @@ async function main() {
     for (let i = 0; i < 4; i++) await click(page, 295, 230);
     await page.evaluate(() => window.__interactionsQA.settings({ interactionsEnabled: false }));
     for (let i = 0; i < 6; i++) await click(page);
-    assert.equal((await snapshot(page)).calls.length, 4);
+    assert.equal((await snapshot(page)).calls.length, 1);
     await page.evaluate(() => window.__interactionsQA.settings({ interactionsEnabled: true }));
     await click(page, 295, 230); result = await snapshot(page);
-    assert.deepEqual(kinds(result), ['head-pat', 'head-pat', 'head-pat', 'head-pat', 'head-pat']);
+    assert.deepEqual(kinds(result), ['head-pat', 'head-pat']);
     assert.equal(result.state.expression, 'blush');
     check('re-enabling starts the shared click count from zero, ignoring all clicks while disabled');
 
@@ -265,6 +287,21 @@ async function main() {
     await page.mouse.up(); assert.deepEqual(kinds(await snapshot(page)), []);
     await click(page); assert.deepEqual(kinds(await snapshot(page)), ['poke']);
     check('a press begun before disabling cannot become a ghost click when released after re-enabling');
+    // Exercise source-space regions on all four foreground-hand poses. The
+    // resulting voice kind still uses the upstream catalog and debounce path.
+    for (const [pose,x,y] of [['idle',770,752],['tea',635,741],['cake',702,750],['megaphone',337,751]]) {
+      page = await freshPage(); await action(page,{type:'pose',id:pose});
+      await click(page,38+x*.48,68+y*.48);
+      result = await snapshot(page);
+      assert.equal(result.state.expression,'blush'); assert.deepEqual(kinds(result),['poke']);
+      check(`fine hand region follows ${pose} without replacing the voice group`);
+    }
+    page = await freshPage();
+    await click(page,38+540*.48,68+1250*.48);
+    assert.equal((await snapshot(page)).state.expression,'surprise');
+    const count = (await snapshot(page)).calls.length;
+    await click(page,1,1); assert.equal((await snapshot(page)).calls.length,count);
+    check('legs use the startled group and transparent source pixels stay inert');
     assert.deepEqual(report.errors, [], 'No renderer exceptions');
     report.passed = true;
   } catch (error) {

@@ -3,7 +3,7 @@ const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { settingsWindowBounds } = require('./settings-policy.cjs');
 
-function createSettingsWindow({ BrowserWindow, screen, root, isSmokeTest = false, isPackaged = false, getState }) {
+function createSettingsWindow({ BrowserWindow, screen, root, icon, isSmokeTest = false, isPackaged = false, getState }) {
   const url = pathToFileURL(path.join(root, 'renderer', 'settings.html')).href;
   let current = null, lastBounds = null, disposed = false;
   const getWindow = () => current && !current.window.isDestroyed() ? current.window : null;
@@ -23,7 +23,7 @@ function createSettingsWindow({ BrowserWindow, screen, root, isSmokeTest = false
         : screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
       const window = new BrowserWindow({
         ...settingsWindowBounds(display.workArea, lastBounds),
-        title: '设置',
+        title: '设置', icon,
         show: false, frame: false, roundedCorners: true, thickFrame: true, transparent: false, backgroundColor: '#fffafc',
         resizable: true, movable: true, minimizable: true, maximizable: true,
         fullscreenable: false, skipTaskbar: false, alwaysOnTop: false, autoHideMenuBar: true,

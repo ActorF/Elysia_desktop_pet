@@ -1,6 +1,11 @@
 node_modules/
-release/
+release/*
+!release/Elysia_desktop_pet-1.4.0.exe
+!release/Elysia_desktop_pet-1.4.0.exe.sha256
+!release/Elysia_desktop_pet-1.4.0-setup.exe
+!release/Elysia_desktop_pet-1.4.0-setup.exe.sha256
 artifacts/
+build-resources/
 tmp/
 *.log
 .env

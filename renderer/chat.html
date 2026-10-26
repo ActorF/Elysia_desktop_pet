@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src blob:; connect-src 'self'; object-src 'none'; base-uri 'none'">
+  <title>ELYSIA · 在这里陪你</title>
+  <link rel="stylesheet" href="./settings.css">
+  <link rel="stylesheet" href="./chat.css">
+</head>
+<body class="chat-page">
+  <header class="page-header chat-header">
+    <h1>ELYSIA · 在这里陪你</h1>
+    <div class="window-controls" aria-label="窗口操作">
+      <button type="button" data-window-control="minimize" aria-label="最小化" title="最小化"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h10" /></svg></button>
+      <button type="button" data-window-control="toggle-maximize" aria-label="最大化" title="最大化" data-maximized="false"><svg class="maximize-icon" viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="3" width="10" height="10" rx="1" /></svg><svg class="restore-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 3h8v8M3 5h8v8H3z" /></svg></button>
+      <button type="button" data-window-control="close" aria-label="关闭" title="关闭"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m3 3 10 10M13 3 3 13" /></svg></button>
+    </div>
+  </header>
+  <div class="chat-workspace">
+    <nav class="chat-sidebar" aria-label="聊天操作">
+      <button id="chat-new" class="chat-icon-button" type="button" title="新对话" aria-label="新对话" aria-describedby="chat-new-tooltip" disabled>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+        <span id="chat-new-tooltip" class="chat-tooltip" role="tooltip"><strong>新对话</strong><span>开启一段新的聊天</span></span>
+      </button>
+    </nav>
+    <div class="chat-content">
+      <main id="chat-transcript" class="chat-transcript" aria-label="当前对话" tabindex="0">
+        <div id="chat-empty" class="chat-empty"><h2>今天，有什么想和我分享的？</h2><p>写下此刻的心情，或从一句“你好”开始。</p></div>
+        <div id="chat-messages"></div>
+      </main>
+      <div class="chat-notices"><p id="chat-error" class="voice-error" role="alert" hidden></p><p id="chat-storage-error" class="voice-error" role="alert" hidden></p><p id="chat-speech-error" class="voice-error" role="alert" hidden></p></div>
+    </div>
+    <form id="chat-form" class="chat-composer">
+        <label id="chat-input-label" for="chat-input">想对爱莉希雅说的话</label>
+        <div class="chat-composer-row">
+          <button id="chat-settings" class="chat-icon-button" type="button" title="设置与记录" aria-label="设置与记录" aria-describedby="chat-settings-tooltip">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9.6 3-.7 2.3-1.4.8-2.4-.5-2.4 4.2 1.6 1.8v1.6l-1.6 1.8 2.4 4.2 2.4-.5 1.4.8.7 2.3h4.8l.7-2.3 1.4-.8 2.4.5 2.4-4.2-1.6-1.8v-1.6l1.6-1.8-2.4-4.2-2.4.5-1.4-.8-.7-2.3z" /><circle cx="12" cy="12.4" r="3" /></svg>
+            <span id="chat-settings-tooltip" class="chat-tooltip" role="tooltip"><strong>设置与记录</strong><span>修改偏好，回看聊天记录</span></span>
+          </button>
+          <textarea id="chat-input" maxlength="8000" rows="3" placeholder="在这里写下你的消息…" disabled></textarea>
+          <button id="chat-send" class="primary-button chat-send-button" type="submit" title="发送消息" aria-label="发送消息" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 3 14.6 21 10.4 13.6 3 9.4Z" /></svg></button>
+        </div>
+        <div class="chat-composer-bottom"><p id="chat-status" role="status" aria-live="polite" hidden></p><button id="chat-stop" class="secondary-button" type="button" hidden>停止回答</button></div>
+    </form>
+  </div>
+  <script type="module" src="./chat.mjs"></script>
+  <script type="module" src="./chat-audio.mjs"></script>
+</body>
+</html>
