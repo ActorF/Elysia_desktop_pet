@@ -156,6 +156,8 @@ Enter、Ctrl、Tab、方向键等功能键，以及 Ctrl／Alt／Win 快捷组�
 
 可在“动画”页开关按键云朵，不影响表情快捷键。输入仅用于即时显示，不记录或保存。
 
+**macOS：** 在“设置 → 动画”开启按键云朵后，点击“允许输入监控／重试”，在系统设置的“隐私与安全性 → 输入监控”允许系统提示的应用／按键助手，再回到桌宠点击重试。源码运行时系统可能显示 Electron 或启动终端，具体以系统列出的授权对象为准。未授权时设置页会显示原因，其他桌宠功能仍可用。Mac 助手使用只读事件监听，忽略 Command／Control／Option 组合键，系统安全输入开启时暂停显示；这不等于能识别所有应用的密码框，输入敏感信息或共享屏幕前可关闭按键云朵。
+
 ### 表情快捷键
 
 按住 **空格**，再按下对应数字；数字行和数字小键盘均可使用。再次触发同一表情恢复默认脸，动作与装扮不变。
@@ -184,7 +186,7 @@ Enter、Ctrl、Tab、方向键等功能键，以及 Ctrl／Alt／Win 快捷组�
 
 ## 源码运行
 
-需要 **Windows、Node.js 22 或更新版本**。克隆仓库后安装依赖并启动；浏览器视觉检查还需要 Microsoft Edge。
+需要 **Windows 或 macOS、Node.js 22 或更新版本**。Mac 首次源码启动需要 Xcode Command Line Tools（`xcode-select --install`）；`npm start` 自动编译并缓存本机架构的按键助手。Mac 打包应用携带助手，用户无需安装编译器；跨架构打包前需准备目标架构助手。克隆仓库后安装依赖并启动；浏览器视觉检查还需要 Microsoft Edge。
 
 ```powershell
 git clone https://github.com/ActorF/Elysia_desktop_pet.git

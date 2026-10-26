@@ -120,9 +120,16 @@ document.querySelector('[name=cursorTrailDurationValue]').addEventListener('keyd
   if (event.key === 'Enter') { event.preventDefault(); event.currentTarget.blur(); }
 });
 
+document.querySelector('#typing-permission').addEventListener('click', () => void command(() => desktop.requestTypingPermission()));
+
 function render() {
   if (!snapshot) return;
   const { settings, appearance = {} } = snapshot;
+  const typing = snapshot.hotkeys?.typing;
+  document.querySelector('#typing-status').textContent = !settings.keyDisplay ? '按键云朵已关闭。'
+    : typing?.active ? '全局按键显示已启用。' : typing?.error || '正在连接按键监听…';
+  document.querySelector('#typing-permission').hidden = snapshot.platform !== 'darwin' || !settings.keyDisplay || typing?.active === true;
+
   for (const [key, input] of controls) input.checked = key === 'cat' || key === 'glasses' ? Boolean(appearance[key])
     : key === 'interactionsEnabled' || key === 'cursorTrailEnabled' ? settings[key] !== false : Boolean(settings[key]);
   for (const [key, { slider, number, factor, defaultValue }] of rangeControls) {

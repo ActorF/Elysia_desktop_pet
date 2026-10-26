@@ -1,6 +1,6 @@
 // Independent transparent Electron host. Character animation lives entirely in the local renderer.
 'use strict';
-const { app, BrowserWindow, Menu, Tray, nativeImage, screen, ipcMain, globalShortcut, session, powerMonitor } = require('electron');
+const { app, BrowserWindow, Menu, Tray, nativeImage, screen, ipcMain, globalShortcut, session, powerMonitor, shell } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
@@ -47,7 +47,7 @@ const viewportChannel=createViewportChannel(payload=>send('pet:viewport',payload
 let quitting = false;
 const hotkeys = { legacy: { active: false, error: null }, alternate: { active: false, failed: [] }, typing: { active: false, error: null }, recovery: false };
 
-function state() { return { settings: { ...preferences }, appearance: { ...appearance }, hotkeys: structuredClone(hotkeys), viewport:viewport?{...viewport}:null }; }
+function state() { return { platform: process.platform, settings: { ...preferences }, appearance: { ...appearance }, hotkeys: structuredClone(hotkeys), viewport:viewport?{...viewport}:null }; }
 function send(channel, data) {
   if (pet && !pet.isDestroyed() && !pet.webContents.isDestroyed()) pet.webContents.send(channel, data);
 }
@@ -175,17 +175,45 @@ function applyHitRegion() {
   return applied;
 }
 
+function macTypedKeyExecutable() {
+  return app.isPackaged ? path.join(process.resourcesPath, 'typed-keys-macos')
+    : path.join(root, 'artifacts', 'native', `typed-keys-macos-${process.arch}`);
+}
+let typingPermissionPending = null, typingPermissionProcess = null;
+function requestTypingPermission() {
+  if (process.platform !== 'darwin' || isSmokeTest || quitting || !preferences.keyDisplay) return Promise.resolve(false);
+  if (typingPermissionPending) return typingPermissionPending;
+  // A button click may request OS consent; ordinary startup only checks it.
+  // Coalesce repeated clicks and release this helper on app shutdown too.
+  typingPermissionPending = new Promise(resolve => {
+    let helper, output = '';
+    try { helper = spawn(macTypedKeyExecutable(), ['--request-permission'], { stdio: ['ignore', 'pipe', 'ignore'] }); }
+    catch { resolve(false); return; }
+    typingPermissionProcess = helper;
+    helper.stdout.on('data', chunk => { output = (output + chunk.toString()).slice(-1024); });
+    helper.once('error', () => resolve(false));
+    helper.once('exit', () => {
+      if (quitting || !preferences.keyDisplay) { resolve(false); return; }
+      const granted = output.includes('PERMISSION:GRANTED');
+      configureTypedKeys();
+      if (!granted) void shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent').catch(console.error);
+      resolve(granted);
+    });
+  }).finally(() => { typingPermissionPending = null; typingPermissionProcess = null; });
+  return typingPermissionPending;
+}
+
 function configureTypedKeys() {
   if (!typingListener) {
     let script = path.join(__dirname, 'typed-keys.ps1');
     if (app.isPackaged) script = script.replace(/app\.asar([\\/])/, 'app.asar.unpacked$1');
     typingListener = createTypedKeyListener({
-      spawn, script,
+      spawn, script, macExecutable:macTypedKeyExecutable(),
       onCharacter: character => { if (preferences.keyDisplay && !quitting) send('pet:typed-key', character); },
       onStatus: value => { hotkeys.typing = value; if (!quitting) publishSettings(); },
     });
   }
-  typingListener.start(preferences.keyDisplay);
+  typingListener.start(preferences.keyDisplay && !(isSmokeTest && process.platform==='darwin'));
 }
 
 function configureLegacyHotkeys() {
@@ -279,6 +307,8 @@ function registerIpc() {
   ipcMain.on('pet:drag-end', (event) => { if (trusted(event)) dragLifecycle?.endDrag(); });
   ipcMain.on('pet:quit', (event) => { if (trusted(event)) voices ? voices.requestQuit() : app.quit(); });
   const trustedSettings = event => isSettingsSender(event, settingsWindow?.getWindow(), settingsWindow?.url);
+  // Permission requests use a fixed helper and the same main-frame guard as settings edits.
+  ipcMain.handle('settings:typing-permission', event => trustedSettings(event) ? requestTypingPermission() : false);
   ipcMain.handle('settings:voice-get', event => trustedSettings(event) ? voices?.getState() : null);
   ipcMain.handle('settings:voice-settings', (event, patch) => trustedSettings(event) ? voices?.setSettings(patch) : null);
   ipcMain.handle('settings:voice-stop', event => trustedSettings(event) ? voices?.stopVoice() : null);
@@ -444,6 +474,7 @@ else {
 }
 app.on('before-quit', () => {
   quitting = true;
+  typingPermissionProcess?.kill();
   voices?.dispose();
   cursorTrail?.dispose();
   settingsWindow?.dispose();
