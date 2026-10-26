@@ -22,8 +22,9 @@ test('settings preload exposes only its narrow independent-window bridge', () =>
   });
   assert.equal(name, 'elysiaSettings');
   assert.equal(Object.isFrozen(bridge), true);
-  assert.deepEqual(Object.keys(bridge).sort(), ['action', 'getState', 'getVoiceState', 'getWindowState', 'onState', 'onVoiceState', 'onWindowState', 'recover', 'resize', 'setSettings', 'setVoiceSettings', 'stopVoice', 'windowControl']);
+  assert.deepEqual(Object.keys(bridge).sort(), ['action', 'getState', 'getVoiceState', 'getWindowState', 'onState', 'onVoiceState', 'onWindowState', 'recover', 'requestTypingPermission', 'resize', 'setSettings', 'setVoiceSettings', 'stopVoice', 'windowControl']);
   for (const forbidden of ['invoke', 'send', 'dragStart', 'setHitRegion', 'setAppearance', 'quit', 'playVoice', 'simulateVoice']) assert.equal(bridge[forbidden], undefined);
+  bridge.requestTypingPermission();
   bridge.getState();
   bridge.getWindowState();
   bridge.setSettings({ motionAmplitude: .75, eyeWarpStrength: 1.5 });
@@ -36,7 +37,7 @@ test('settings preload exposes only its narrow independent-window bridge', () =>
   bridge.windowControl('close');
   for (const invalid of [null, 'quit', 'maximize', {}, ['close']]) bridge.windowControl(invalid);
   assert.deepEqual(calls, [
-    ['settings:get-state'], ['settings:get-window-state'], ['settings:set-settings', { motionAmplitude: .75, eyeWarpStrength: 1.5 }],
+    ['settings:typing-permission'], ['settings:get-state'], ['settings:get-window-state'], ['settings:set-settings', { motionAmplitude: .75, eyeWarpStrength: 1.5 }],
     ['settings:action', { type: 'expression', id: 'heart' }], ['settings:resize', .01],
     ['settings:recover', false], ['settings:recover', true],
     ['settings:window-control', 'minimize'], ['settings:window-control', 'toggle-maximize'], ['settings:window-control', 'close'],

@@ -27,17 +27,19 @@ async function main() {
   const { createPetState, applyAction, EXPRESSIONS, POSES } = await import(pathToFileURL(path.join(root, 'renderer', 'state.mjs')).href);
   const pet = createPetState();
   let settings = { ...DEFAULT_SETTINGS }, rejectNext = false;
+  let typing = {active:false,error:'需要允许输入监控。',permissionRequired:true};
   const calls = [], errors = [];
-  const snapshot = () => ({ settings: { ...settings }, appearance: { expression: pet.expression, pose: pet.pose, cat: pet.cat, glasses: pet.glasses }, hotkeys: { legacy: { active: true, error: null }, alternate: { active: false, failed: [] } } });
+  const snapshot = () => ({ platform:process.platform, settings: { ...settings }, appearance: { expression: pet.expression, pose: pet.pose, cat: pet.cat, glasses: pet.glasses }, hotkeys: { typing, legacy: { active: true, error: null }, alternate: { active: false, failed: [] } } });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   let browser;
   try {
-    browser = await chromium.launch({ channel: 'msedge', headless: true });
+    browser = await chromium.launch({ channel: process.platform === 'darwin' ? 'chrome' : 'msedge', headless: true });
     const page = await browser.newPage({ viewport: { width: 600, height: 741 }, deviceScaleFactor: 1 });
     page.on('pageerror', error => errors.push(error.message));
     await page.exposeFunction('__mockSettingsHost', async (method, value) => {
       calls.push({ method, value });
       if (rejectNext && method !== 'getState') { rejectNext = false; throw new Error('QA simulated save failure'); }
+      if (method === 'typingPermission') typing = {active:true,error:null,permissionRequired:false};
       if (method === 'setSettings') settings = sanitizeSettings(value, settings);
       if (method === 'action') {
         applyAction(pet, value);
@@ -70,6 +72,7 @@ async function main() {
       };
       window.__settingsQA = { publish, windowControls, publishWindowState, publishVoice, voiceCalls, voiceSnapshot: () => structuredClone(voiceState) };
       window.elysiaSettings = Object.freeze({
+        requestTypingPermission: () => invoke('typingPermission'),
         getState: () => invoke('getState'), setSettings: patch => invoke('setSettings', patch),
         action: action => invoke('action', action), resize: scale => invoke('resize', scale),
         recover: (resetScale = false) => invoke('recover', resetScale),
@@ -184,14 +187,27 @@ async function main() {
     check('appearance reset clears only expression, skins and pose');
 
     await tab('animation');
+    if (process.platform === 'darwin') {
+      assert.equal(await page.locator('#typing-permission').isVisible(),true);
+      await page.locator('#typing-permission').click(); await settled();
+      assert.equal(await page.locator('#typing-permission').isVisible(),false);
+      assert.match(await page.locator('#typing-status').textContent(),/已启用/);
+      check('Mac keyboard permission status and explicit retry');
+    }
     await toggle('eyeTracking', false); await number('eyeWarpStrength', 0, 0); await number('eyeWarpStrength', 200, 2); await number('eyeWarpStrength', 137, 1.37);
     await toggle('eyeTracking', true);
     await number('motionAmplitude', 0, 0); await number('motionAmplitude', 200, 2); await number('motionAmplitude', 85, .85);
     await number('motionSpeed', .25); await number('motionSpeed', 3); await number('motionSpeed', 1.35);
     await toggle('hairMotion', false); await toggle('hairMotion', true); await toggle('keyDisplay', false); await toggle('keyDisplay', true);
-    await page.locator('[name="motionAmplitude"]').fill('113'); await page.locator('[name="motionAmplitude"]').blur();
-    await page.waitForFunction(() => document.querySelector('[name="motionAmplitudeValue"]').value === '113');
-    await page.waitForFunction(async () => (await window.elysiaSettings.getState()).settings.motionAmplitude === 1.13);
+    // Dispatch the actual input event consistently in Edge and macOS Chrome.
+    await page.locator('[name="motionAmplitude"]').evaluate(async input => {
+      input.value = '113'; input.dispatchEvent(new Event('input',{bubbles:true}));
+      const deadline = performance.now() + 5000;
+      while ((await window.elysiaSettings.getState()).settings.motionAmplitude !== 1.13) {
+        if (performance.now() > deadline) throw Error('Slider update did not reach host');
+        await new Promise(resolve => requestAnimationFrame(resolve));
+      }
+    });
     await settled(); assert.equal(settings.motionAmplitude, 1.13);
     check('sliders and numeric fields route percentage and speed values, extrema and independent toggles');
     await capture('animation-controls');

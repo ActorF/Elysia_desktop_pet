@@ -21,7 +21,8 @@
     "test:settings": "node scripts/settings-window-check.cjs",
     "test:voice": "node scripts/launch.cjs --voice-smoke-test",
     "test:interactions": "node scripts/interactions-check.cjs",
-    "test:interaction-settings": "node scripts/launch.cjs --interaction-smoke-test"
+    "test:interaction-settings": "node scripts/launch.cjs --interaction-smoke-test",
+    "prepackage": "node scripts/build-macos-helper.cjs"
   },
   "devDependencies": {
     "electron": "43.8.0",
@@ -68,6 +69,14 @@
     },
     "portable": {
       "artifactName": "Elysia_desktop_pet-${version}.exe"
+    },
+    "mac": {
+      "extraResources": [
+        {
+          "from": "artifacts/native/typed-keys-macos-${arch}",
+          "to": "typed-keys-macos"
+        }
+      ]
     }
   },
   "repository": {

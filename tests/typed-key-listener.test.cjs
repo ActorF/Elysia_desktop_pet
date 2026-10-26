@@ -13,10 +13,10 @@ test('typing protocol accepts every printable ASCII character including space, r
   for (const value of ['a', 'Enter', 'Ctrl', 'KEY:AA', 'KEY:65:66', 'KEY:6566', 'KEY:32 ', 'KEY:-1', 'KEY:']) assert.equal(characterFromLine(value), null);
 });
 
-function fixture() {
+function fixture(platform='win32') {
   const children = [], characters = [], statuses = [], invocations = [];
   const listener = createTypedKeyListener({
-    platform: 'win32', script: 'D:\\example\\typed-keys.ps1', parentProcessId: 42,
+    platform, macExecutable:'/Applications/Pet.app/Contents/Resources/typed-keys-macos', script: 'D:\\example\\typed-keys.ps1', parentProcessId: 42,
     onCharacter: character => characters.push(character), onStatus: status => statuses.push(status),
     spawn: (...args) => {
       invocations.push(args);
@@ -82,3 +82,21 @@ test('Windows global listener installs and exits after its owning process disapp
   });
   assert.equal(result, 0, error); assert.equal(ready, true);
 });
+
+ test('macOS uses the bundled helper and retains missing-permission status after exit',()=>{
+  const f=fixture('darwin');f.listener.start();
+  assert.equal(f.invocations[0][0],'/Applications/Pet.app/Contents/Resources/typed-keys-macos');
+  assert.deepEqual(f.invocations[0][1],['--parent-pid','42']);
+  const child=f.children[0];child.stdout.emit('data','ERROR:PER');child.stdout.emit('data','MISSION\n');child.emit('exit',77);
+  assert.equal(f.statuses.at(-1).permissionRequired,true);assert.match(f.statuses.at(-1).error,/输入监控/);
+  assert.deepEqual(f.characters,[]);
+  f.listener.start();f.children[1].stdout.emit('data','READY\nKEY:65\n');
+  assert.equal(f.statuses.at(-1).active,true);assert.equal(f.statuses.at(-1).permissionRequired,false);
+  assert.deepEqual(f.characters,['A']);f.listener.stop();assert.equal(f.children[1].killed,true);
+  child.stdout.emit('data','KEY:66\n');assert.deepEqual(f.characters,['A']);
+ });
+ test('macOS missing helper never spawns a fallback or claims capture is active',()=>{
+  const statuses=[];
+  createTypedKeyListener({platform:'darwin',spawn:()=>assert.fail('no fallback'),onStatus:s=>statuses.push(s)}).start();
+  assert.match(statuses.at(-1).error,/构建/);assert.equal(statuses.at(-1).active,false);
+ });

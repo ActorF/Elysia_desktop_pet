@@ -8,6 +8,7 @@ const subscribe = (channel, callback) => {
   return () => ipcRenderer.removeListener(channel, listener);
 };
 contextBridge.exposeInMainWorld('elysiaSettings', Object.freeze({
+  requestTypingPermission: () => ipcRenderer.invoke('settings:typing-permission'),
   getState: () => ipcRenderer.invoke('settings:get-state'),
   getWindowState: () => ipcRenderer.invoke('settings:get-window-state'),
   getVoiceState: () => ipcRenderer.invoke('settings:voice-get'),
