@@ -6,14 +6,14 @@
 
 透明全身立绘、鼠标目光跟随、轻柔摆动。表情、猫猫形态、眼镜和四种动作可以自由搭配，输入字符时还有小云朵回应。1.4.1 加入本地聊天、可选回复朗读、模型自动配置、可管理的聊天记录与身体部位互动，并修复“任务栏在前”模式下的置顶顺序。
 
-**当前版本：1.4.1。** 使用方法见[本地聊天与朗读](#本地聊天与朗读)，完整变化见 [1.4.1 更新说明](docs/releases/v1.4.1.md)。
+**当前测试版本：1.4.1，尚非正式版。** 使用方法见[本地聊天与朗读](#本地聊天与朗读)，完整变化见 [1.4.1 更新说明](docs/releases/v1.4.1.md)。
 
 ## 下载程序
 
 | 版本 | 程序 | 功能 | 校验文件 |
 | --- | --- | --- | --- |
-| 1.4.1 Windows 安装版 | [下载安装器](https://media.githubusercontent.com/media/ActorF/Elysia_desktop_pet/main/release/Elysia_desktop_pet-1.4.1-setup.exe) | 完整功能，含聊天与可选回复朗读 | [SHA256](https://raw.githubusercontent.com/ActorF/Elysia_desktop_pet/main/release/Elysia_desktop_pet-1.4.1-setup.exe.sha256) |
-| 1.4.1 Windows 便携版 | [下载 EXE](https://media.githubusercontent.com/media/ActorF/Elysia_desktop_pet/main/release/Elysia_desktop_pet-1.4.1.exe) | 相同功能，双击即可运行 | [SHA256](https://raw.githubusercontent.com/ActorF/Elysia_desktop_pet/main/release/Elysia_desktop_pet-1.4.1.exe.sha256) |
+| 1.4.1 测试版 · Windows 安装版 | [下载安装器](https://media.githubusercontent.com/media/ActorF/Elysia_desktop_pet/main/release/Elysia_desktop_pet-1.4.1-setup.exe) | 含聊天与可选回复朗读 | [SHA256](https://raw.githubusercontent.com/ActorF/Elysia_desktop_pet/main/release/Elysia_desktop_pet-1.4.1-setup.exe.sha256) |
+| 1.4.1 测试版 · Windows 便携版 | [下载 EXE](https://media.githubusercontent.com/media/ActorF/Elysia_desktop_pet/main/release/Elysia_desktop_pet-1.4.1.exe) | 相同功能，双击即可运行 | [SHA256](https://raw.githubusercontent.com/ActorF/Elysia_desktop_pet/main/release/Elysia_desktop_pet-1.4.1.exe.sha256) |
 | 1.3.0 Windows 便携版 | [下载 EXE](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.3.0/Elysia_desktop_pet-1.3.0.exe) | **不含聊天及回复朗读**，保留日常与点击互动录音 | [SHA256](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.3.0/Elysia_desktop_pet-1.3.0.exe.sha256) |
 
 点击上述链接即可下载完整程序，无需安装 Git、Git LFS 或 Node.js。1.4.1 的安装版与便携版均会在首次运行时自动准备聊天与语音环境，首次配置需要联网；1.3.0 无需下载聊天或语音合成模型。
@@ -131,37 +131,17 @@
 
 ### 本地聊天与朗读
 
-1.4.1 首次运行会自动准备本地 [Ollama](https://ollama.com/) 与默认模型 `tobestyledintro/qwen3.8-9b-distill:latest`，无需手动安装模型或填写项目路径。**设置 → 聊天** 分别显示聊天模型与语音环境的进度，可取消或在失败后重试；两项就绪状态互相独立。已有自定义服务设置不会被自动覆盖。
+从托盘选择 **打开聊天框** 即可聊天，Enter 发送、Shift + Enter 换行。首次启动会联网自动准备 Ollama、默认 Qwen 模型与语音资源，可在 **设置 → 聊天** 查看进度、修改用户名和开关自动朗读（默认关闭）。
 
-从右下角托盘选择 **打开聊天框**，输入消息即可和爱莉希雅聊天，回答会逐步显示。聊天窗口可单独移动、缩放和关闭，关闭窗口后桌宠继续运行。左上加号开启新对话；底部齿轮、输入框和内凹斜箭头同排，齿轮打开设置与记录，悬停可查看说明；箭头发送消息，支持 Enter 发送、Shift + Enter 换行，中文输入法选词时不会误发。停止按钮可停止生成或朗读。
-
-在 **设置 → 聊天** 修改用户名、模型名和 Ollama 服务地址，默认连接 `http://localhost:11434`。消息下方的复制图标可复制正文；爱莉希雅回复下方另有手动朗读图标，悬停或键盘聚焦可查看说明。**设置 → 聊天记录** 左侧选择对话，右侧查看详情，可删除单段或清空所有记录，删除前会确认且保留用户名与设置。用户名和聊天记录保存在 `%APPDATA%/Elysia Desktop Pet/chat-state.json`。模型调用会使用当前用户名和所选对话的近期内容；默认本地服务不需要 API 密钥。
-
-人设 system prompt 位于 [electron/chat-persona.md](electron/chat-persona.md)。
-
-**可选朗读：** 自动朗读默认关闭，普通文字聊天不会加载语音模型；明确点击回复的朗读图标可单独读这一条，不改变自动朗读设置。开启自动朗读可提前预热，在完整回答生成后朗读；同情绪模型短时复用，闲置 45 秒释放，最近 8 条/24 MiB 以内的合成音频仅在内存缓存，删除记录会清除缓存。根据正文线索选择已有情绪参考，否定和不明确表达回到中性；这不是额外的大模型情绪分类。当前机器 CPU 实测冷启动或切换情绪约 25 秒，暖模型新回复首音约 1.8–2.4 秒，重复朗读无需重新合成；其他电脑耗时可能不同。发送新消息会停止旧朗读；关闭自动朗读、关闭聊天或退出立即释放模型。音量与勿扰沿用“语音”设置，朗读期间暂停日常与点击录音，点击仍可显示表情和静默字幕。
-
-**首次自动配置：** 便携版与安装版均携带约 246 MB 的独立 Python 和爱莉希雅语音资源，首次运行自动安装/启动 Ollama、下载约 6.7 GB 的默认聊天模型及约 5.7 GB 的 GPT-SoVITS 运行环境。设置里显示各自进度、取消与重试；Ollama 安装阶段不能取消，下载和解压不启动声音模型。语音环境放在用户数据目录的 `voice-runtime`；也可在高级设置中指定已有的兼容语音环境。资源校验 SHA256 后部署，失败不会报告已就绪。语音权重随程序携带，大型运行环境从固定上游来源下载。当前已完成本机自动化、真实模型与语音验证，但尚未在干净 Windows 虚拟机上完成从零首次安装验收。
-
-`npm run test:chat-tts` 验证实际语音预热、复用、情绪、缓存及进程释放，结果保存在忽略的 `artifacts/chat-tts-check/`，不播放。可通过 `ELYSIA_VOICE_PROJECT_ROOT` 指定完整的可移动语音环境。
-
-源码运行不自动启动首次下载，可在聊天设置中配置，或使用已有 Ollama 服务。`node scripts/package-voice-bootstrap.cjs` 从指定本地源生成独立语音资源包与摘要，不包含个人 `.env` 或聊天数据；正式构建命令见下方。`npm run test:chat` 检查界面，`npm run test:chat-model` 验证真实聊天模型。便携版每次启动使用独立临时目录，避免重复启动互相清理。
+消息下方可复制文字，回复可单独朗读。**设置 → 聊天记录** 可查看或删除保存在本机的对话。人设 system prompt 位于 [electron/chat-persona.md](electron/chat-persona.md)。
 
 ### 日常语音与台词气泡
 
-**36 句日常语音**分为 12 类，按本地时间和使用状态送上早晚问候、饭点提醒、欢迎回来、休息提醒、周末问候、生日祝福与退出告别。每类三句轮换选择，一次只说一句。自动问候至少间隔 20 分钟，每天最多 6 次；生日和主动退出单独计数。锁屏、休眠、全屏或勿扰时暂停自动问候，错过的时段不补播。各类条件见 [1.3.0 更新说明](docs/releases/v1.3.0.md#日常语音的触发条件)。
-
-说话时，台词显示在**粉色边框、白色背景**的气泡里，只显示完整台词，按句长调整大小，最多两行。人物在当前显示器右半边时，气泡显示在左侧；在左半边时显示在右侧，并跟随拖动与缩放。录音结束后，气泡约再停留 1.2 秒。
-
-在“语音”页调节音量、开启勿扰或保存生日月日。生日只在本机保存，不需要年份。托盘退出可能先播放告别，再次选择退出可立即跳过；关闭设置窗口不会触发告别。
+内置 **36 句日常语音**，在问候、休息、生日等场景播放，并显示台词气泡。可在 **设置 → 语音** 调整音量、开关自动问候和勿扰、设置生日。
 
 ### 点击摸头与戳戳
 
-在“互动”页开启 **点击互动** 后，左键轻点头顶或刘海是摸头，轻点身体是戳戳，头部（含脸部）／手部随机展示害羞、Wink、爱心眼、微笑；身体／腿部随机展示惊讶、害羞，道具展示微笑。普通表情显示约 **1.8 秒**，期间连点不会替换或延长表情，也不会重复请求语音，但仍累计点击次数。部位范围适配四种动作及待机摆动，并排除透明区域和可见装饰。**头部与身体共同计数，3 秒内第 5 次轻点可以打断普通表情并触发生气回应**，之后休息 3 秒。拖动人物、右键滚轮缩放不会算作轻点，不需要按住鼠标来回抚摸。
-
-三类互动各有 6 句，共 **18 句互动语音**。短时间连点会合并回应；已经开始的语音会完整说完，等待中的生气回应最多保留一条，过期后不补播。日常问候与互动发声共用播放控制，不会叠音。临时互动表情结束后恢复原表情。
-
-点击互动与日常自动问候分别控制。关闭点击互动会清除当前互动声音、字幕和待播回应，仍可拖动、缩放人物及接收日常问候；勿扰或音量为 0 时，点击仍有表情和文字回应。
+左键轻点头部是摸头，轻点身体是戳戳，会触发表情，配有 **18 句互动语音**；短时间连续点击太多会让她假装生气。可在 **设置 → 互动** 独立开关，拖动和缩放不受影响。
 
 ### 鼠标流光
 

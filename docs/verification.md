@@ -1,6 +1,6 @@
 # 验证说明
 
-本文件说明 **1.4.1** 的检查范围与执行方式，包含已有桌宠、54 条原录音、部位互动、聊天与历史管理、按需朗读和首次自动配置。正式产物为安装版 `release/Elysia_desktop_pet-1.4.1-setup.exe` 和便携版 `release/Elysia_desktop_pet-1.4.1.exe`，通过 Git LFS 保存到 `main` 分支；源码与对应 SHA256 文件随同合并，尚未创建 1.4.1 GitHub Release。下载入口与完整功能说明见 [1.4.1 更新说明](releases/v1.4.1.md)。检查报告位于 `artifacts/validation-v1.4.1/`。
+本文件说明 **1.4.1 测试版** 的检查范围与执行方式，包含已有桌宠、54 条原录音、部位互动、聊天与历史管理、按需朗读和首次自动配置。测试版产物为安装版 `release/Elysia_desktop_pet-1.4.1-setup.exe` 和便携版 `release/Elysia_desktop_pet-1.4.1.exe`，通过 Git LFS 保存到 `main` 分支；源码与对应 SHA256 文件随同合并，尚未创建 1.4.1 GitHub Release。下载入口与完整功能说明见 [1.4.1 更新说明](releases/v1.4.1.md)。检查报告位于 `artifacts/validation-v1.4.1/`。
 
 本次通过 **394 项单元测试**、程序包内的 **196 项真实 Windows 窗口层级检查**及 **9 项打包检查**，用户已亲自测试并确认原置顶问题修复。旧版 1.3.0 不含文字聊天和回复朗读，仍保留日常问候及点击互动录音。
 

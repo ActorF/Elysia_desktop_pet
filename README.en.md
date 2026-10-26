@@ -7,14 +7,14 @@
 
 A chibi Elysia companion for Windows, with a transparent full-body character, mouse-following eyes, and gentle motion. Mix expressions, cat mode, glasses, and four actions, with little clouds that respond to your typing. Version 1.4.1 adds local chat, optional read-aloud replies, automatic model setup, conversation history management, and body-region interactions, and fixes window ordering in Taskbar in front mode.
 
-**Current version: 1.4.1.** See [Local chat and read-aloud](#local-chat-and-read-aloud) and the [1.4.1 release notes](docs/releases/v1.4.1.md).
+**Current test version: 1.4.1 — not a stable release.** See [Local chat and read-aloud](#local-chat-and-read-aloud) and the [1.4.1 release notes](docs/releases/v1.4.1.md).
 
 ## Download
 
 | Edition | Program | Features | Checksum |
 | --- | --- | --- | --- |
-| 1.4.1 Windows installer | [Download installer](https://media.githubusercontent.com/media/ActorF/Elysia_desktop_pet/main/release/Elysia_desktop_pet-1.4.1-setup.exe) | Full features, including chat and optional read-aloud replies | [SHA256](https://raw.githubusercontent.com/ActorF/Elysia_desktop_pet/main/release/Elysia_desktop_pet-1.4.1-setup.exe.sha256) |
-| 1.4.1 Windows portable | [Download EXE](https://media.githubusercontent.com/media/ActorF/Elysia_desktop_pet/main/release/Elysia_desktop_pet-1.4.1.exe) | Same features; double-click to run | [SHA256](https://raw.githubusercontent.com/ActorF/Elysia_desktop_pet/main/release/Elysia_desktop_pet-1.4.1.exe.sha256) |
+| 1.4.1 Windows installer (test) | [Download installer](https://media.githubusercontent.com/media/ActorF/Elysia_desktop_pet/main/release/Elysia_desktop_pet-1.4.1-setup.exe) | Full features, including chat and optional read-aloud replies | [SHA256](https://raw.githubusercontent.com/ActorF/Elysia_desktop_pet/main/release/Elysia_desktop_pet-1.4.1-setup.exe.sha256) |
+| 1.4.1 Windows portable (test) | [Download EXE](https://media.githubusercontent.com/media/ActorF/Elysia_desktop_pet/main/release/Elysia_desktop_pet-1.4.1.exe) | Same features; double-click to run | [SHA256](https://raw.githubusercontent.com/ActorF/Elysia_desktop_pet/main/release/Elysia_desktop_pet-1.4.1.exe.sha256) |
 | 1.3.0 Windows portable | [Download EXE](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.3.0/Elysia_desktop_pet-1.3.0.exe) | **No chat or read-aloud replies**; daily and click-interaction recordings remain included | [SHA256](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.3.0/Elysia_desktop_pet-1.3.0.exe.sha256) |
 
 Click these links to download the complete program; Git, Git LFS, and Node.js are not required. Both 1.4.1 editions automatically prepare chat and speech dependencies on first run, which requires an internet connection. Version 1.3.0 does not download chat or speech-synthesis models.
@@ -137,37 +137,21 @@ Version 1.4.1 fixes the pet falling behind ordinary apps when a secondary taskba
 
 ### Local chat and read-aloud
 
-Version 1.4.1 automatically prepares local [Ollama](https://ollama.com/) and the default `tobestyledintro/qwen3.8-9b-distill:latest` model on first run. You do not need to install the model manually or enter a project path. **Settings → Chat** shows separate chat-model and speech-environment progress, with cancellation and retry. Readiness is independent for each, and existing custom service settings are preserved.
+First run needs an internet connection to prepare Ollama, the default Qwen chat model, and speech resources automatically. Check progress or retry in **Settings → Chat**.
 
-Choose **Open chat (`打开聊天框`)** from the system tray to type messages to Elysia and see replies appear as they are generated. The chat window moves, resizes, and closes independently; closing it leaves the pet running. The top-left plus starts a conversation. The bottom gear, input field, and notched diagonal send arrow share one row; hover over the gear for its settings/history description. The arrow sends a message; Enter sends and Shift + Enter inserts a newline. Confirming an IME composition does not accidentally send. Stop can cancel generation or read-aloud.
+Choose **Open chat (`打开聊天框`)** from the system tray. Enter sends; Shift + Enter adds a line. The plus starts a new conversation; closing chat leaves the pet running. Use Stop to cancel a reply or stop it being read aloud.
 
-Use **Settings → Chat (`聊天`)** to change your username, model, and Ollama address; the default address is `http://localhost:11434`. Messages have copy icons; assistant replies also have a manual read-aloud icon, with hover/focus descriptions. **Settings → Chat history (`聊天记录`)** shows a narrow conversation list beside the detail pane. Delete one conversation or clear all history with confirmation, retaining preferences. Data stays in `%APPDATA%/Elysia Desktop Pet/chat-state.json`. Model requests include your username and recent messages from the selected conversation. The default local service needs no API key.
+In **Settings → Chat**, change your username or enable automatic read-aloud, which is **off by default**. Use the icons below messages to copy text or read one reply aloud.
 
-The persona system prompt is in [electron/chat-persona.md](electron/chat-persona.md).
-
-**Optional read-aloud:** Automatic reading defaults off, so ordinary text chat does not load the voice model. Clicking a reply's speaker reads it once without changing that preference. Automatic reading can prewarm the model and reads the completed reply; replies with the same emotion reuse it until 45 seconds of inactivity. An in-memory cache holds at most eight replies/24 MiB and is cleared when history is deleted. Conservative text rules select available emotion references; this is not a separate LLM classifier. On the tested CPU, cold loading or emotion changes take about 25 seconds, and new warm replies take about 1.8–2.4 seconds to first audio. Cached playback needs no new inference; timings vary by machine. Sending another message stops the old reading. Disabling automatic reading, closing chat, or quitting releases the model immediately. Voice volume and Do Not Disturb apply; daily and interaction recordings pause during chat speech, while clicks can still show expressions and silent captions.
-
-**Automatic first-run setup:** Both the portable app and installer carry roughly 246 MB of embedded Python and Elysia voice assets. They automatically prepare Ollama and download the roughly 6.7 GB default chat model and 5.7 GB GPT-SoVITS runtime. Settings show independent progress, cancellation, and retry; the Ollama installation stage cannot be cancelled. Downloading and extracting do not start the speech model. Speech files live in the user-data `voice-runtime` directory; existing compatible environments can be selected in advanced settings. Resources are SHA256-checked before deployment, and failures never report readiness. Voice weights are bundled, and the large runtime comes from a pinned upstream source. Local automation, real-model chat, and speech checks have passed; a complete first installation on a clean Windows VM has not yet been tested.
-
-`npm run test:chat-tts` checks actual prewarm, reuse, emotion selection, replay caching and process cleanup without playing audio. Results stay under ignored `artifacts/chat-tts-check/`; `ELYSIA_VOICE_PROJECT_ROOT` selects a relocated voice environment.
-
-Running from source does not automatically start first-run downloads; configure them in Chat settings or use an existing Ollama service. `node scripts/package-voice-bootstrap.cjs` prepares the separate speech asset archive and manifest without personal `.env` or chat databases; release build commands are below. `npm run test:chat` checks the UI, and `npm run test:chat-model` checks the real chat model. Each portable launch has an independent temporary directory.
+**Settings → Chat history (`聊天记录`)** lets you view or delete locally saved conversations. Deletion asks for confirmation. The persona prompt is in [electron/chat-persona.md](electron/chat-persona.md). See the [release notes](docs/releases/v1.4.1.md) for technical details.
 
 ### Daily voices and speech bubbles
 
-**36 daily voice lines** cover 12 situations, including morning/evening greetings, mealtimes, returning to the computer, breaks, weekends, birthdays, and saying goodbye. Each group has three alternatives, played one at a time according to local time and activity. Automatic greetings are at least 20 minutes apart and limited to six per day; birthday greetings and deliberate exits are counted separately. Locking, sleep, fullscreen apps, and Do not disturb pause automatic greetings; missed occasions are not replayed later. See the [release notes](docs/releases/v1.3.0.md) for the conditions.
-
-Speech appears in a **white bubble with a pink border**, showing the complete text in at most two lines. Its size follows the sentence length. The bubble appears to her left when she is in the right half of the current display, and to her right when she is in the left half. It follows dragging and resizing, and remains for about 1.2 seconds after the recording ends.
-
-Use the Voice tab to adjust volume, enable Do not disturb, or save a birthday month and day locally; no year is required. Quitting from the tray may play a goodbye first. Choose Quit again to skip it; closing Settings does not trigger a goodbye.
+Elysia has **36 daily voice lines**, displayed in speech bubbles as she speaks. In **Settings → Voice (`语音`)**, adjust volume, enable Do not disturb, or save your birthday month and day.
 
 ### Head pats and pokes
 
-With **Click interactions (`点击互动`)** enabled, left-click her head or fringe for a head pat, or her body for a poke. Head, face, and hand clicks randomly show blush, wink, heart eyes, or smile; body and leg clicks show surprise or blush, and prop clicks show a smile. Ordinary expressions last about **1.8 seconds**. Further clicks during that time still count, but do not replace or extend the expression or request another voice response. Hit regions follow all four poses and idle movement, excluding transparent areas and visible decorations. **Head and body clicks share a counter: the fifth click within three seconds can interrupt the ordinary expression with an annoyed response**, followed by a three-second cooldown. Dragging and right-button scrolling do not count as clicks. No held-button stroking gesture is needed.
-
-Each interaction has six alternatives, for **18 interaction voice lines** in total. Rapid clicks are combined; a voice already playing can finish, and at most one annoyed response waits behind it. Expired responses are discarded. Daily and interaction voices share playback control so recordings do not overlap. Temporary expressions restore the previous expression when finished.
-
-Click interactions and automatic daily greetings have separate controls. Turning click interactions off clears their current audio, captions, and pending response, while dragging, resizing, and daily greetings remain available. With Do not disturb enabled or volume set to zero, clicks still produce expressions and text.
+Left-click her head for a pat or her body for a poke, with **18 recorded responses**. Repeated clicks can make her pretend to be annoyed. Toggle **Click interactions (`点击互动`)** in Settings → Interaction independently of daily voices and cursor trails.
 
 ### Cursor trails
 
