@@ -164,3 +164,27 @@ test('cancelling without restore leaves the current expression and invalid react
     assert.equal(reaction.react(expression,duration),false);assert.equal(state.expression,'blush');
   }
 });
+
+test('fine regions select the requested expression groups without changing voice groups',()=>{
+  for(const [parts,expected] of [[['head','face','hand'],['blush','wink','heart','smile']],[['body','legs'],['surprise','angry','blush']],[['prop'],['smile']]]){
+    for(const part of parts)for(let i=0;i<expected.length;i++){
+      const interaction=createInteractions({random:()=>(i+.5)/expected.length});
+      interaction.pointerDown({part,screenX:10,screenY:10,pointerId:1,now:0});
+      const result=interaction.pointerUp({screenX:10,screenY:10,pointerId:1,now:20});
+      assert.equal(result.expression,expected[i]);assert.equal(result.part,part);
+      assert.equal(result.type,['head','face'].includes(part)?'head-pat':'poke');
+    }
+  }
+});
+test('fine regions retain shared fifth-click annoyance, cooldown and transparent-pixel rejection',()=>{
+  const interaction=createInteractions({random:()=>0});let result;
+  for(const [i,part] of ['head','hand','body','legs','face'].entries()){
+    interaction.pointerDown({part,screenX:10,screenY:10,now:i*100});
+    result=interaction.pointerUp({screenX:10,screenY:10,now:i*100+20});
+  }
+  assert.equal(result.type,'poke-annoyed');assert.equal(result.expression,'angry');
+  interaction.pointerDown({part:'hand',screenX:10,screenY:10,now:500});
+  assert.equal(interaction.pointerUp({screenX:10,screenY:10,now:520}),null);
+  interaction.reset();interaction.pointerDown({part:null,screenX:10,screenY:10,now:1000});
+  assert.equal(interaction.pointerUp({screenX:10,screenY:10,now:1020}),null);
+});

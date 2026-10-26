@@ -1,10 +1,11 @@
 /** Desktop IPC, tray-selected appearance, native dragging and right-button wheel zoom. */
 import { EXPRESSIONS, POSES, createPetState, applyAction, actionForKey, advance } from './state.mjs';
-import { loadCharacter, drawCharacter, RIG } from './faithful-character.mjs';
+import { loadCharacter, drawCharacter, composeCharacterFrame, RIG } from './faithful-character.mjs';
 import { createPointerTracking } from './pointer-tracking.mjs';
 import { createCharacterHitRegion, prepareCharacterHitRegions, withKeyCloudRegion } from './hit-region.mjs';
 import { characterView, canvasBacking } from './viewport.mjs';
 import { createKeyDisplay, drawKeyCloud, KEY_EFFECT_BOUNDS } from './key-cloud.mjs';
+import { sourceAtPointer, partAtSource } from './body-regions.mjs';
 import { createInteractions, createExpressionReaction } from './interactions.mjs';
 
 const desktop = window.elysiaDesktop;
@@ -29,11 +30,29 @@ const interactions = createInteractions({ now: () => performance.now(), onReacti
   expressionReaction.react(reaction.expression, reaction.duration);
   void Promise.resolve(desktop?.interact?.(reaction.type)).catch(console.error);
 } });
-function interactionPoint(event) {
+let pickSource = null, pickSourceKey = null;
+function partAtPointer(x, y) {
+  if (!characterAtlas) return null;
+  const point = sourceAtPointer(x,y,innerWidth,innerHeight,viewport,RIG,state,settings,characterAtlas.mesh.accelerated);
+  if (!point) return null;
+  const key = JSON.stringify([state.pose,state.expression,state.cat,state.glasses]);
+  if (key !== pickSourceKey) { pickSource = composeCharacterFrame(characterAtlas.images,state,false); pickSourceKey = key; }
+  const sx = Math.floor(point.x), sy = Math.floor(point.y);
+  // Native shapes cover the complete motion envelope. Check source alpha too,
+  // so a transparent gap, decoration or key cloud is never treated as a body part.
+  if (sx < 0 || sy < 0 || sx >= RIG.width || sy >= RIG.height
+    || pickSource.getContext('2d').getImageData(sx,sy,1,1).data[3] < 32) return null;
+  return partAtSource(point.x,point.y,state.pose);
+}
+function interactionPoint(event, pick = false) {
   const view = characterView(innerWidth, innerHeight, viewport);
+  const blocked = restoringAppearance || settings.clickThrough || settings.interactionsEnabled === false || spaceHeld || rightPointer !== null;
+  // Mesh inversion runs once at press, never for every pointermove/animation frame.
+  const part = pick && !blocked ? partAtPointer(event.clientX,event.clientY) : undefined;
   return { x: (event.clientX - view.x) / view.scale, y: (event.clientY - view.y) / view.scale,
     screenX: event.screenX, screenY: event.screenY, button: event.button, buttons: event.buttons,
-    pointerId: event.pointerId, now: performance.now(), blocked: restoringAppearance || settings.clickThrough || settings.interactionsEnabled === false || spaceHeld };
+    pointerId: event.pointerId, now: performance.now(), blocked: blocked || (pick && part === null),
+    ...(pick ? {part} : {}) };
 }
 
 function receiveTypedKey(character){
@@ -141,7 +160,7 @@ canvas.addEventListener('pointerleave', () => { if (!dragging) interactions.samp
 canvas.addEventListener('pointerdown', event => {
   if (event.button === 2) { interactions.cancel(); rightPointer = event.pointerId; canvas.setPointerCapture(event.pointerId); return; }
   if (event.button !== 0) return;
-  interactions.pointerDown({...interactionPoint(event),blocked:restoringAppearance||settings.clickThrough||settings.interactionsEnabled===false||spaceHeld||rightPointer!==null});
+  interactions.pointerDown(interactionPoint(event,true));
   dragging = {pointerId:event.pointerId}; pauseDragRendering(true);
   canvas.setPointerCapture(event.pointerId); desktop?.dragStart();
 });
@@ -270,6 +289,7 @@ try {
     snapshot:() => JSON.parse(JSON.stringify(state)),
     settings:() => ({...settings}),
     viewport:() => viewport ? {...viewport} : null,
+    partAt:(x,y)=>partAtPointer(x,y),
     keyDisplay:()=>keyDisplay.snapshot(performance.now()),
     render:(expressionOrOptions,megaphone=false,time=0,resolutionScale=1) => {
       const options = expressionOrOptions && typeof expressionOrOptions==='object' ? expressionOrOptions : {expression:expressionOrOptions,pose:megaphone?'megaphone':'idle',time};
