@@ -5,6 +5,7 @@ import { createPointerTracking } from './pointer-tracking.mjs';
 import { createCharacterHitRegion, prepareCharacterHitRegions, withKeyCloudRegion } from './hit-region.mjs';
 import { characterView, canvasBacking } from './viewport.mjs';
 import { createKeyDisplay, drawKeyCloud, KEY_EFFECT_BOUNDS } from './key-cloud.mjs';
+import { createIdleMood } from './idle-mood.mjs';
 import { createInteractions, createExpressionReaction } from './interactions.mjs';
 
 const desktop = window.elysiaDesktop;
@@ -12,7 +13,7 @@ const state = createPetState();
 const pointerTracking = createPointerTracking(state, RIG);
 const canvas = document.querySelector('#pet');
 const ctx = canvas.getContext('2d');
-let settings = { eyeTracking:true, eyeWarpStrength:1, hairMotion:true, motionAmplitude:1, motionSpeed:1, alwaysOnTop:true, clickThrough:false, legacyHotkeys:true, keyDisplay:true, interactionsEnabled:true, scale:1, cat:false, glasses:false };
+let settings = { eyeTracking:true, idleMoods:true, neglectMinutes:2, deviceIdleMinutes:5, eyeWarpStrength:1, hairMotion:true, motionAmplitude:1, motionSpeed:1, alwaysOnTop:true, clickThrough:false, legacyHotkeys:true, keyDisplay:true, interactionsEnabled:true, scale:1, cat:false, glasses:false };
 let hotkeys = {}, viewport = null;
 let dragging = null, rightPointer = null;
 let characterAtlas = null, dragRenderPaused = false, redrawRequested = true, shapeScheduled = false;
@@ -23,9 +24,11 @@ let updateCanvas = () => {};
 const pendingActions = [];
 const keyDisplay=createKeyDisplay();
 let keyCloudVisible=false;
+const idleMood = createIdleMood(state, { onChange: syncAppearance });
 const expressionReaction = createExpressionReaction(state, { onChange: syncAppearance, now: () => performance.now() });
 const interactions = createInteractions({ now: () => performance.now(), onReaction(reaction) {
   if (restoringAppearance || settings.clickThrough || settings.interactionsEnabled === false) return;
+  idleMood.interact();
   expressionReaction.react(reaction.expression, reaction.duration);
   void Promise.resolve(desktop?.interact?.(reaction.type)).catch(console.error);
 } });
@@ -71,6 +74,7 @@ function receiveViewport(next) {
   updateCanvas();
 }
 function receiveSettings(snapshot, includeViewport = true) {
+  if (snapshot?.settings && JSON.stringify(snapshot.settings) !== JSON.stringify(settings)) idleMood.interact();
   if (snapshot?.settings) { settings = {...snapshot.settings}; settingsEpoch++; }
   if(settings.keyDisplay===false){keyDisplay.clear();keyCloudVisible=false;}
   if(settings.interactionsEnabled===false){interactions.reset();expressionReaction.cancel({restore:true});}
@@ -92,6 +96,7 @@ async function updateSettings(patch) {
 function act(action) {
   if (!action || !['expression','pose','toggle-skin','reset'].includes(action.type)) return;
   if (restoringAppearance) { pendingActions.push(action); return; }
+  idleMood.interact();
   interactions.cancel(); expressionReaction.cancel({restore:true});
   applyAction(state, action); syncAppearance();
   if (action.type === 'toggle-skin' || action.type === 'reset') void updateSettings({cat:state.cat, glasses:state.glasses});
@@ -139,6 +144,7 @@ canvas.addEventListener('pointermove', event => {
 });
 canvas.addEventListener('pointerleave', () => { if (!dragging) interactions.sample({x:-1,y:-1,buttons:0,now:performance.now()}); });
 canvas.addEventListener('pointerdown', event => {
+  idleMood.interact();
   if (event.button === 2) { interactions.cancel(); rightPointer = event.pointerId; canvas.setPointerCapture(event.pointerId); return; }
   if (event.button !== 0) return;
   interactions.pointerDown({...interactionPoint(event),blocked:restoringAppearance||settings.clickThrough||settings.interactionsEnabled===false||spaceHeld||rightPointer!==null});
@@ -159,6 +165,7 @@ canvas.addEventListener('lostpointercapture', () => { rightPointer = null; if (d
 canvas.addEventListener('contextmenu', event => event.preventDefault());
 canvas.addEventListener('wheel', event => {
   if (rightPointer === null || !Number.isFinite(event.deltaY) || !event.deltaY) return;
+  idleMood.interact();
   interactions.cancel();
   event.preventDefault();
   const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? innerHeight : 1;
@@ -178,6 +185,8 @@ document.addEventListener('keyup', event => { if (event.code === 'Space') {event
 window.addEventListener('blur', () => {interactions.cancel();spaceHeld=false;rightPointer=null;zoomSteps=0;endDrag();});
 
 if (desktop) {
+  desktop.onEnvironment?.(sample => idleMood.observe(sample));
+  desktop.onAttention?.(() => idleMood.interact());
   desktop.onPointer(samplePointer);
   desktop.onDragState?.(active => pauseDragRendering(active));
   desktop.onAction(act);
@@ -255,6 +264,7 @@ try {
   function frame(now) {
     const elapsed = (now-previous)/1000; previous = now;
     expressionReaction.tick(now);
+    idleMood.tick(settings, !!dragging || rightPointer !== null || !!expressionReaction.snapshot());
     const display=settings.keyDisplay===false?null:keyDisplay.snapshot(now);
     if(keyCloudVisible!==Boolean(display)){keyCloudVisible=Boolean(display);redrawRequested=true;scheduleHitRegion();}
     if (!dragRenderPaused || redrawRequested) {
@@ -270,6 +280,7 @@ try {
     snapshot:() => JSON.parse(JSON.stringify(state)),
     settings:() => ({...settings}),
     viewport:() => viewport ? {...viewport} : null,
+    idleMood:()=>idleMood.snapshot(),
     keyDisplay:()=>keyDisplay.snapshot(performance.now()),
     render:(expressionOrOptions,megaphone=false,time=0,resolutionScale=1) => {
       const options = expressionOrOptions && typeof expressionOrOptions==='object' ? expressionOrOptions : {expression:expressionOrOptions,pose:megaphone?'megaphone':'idle',time};

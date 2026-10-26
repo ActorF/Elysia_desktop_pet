@@ -26,7 +26,7 @@ function sanitizeVoiceSettings(patch, previous = DEFAULT_VOICE_SETTINGS) {
 }
 
 function createVoiceController({ BrowserWindow, screen, ipcMain, powerMonitor, root, assetDirectory, interactionAssetDirectory, userData,
-  getCharacterBounds, getPreferences, publish = () => {}, isSmokeTest = false, isPackaged = false, quit, testHooks }) {
+  getCharacterBounds, getPreferences, publish = () => {}, onEnvironment = () => {}, isSmokeTest = false, isPackaged = false, quit, testHooks }) {
   const assets = loadVoiceAssets(root, assetDirectory);
   const interactionAssets = loadInteractionAssets(root, interactionAssetDirectory);
   const file = path.join(userData, 'voice-state.json');
@@ -206,6 +206,8 @@ function createVoiceController({ BrowserWindow, screen, ipcMain, powerMonitor, r
   function tick() {
     if (disposed || quitRequested || farewellPending) return;
     const sample = environment.sample();
+    // Reuse the existing presence sample for passive visual moods, even when voice is disabled.
+    onEnvironment(sample);
     const nextEnvironmentKey = JSON.stringify([sample.monitorReady, sample.locked, sample.suspended, sample.fullscreen]);
     if (nextEnvironmentKey !== environmentKey) { environmentKey = nextEnvironmentKey; notify(); }
     const candidate = engine.evaluate({ ...sample, ...settings, enabled: settings.enabled && settings.volume > 0,

@@ -15,6 +15,8 @@ const subscribe = (channel, callback) => {
 };
 contextBridge.exposeInMainWorld('elysiaDesktop', Object.freeze({
   getState: () => ipcRenderer.invoke('pet:get-state'),
+  onEnvironment: callback => subscribe('pet:environment', callback),
+  onAttention: callback => subscribe('pet:attention', callback),
   onPointer: (callback) => subscribe('pet:pointer', callback),
   onDragState: (callback) => subscribe('pet:drag-state', callback),
   onAction: (callback) => subscribe('pet:action', callback),

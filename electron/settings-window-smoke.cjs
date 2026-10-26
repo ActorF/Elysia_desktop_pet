@@ -114,8 +114,8 @@ async function checkSettingsWindow({ window: pet, getState, settingsFile, buildM
     panel.setSize(before.width + 24, before.height + 24, false);
     await verifyPet('resize independent settings');
 
-    let expected = {...getState().settings,motionAmplitude:.85,motionSpeed:1.25,eyeWarpStrength:1.5,eyeTracking:false};
-    const response = await request('setSettings',{motionAmplitude:.85,motionSpeed:1.25,eyeWarpStrength:1.5,eyeTracking:false});
+    let expected = {...getState().settings,motionAmplitude:.85,motionSpeed:1.25,eyeWarpStrength:1.5,eyeTracking:false,idleMoods:false,neglectMinutes:3,deviceIdleMinutes:7};
+    const response = await request('setSettings',{motionAmplitude:.85,motionSpeed:1.25,eyeWarpStrength:1.5,eyeTracking:false,idleMoods:false,neglectMinutes:3,deviceIdleMinutes:7});
     assert.deepEqual(response.settings,expected,'Settings bridge returns accepted preferences');
     await verifySettings('settings bridge custom controls',expected);
     await verifyPet('change independent controls');

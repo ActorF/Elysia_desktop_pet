@@ -75,6 +75,7 @@ function makeToggle(target, key, title, description, actionType = null) {
 for (const skin of SKINS) makeToggle(document.querySelector('#skins'), skin.id, skin.label, `空格 + ${skin.key}`, 'toggle-skin');
 const toggles = [
   ['#eye-toggle', 'eyeTracking', '目光跟随鼠标', '保持原来的眼神效果，可以单独调整幅度。'],
+  ['#idle-toggle', 'idleMoods', '待机情绪', '分别根据你与桌宠的互动和电脑空闲时间切换表情。'],
   ['#motion-toggle', 'hairMotion', '头发、衣摆与腿部摆动', '上半身与下半身保持同向轻摆。'],
   ['#key-toggle', 'keyDisplay', '按键云朵', '只显示最近输入的一个字符，约一秒后消失。'],
   ['#interactions-toggle', 'interactionsEnabled', '点击互动', '关闭后，摸头和戳戳不再触发表情、字幕和声音；拖动与缩放仍可使用。'],
@@ -120,9 +121,27 @@ document.querySelector('[name=cursorTrailDurationValue]').addEventListener('keyd
   if (event.key === 'Enter') { event.preventDefault(); event.currentTarget.blur(); }
 });
 
+for (const key of ['neglectMinutes', 'deviceIdleMinutes']) {
+  const input = document.querySelector(`[name="${key}"]`);
+  input.addEventListener('change', () => {
+    if (!Number.isFinite(input.valueAsNumber)) {
+      input.value = String(snapshot?.settings?.[key] ?? (key === 'neglectMinutes' ? 2 : 5)); return;
+    }
+    const value = Math.max(1, Math.min(120, input.valueAsNumber));
+    input.value = String(value); void patch(key, value);
+  });
+}
+
+
 function render() {
   if (!snapshot) return;
   const { settings, appearance = {} } = snapshot;
+  for (const key of ['neglectMinutes', 'deviceIdleMinutes']) {
+    const input = document.querySelector(`[name="${key}"]`);
+    if (document.activeElement !== input) input.value = String(settings[key] ?? (key === 'neglectMinutes' ? 2 : 5));
+    input.disabled = settings.idleMoods === false;
+  }
+
   for (const [key, input] of controls) input.checked = key === 'cat' || key === 'glasses' ? Boolean(appearance[key])
     : key === 'interactionsEnabled' || key === 'cursorTrailEnabled' ? settings[key] !== false : Boolean(settings[key]);
   for (const [key, { slider, number, factor, defaultValue }] of rangeControls) {
