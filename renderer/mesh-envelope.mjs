@@ -16,11 +16,11 @@ export function meshBoundsAtPoint(grid,x,y){
  return result;
 }
 
-export function createMeshBounds({enabled=true,cat=false,pose='idle',motionAmplitude=1}={}){
+export function createMeshBounds({enabled=true,cat=false,pose='idle',motionAmplitude=1,headTracking=false}={}){
  const {columns,rows,width,height}=MESH_GRID;
  const vertices=new Float64Array((columns+1)*(rows+1)*4);
  for(let j=0;j<=rows;j++)for(let i=0;i<=columns;i++){
-  const bounds=meshPointMotionBounds(width*i/columns,height*j/rows,enabled,cat,pose,motionAmplitude);
+  const bounds=meshPointMotionBounds(width*i/columns,height*j/rows,enabled,cat,pose,motionAmplitude,headTracking);
   // Float32 vertex storage and shader arithmetic are below a hundredth of a
   // source pixel. Keep that allowance separate from the one logical pixel AA.
   vertices.set([bounds[0]-.01,bounds[1]-.01,bounds[2]+.01,bounds[3]+.01],(j*(columns+1)+i)*4);
@@ -59,9 +59,9 @@ export function meshRectangleBounds(grid,x0,y0,x1,y1,i,j){
  */
 export function meshAlphaToOccupancy(rgba,{
  width=600,height=800,cellSize=4,padding=1,x=38,y=68,scale=.48,
- enabled=true,cat=false,pose='idle',motionAmplitude=1,
+ enabled=true,cat=false,pose='idle',motionAmplitude=1,headTracking=false,
 }={}){
- const grid=createMeshBounds({enabled,cat,pose,motionAmplitude}),sw=grid.width,sh=grid.height;
+ const grid=createMeshBounds({enabled,cat,pose,motionAmplitude,headTracking}),sw=grid.width,sh=grid.height;
  const stride=rgba.length===sw*sh?1:4,offset=stride-1;
  if(rgba.length!==sw*sh*stride)throw new RangeError('Invalid mesh alpha dimensions');
  const columns=Math.ceil(width/cellSize),rows=Math.ceil(height/cellSize),cells=new Uint8Array(columns*rows);

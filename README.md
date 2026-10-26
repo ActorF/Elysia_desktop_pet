@@ -114,6 +114,8 @@
 | 摆动幅度 | 0–200% | 100% |
 | 摆动速度 | 0.25–3× | 1× |
 
+“头部跟随鼠标”默认关闭，可在“动画”页开启；头部平滑地左右偏转、上下抬低，与目光跟随和待机摆动分别控制。此效果基于二维素材变形，不是新增视角素材。
+
 眼睛跟随默认保持原版效果，0% 关闭形变，200% 增强效果。摆动保持上下同向，幅度为 0% 时停止；关闭再开启对应开关会保留参数。
 
 开启“始终置顶”后，可选择“任务栏在前”或“桌宠在前”，默认桌宠在前。即使人物开启鼠标穿透，设置窗口仍可操作，底部按钮可以随时找回人物。
@@ -205,6 +207,7 @@ npm run test:settings
 npm run test:voice
 npm run test:interactions
 npm run test:interaction-settings
+node scripts/head-tracking-check.cjs
 npm run make:portable
 node scripts/verify-package.cjs
 ```

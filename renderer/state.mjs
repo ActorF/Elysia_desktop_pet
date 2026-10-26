@@ -20,7 +20,7 @@ export const POSES = [
 /** Creates independent renderer state; expression changes never alter desktop preferences. */
 export function createPetState() {
   return { expression: null, pose: 'idle', cat: false, glasses: false, gaze: { x: 0, y: 0 },
-    target: { x: 0, y: 0 }, time: 0, motionTime: null, blink: 0, nextBlink: 3.2, blinkAge: -1,
+    target: { x: 0, y: 0 }, head: { x: 0, y: 0 }, time: 0, motionTime: null, blink: 0, nextBlink: 3.2, blinkAge: -1,
     hair: 0, hairVelocity: 0, actionAge: 0 };
 }
 
@@ -78,6 +78,13 @@ export function advance(state, elapsed, settings = {}) {
   // target. Direct sampling responds on the next frame, including reversals.
   state.gaze.x = settings.eyeTracking === false ? 0 : gazeCoordinate(state.target.x);
   state.gaze.y = settings.eyeTracking === false ? 0 : gazeCoordinate(state.target.y);
+  // Head movement follows the raw cursor independently of the eye toggle.
+  const head = state.head ??= { x: 0, y: 0 };
+  const follow = 1 - Math.exp(-12 * dt);
+  for (const axis of ['x', 'y']) {
+    head[axis] = settings.headTracking === true
+      ? head[axis] + (gazeCoordinate(state.target[axis]) - head[axis]) * follow : 0;
+  }
   const targetHair = Math.sin(state.motionTime * 1.05) * 0.032 * motionAmplitude(settings);
   state.hairVelocity += ((targetHair - state.hair) * 65 - state.hairVelocity * 9) * dt;
   state.hair += state.hairVelocity * dt;

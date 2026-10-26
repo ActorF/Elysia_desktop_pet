@@ -5,7 +5,7 @@ const path = require('node:path');
 const { fileURLToPath } = require('node:url');
 const DEFAULT_SETTINGS = Object.freeze({
   alwaysOnTop: true, taskbarInFront: false, clickThrough: false, scale: 1, legacyHotkeys: true, alternateHotkeys: false,
-  eyeTracking: true, eyeWarpStrength: 1, hairMotion: true, motionAmplitude: 1, motionSpeed: 1, keyDisplay: true, cat: false, glasses: false,
+  eyeTracking: true, headTracking: false, eyeWarpStrength: 1, hairMotion: true, motionAmplitude: 1, motionSpeed: 1, keyDisplay: true, cat: false, glasses: false,
   interactionsEnabled: true, cursorTrailEnabled: true, cursorTrailStyle: 'pink', cursorTrailDuration: 0.6,
 });
 const EXPRESSION_KEYS = Object.freeze({
@@ -25,7 +25,7 @@ function sanitizeAppearance(input = {}) {
 
 function sanitizeSettings(input = {}, previous = DEFAULT_SETTINGS) {
   const next = { ...DEFAULT_SETTINGS, ...previous };
-  for (const key of ['alwaysOnTop', 'taskbarInFront', 'clickThrough', 'legacyHotkeys', 'alternateHotkeys', 'eyeTracking', 'hairMotion', 'keyDisplay', 'cat', 'glasses', 'interactionsEnabled', 'cursorTrailEnabled']) {
+  for (const key of ['alwaysOnTop', 'taskbarInFront', 'clickThrough', 'legacyHotkeys', 'alternateHotkeys', 'eyeTracking', 'headTracking', 'hairMotion', 'keyDisplay', 'cat', 'glasses', 'interactionsEnabled', 'cursorTrailEnabled']) {
     if (typeof input[key] === 'boolean') next[key] = input[key];
   }
   const trailStyles = ['pink', 'ribbon', 'stardust'];

@@ -98,8 +98,25 @@ export function jointPose(time = 0, enabled = true, amplitude = 1) {
   ], amplitude => amplitude * sway);
 }
 
+// Blend the complete head into the neck; keep foreground props anchored.
+const HEAD_ANGLE = .07, HEAD_X = 12, HEAD_Y = 20;
+function headWeight(x, y, pose = 'idle') {
+  const prop = ['megaphone','tea','cake'].indexOf(pose);
+  // The source canvas has no spare pixels above cat ears or beside long hair.
+  const edge = smooth(0, 80, y) * smooth(0, 80, x) * smooth(0, 80, W - x);
+  return edge * (1 - smooth(630, 860, y)) * (prop < 0 ? 1 : propAnchors(x, y)[prop]);
+}
+export function headOffset(x, y, head = {}, pose = 'idle') {
+  const gx = Number.isFinite(head.x) ? clamp(head.x, -1, 1) : 0;
+  const gy = Number.isFinite(head.y) ? clamp(head.y, -1, 1) : 0;
+  const angle = gx * HEAD_ANGLE, c = Math.cos(angle), s = Math.sin(angle);
+  const qx = x - 540, qy = y - 720, weight = headWeight(x, y, pose);
+  return [((c - 1) * qx - s * qy + gx * HEAD_X) * weight,
+    (s * qx + (c - 1) * qy + gy * HEAD_Y) * weight];
+}
+
 /** Samples the same weighted transforms as the shader for screen-space motion audits. */
-export function deformPoint(x, y, time = 0, enabled = true, cat = false, pose = 'idle', amplitude = 1) {
+export function deformPoint(x, y, time = 0, enabled = true, cat = false, pose = 'idle', amplitude = 1, head = {}) {
   const angles = jointPose(time, enabled, amplitude), weights = weightsForPoint(x, y);
   let dx = 0, dy = 0;
   PARTS.forEach((part, i) => {
@@ -110,7 +127,8 @@ export function deformPoint(x, y, time = 0, enabled = true, cat = false, pose = 
   });
   const index=['megaphone','tea','cake'].indexOf(pose);
   const attachment=(cat?Math.max(0,2*catAnchor(x,y)-1):1)*(index<0?1:propAnchors(x,y)[index]);
-  return [x + dx*attachment, y + dy*attachment];
+  const [hx, hy] = headOffset(x, y, head, pose);
+  return [x + dx*attachment + hx, y + dy*attachment + hy];
 }
 
 const vertexSource = `
@@ -124,6 +142,7 @@ attribute vec3 a_propAnchors;
 uniform vec3 u_joints[12];
 uniform float u_cat;
 uniform vec3 u_props;
+uniform vec2 u_head;
 varying vec2 v_uv;
 vec2 rotated(vec2 p, vec3 joint) {
   vec2 q = p - joint.xy;
@@ -146,6 +165,12 @@ void main() {
   delta += rotated(p,u_joints[10])*a_weights2.z;
   delta += rotated(p,u_joints[11])*a_weights2.w;
   delta *= mix(1.0,a_catAnchor,u_cat)*(1.0-dot(u_props,vec3(1.0)-a_propAnchors));
+  float edge = smoothstep(0.0,80.0,p.y)*smoothstep(0.0,80.0,p.x)*smoothstep(0.0,80.0,1090.0-p.x);
+  float headWeight = edge*(1.0-smoothstep(630.0,860.0,p.y))*(1.0-dot(u_props,vec3(1.0)-a_propAnchors));
+  vec2 q = p-vec2(540.0,720.0);
+  float angle = u_head.x*${HEAD_ANGLE};
+  float c = cos(angle), s = sin(angle);
+  delta += (vec2((c-1.0)*q.x-s*q.y,s*q.x+(c-1.0)*q.y)+u_head*vec2(${HEAD_X}.0,${HEAD_Y}.0))*headWeight;
   v_uv = p / vec2(1090.0,1443.0);
   vec2 target = (p+delta)/vec2(1090.0,1443.0);
   gl_Position=vec4(target*vec2(2.0,-2.0)+vec2(-1.0,1.0),0.0,1.0);
@@ -169,7 +194,7 @@ export function createMeshRig() {
   const canvas = document.createElement('canvas'); canvas.width = W; canvas.height = H;
   const gl = canvas.getContext('webgl', { alpha: true, premultipliedAlpha: true, antialias: true, preserveDrawingBuffer: true, depth: false });
   let available = false, previousSource = null, previousKey = null;
-  let texture, program, gaze, gazeStrength, joints, catUniform, propsUniform, count = 0;
+  let texture, program, gaze, gazeStrength, joints, catUniform, propsUniform, headUniform, count = 0;
   canvas.addEventListener('webglcontextlost', () => { available = false; });
   try {
     if (!gl) throw new Error('WebGL unavailable');
@@ -206,6 +231,7 @@ export function createMeshRig() {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     gl.uniform1i(gl.getUniformLocation(program,'u_image'), 0);
     catUniform=gl.getUniformLocation(program,'u_cat');propsUniform=gl.getUniformLocation(program,'u_props');
+    headUniform = gl.getUniformLocation(program,'u_head');
     gaze = gl.getUniformLocation(program,'u_gaze'); gazeStrength = gl.getUniformLocation(program,'u_gazeStrength');
     joints = gl.getUniformLocation(program,'u_joints[0]');
     gl.viewport(0,0,W,H); gl.disable(gl.BLEND); gl.disable(gl.DEPTH_TEST); gl.clearColor(0,0,0,0);
@@ -228,6 +254,7 @@ export function createMeshRig() {
       const track = allowGaze && settings.eyeTracking !== false;
       gl.uniform2f(gaze, track ? clamp(state.gaze.x,-1,1) : 0, track ? clamp(state.gaze.y,-1,1) : 0);
       gl.uniform1f(gazeStrength, eyeWarpStrength(settings));
+      gl.uniform2f(headUniform, settings.headTracking === true ? clamp(state.head?.x ?? 0,-1,1) : 0, settings.headTracking === true ? clamp(state.head?.y ?? 0,-1,1) : 0);
       gl.uniform1f(catUniform,state.cat?1:0);
       const pose=state.pose??(state.megaphone?'megaphone':'idle');
       gl.uniform3f(propsUniform,pose==='megaphone'?1:0,pose==='tea'?1:0,pose==='cake'?1:0);
@@ -243,14 +270,20 @@ export const MESH_GRID = Object.freeze({width: W, height: H, columns: 66, rows: 
 const MAX_JOINT_ANGLES = [.006,.047,.046,.044,.034,.05,.052,.05,.0655,.07,.105,.035];
 
 /** Conservative [minDx,minDy,maxDx,maxDy] over every joint phase at a vertex. */
-export function meshPointMotionBounds(x, y, enabled = true, cat = false, pose = 'idle', amplitude = 1) {
+export function meshPointMotionBounds(x, y, enabled = true, cat = false, pose = 'idle', amplitude = 1, headTracking = false) {
   const scale = IDLE_SWAY_SCALE * motionAmplitude({motionAmplitude:amplitude});
-  if (!enabled || !scale) return [0, 0, 0, 0];
+  const bounds = [0, 0, 0, 0];
+  if (headTracking) {
+    const qx = Math.abs(x - 540), qy = Math.abs(y - 720), weight = headWeight(x, y, pose);
+    const dx = ((1 - Math.cos(HEAD_ANGLE)) * qx + Math.sin(HEAD_ANGLE) * qy + HEAD_X) * weight;
+    const dy = (Math.sin(HEAD_ANGLE) * qx + (1 - Math.cos(HEAD_ANGLE)) * qy + HEAD_Y) * weight;
+    bounds.splice(0, 4, -dx, -dy, dx, dy);
+  }
+  if (!enabled || !scale) return bounds;
   const weights = weightsForPoint(x, y);
   const prop = ['megaphone','tea','cake'].indexOf(pose);
   const attachment = (cat ? Math.max(0, 2 * catAnchor(x, y) - 1) : 1)
     * (prop < 0 ? 1 : propAnchors(x, y)[prop]);
-  const bounds = [0, 0, 0, 0];
   for (let i = 0; i < PARTS.length; i++) {
     const weight = weights[i] * attachment;
     if (!weight) continue;

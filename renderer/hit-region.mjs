@@ -119,7 +119,8 @@ export function createCharacterHitRegion(atlas,state={},settings={}){
  let cache=regions.get(atlas);if(!cache){cache={results:new Map(),sources:new Map(),bodies:new Map(),decorations:new Map()};regions.set(atlas,cache);}
  const amplitude=motionAmplitude(settings),enabled=amplitude>0,pose=state.pose??'idle';
  const decoration=['sleep','dizzy'].includes(state.expression)?state.expression:'';
- const bodyKey=`${pose}:${!!state.cat}:${amplitude}`,key=`${bodyKey}:${decoration}`;
+ const headTracking=settings.headTracking===true;
+ const bodyKey=`${pose}:${!!state.cat}:${amplitude}:${headTracking}`,key=`${bodyKey}:${decoration}`;
  if(cache.results.has(key))return cache.results.get(key);
  const start=performance.now();
  const readMask=draw=>{
@@ -134,7 +135,7 @@ export function createCharacterHitRegion(atlas,state={},settings={}){
   let alpha=cache.sources.get(sourceKey);
   if(!alpha){alpha=sourceAlpha(atlas,pose,!!state.cat);cache.sources.set(sourceKey,alpha);}
   body=meshAlphaToOccupancy(alpha,{width:WIDTH,height:HEIGHT,cellSize:CELL_SIZE,padding:1,
-   x:RIG.x,y:RIG.y,scale:RIG.scale,enabled,cat:!!state.cat,pose,motionAmplitude:amplitude});
+   x:RIG.x,y:RIG.y,scale:RIG.scale,enabled,cat:!!state.cat,pose,motionAmplitude:amplitude,headTracking});
   cache.bodies.set(bodyKey,body);
  }
  let mask=body;

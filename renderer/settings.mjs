@@ -75,6 +75,7 @@ function makeToggle(target, key, title, description, actionType = null) {
 for (const skin of SKINS) makeToggle(document.querySelector('#skins'), skin.id, skin.label, `空格 + ${skin.key}`, 'toggle-skin');
 const toggles = [
   ['#eye-toggle', 'eyeTracking', '目光跟随鼠标', '保持原来的眼神效果，可以单独调整幅度。'],
+  ['#head-toggle', 'headTracking', '头部跟随鼠标', '头部随鼠标轻轻转动和抬低，与目光跟随分别控制。'],
   ['#motion-toggle', 'hairMotion', '头发、衣摆与腿部摆动', '上半身与下半身保持同向轻摆。'],
   ['#key-toggle', 'keyDisplay', '按键云朵', '只显示最近输入的一个字符，约一秒后消失。'],
   ['#interactions-toggle', 'interactionsEnabled', '点击互动', '关闭后，摸头和戳戳不再触发表情、字幕和声音；拖动与缩放仍可使用。'],

@@ -12,7 +12,7 @@ const state = createPetState();
 const pointerTracking = createPointerTracking(state, RIG);
 const canvas = document.querySelector('#pet');
 const ctx = canvas.getContext('2d');
-let settings = { eyeTracking:true, eyeWarpStrength:1, hairMotion:true, motionAmplitude:1, motionSpeed:1, alwaysOnTop:true, clickThrough:false, legacyHotkeys:true, keyDisplay:true, interactionsEnabled:true, scale:1, cat:false, glasses:false };
+let settings = { eyeTracking:true, headTracking:false, eyeWarpStrength:1, hairMotion:true, motionAmplitude:1, motionSpeed:1, alwaysOnTop:true, clickThrough:false, legacyHotkeys:true, keyDisplay:true, interactionsEnabled:true, scale:1, cat:false, glasses:false };
 let hotkeys = {}, viewport = null;
 let dragging = null, rightPointer = null;
 let characterAtlas = null, dragRenderPaused = false, redrawRequested = true, shapeScheduled = false;
