@@ -1,14 +1,14 @@
-// Local, persistent text conversations with Ollama. Only the host owns files and network requests.
+// Local, persistent text conversations through the OpenAI-compatible chat protocol.
 'use strict';
 const fs = require('node:fs');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 
-const DEFAULT_CHAT_SETTINGS = Object.freeze({ username: '你', baseUrl: 'http://localhost:11434', model: 'tobestyledintro/qwen3.8-9b-distill:latest', readAloud: false, voiceProjectRoot: 'D:\\Elysia_AI' });
+const DEFAULT_CHAT_SETTINGS = Object.freeze({ username: '你', baseUrl: 'http://127.0.0.1:18434', model: 'elysia-chat', readAloud: false, voiceProjectRoot: 'D:\\Elysia_AI' });
 const MAX_MESSAGE_LENGTH = 8000;
 const MAX_REPLY_LENGTH = 16000;
 const MAX_FILE_BYTES = 32 * 1024 * 1024;
-const MAX_CONTEXT_CHARACTERS = 6000;
+const MAX_CONTEXT_CHARACTERS = 2000;
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const iso = () => new Date().toISOString();
 
@@ -24,7 +24,7 @@ function validateSettings(patch, previous = DEFAULT_CHAT_SETTINGS) {
   }
   if (Object.hasOwn(patch, 'baseUrl')) {
     let url;
-    try { if (typeof patch.baseUrl !== 'string' || patch.baseUrl.length > 2048) throw new Error(); url = new URL(patch.baseUrl.trim()); } catch { throw new Error('请输入有效的 Ollama 服务地址。'); }
+    try { if (typeof patch.baseUrl !== 'string' || patch.baseUrl.length > 2048) throw new Error(); url = new URL(patch.baseUrl.trim()); } catch { throw new Error('请输入有效的聊天服务地址。'); }
     if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error('服务地址须为 HTTP 或 HTTPS，不能包含账号、密码、查询参数或片段。');
     next.baseUrl = url.href.replace(/\/+$/, '');
   }
@@ -42,11 +42,20 @@ function validateSettings(patch, previous = DEFAULT_CHAT_SETTINGS) {
   return next;
 }
 
+function isPreviousDefault(settings) {
+  const url = new URL(settings.baseUrl);
+  return url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
+    && url.port === '11434' && url.pathname === '/'
+    && ['tobestyledintro/qwen3.8-9b-distill', 'tobestyledintro/qwen3.8-9b-distill:latest'].includes(settings.model);
+}
+
 function readSaved(file) {
   if (fs.statSync(file).size > MAX_FILE_BYTES) throw new Error('聊天记录文件超过读取上限。');
   const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
   if (!object(parsed) || !object(parsed.settings) || !Array.isArray(parsed.conversations)) throw new Error('聊天记录格式无效。');
   const settings = validateSettings(parsed.settings);
+  const migrated = isPreviousDefault(settings);
+  if (migrated) { settings.baseUrl = DEFAULT_CHAT_SETTINGS.baseUrl; settings.model = DEFAULT_CHAT_SETTINGS.model; }
   const ids = new Set(), messageIds = new Set();
   const validDate = value => typeof value === 'string' && Number.isFinite(Date.parse(value));
   const conversations = parsed.conversations.map(conversation => {
@@ -66,7 +75,7 @@ function readSaved(file) {
     });
     return { id: conversation.id, title: conversation.title.slice(0, 100), createdAt: conversation.createdAt, updatedAt: conversation.updatedAt, messages };
   });
-  return { settings, conversations, activeConversationId: ids.has(parsed.activeConversationId) ? parsed.activeConversationId : conversations.at(-1)?.id ?? null };
+  return { migrated, settings, conversations, activeConversationId: ids.has(parsed.activeConversationId) ? parsed.activeConversationId : conversations.at(-1)?.id ?? null };
 }
 
 /** Create a synchronous state API around background requests; every returned snapshot is isolated from the host. */
@@ -76,7 +85,11 @@ function createChatService({ directory, personaPath = path.join(__dirname, 'chat
   let protectedFile = false, disposed = false, active = null, publishTimer = null;
   let persona = '', personaError = false;
   try { persona = fs.readFileSync(personaPath, 'utf8').trim(); if (!persona) throw new Error(); } catch { personaError = true; state.error = '人设文件暂不可用，请重新安装或恢复程序文件。'; }
-  try { Object.assign(state, readSaved(file)); } catch (error) {
+  try {
+    const { migrated, ...saved } = readSaved(file);
+    Object.assign(state, saved);
+    if (migrated) persist();
+  } catch (error) {
     if (error.code !== 'ENOENT') {
       protectedFile = true;
       state.storageError = '聊天记录读取失败，原文件已保留且不会覆盖。请检查用户数据目录中的 chat-state.json，修复后重新启动。';
@@ -204,38 +217,58 @@ function createChatService({ directory, personaPath = path.join(__dirname, 'chat
     let reader;
     try {
       if (active !== job) return;
-      const response = await Promise.race([fetchImpl(`${baseUrl}/api/chat`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      const endpoint = `${baseUrl}${baseUrl.endsWith('/v1') ? '' : '/v1'}/chat/completions`;
+      const response = await Promise.race([fetchImpl(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
         body: JSON.stringify(payload), signal: job.controller.signal, redirect: 'error' }), abort]);
       if (!response.ok) {
         await response.body?.cancel().catch(() => {});
         const error = response.status === 404 ? '找不到所选模型或服务接口，请在聊天设置中确认模型已安装、服务地址正确。'
           : response.status === 401 || response.status === 403 ? '聊天服务拒绝访问，请检查服务地址与访问权限。'
-          : response.status === 400 ? '模型不支持当前聊天请求，请检查模型名和 Ollama 版本。' : '模型服务暂时无法回答，请稍后重试。';
+          : response.status === 400 ? '模型无法处理当前请求，请缩短问题或聊天上下文，并检查模型名和服务配置。' : '模型服务暂时无法回答，请稍后重试。';
         finish(job, 'error', error); return;
       }
       if (!response.body) throw new Error('invalid-stream');
       reader = response.body.getReader();
       const decoder = new TextDecoder('utf-8', { fatal: true });
-      let buffer = '', bytes = 0, done = false, truncated = false;
-      const consume = line => {
-        if (!line.trim() || active !== job || done) return;
-        const chunk = JSON.parse(line);
-        if (!object(chunk) || chunk.error || (chunk.message && (!object(chunk.message) || (chunk.message.content !== undefined && typeof chunk.message.content !== 'string')))) throw new Error('invalid-stream');
-        const content = chunk.message?.content ?? '';
+      let buffer = '', bytes = 0, done = false, truncated = false, eventData = [];
+      const consumeEvent = () => {
+        const data = eventData.join('\n'); eventData = [];
+        if (!data.trim() || active !== job || done) return;
+        if (data.trim() === '[DONE]') { done = true; return; }
+        const chunk = JSON.parse(data);
+        if (!object(chunk) || chunk.error || !Array.isArray(chunk.choices)) throw new Error('invalid-stream');
+        if (!chunk.choices.length && object(chunk.usage)) return;
+        const choice = chunk.choices.find(item => item?.index === 0);
+        if (!object(choice) || !object(choice.delta)
+          || (choice.delta.content != null && typeof choice.delta.content !== 'string')) throw new Error('invalid-stream');
+        const content = choice.delta.content ?? '';
         if (job.reply.content.length + content.length > MAX_REPLY_LENGTH) throw new Error('reply-limit');
         job.reply.content += content;
-        if (chunk.done === true) { done = true; truncated = chunk.done_reason === 'length'; }
+        if (choice.finish_reason != null) {
+          if (!['stop', 'length'].includes(choice.finish_reason)) throw new Error('incomplete-stream');
+          done = true; truncated = choice.finish_reason === 'length';
+        }
         publishSoon();
+      };
+      const consumeLine = raw => {
+        const line = raw.endsWith('\r') ? raw.slice(0, -1) : raw;
+        if (!line) { consumeEvent(); return; }
+        if (line.startsWith(':')) return;
+        const colon = line.indexOf(':');
+        const field = colon < 0 ? line : line.slice(0, colon);
+        let value = colon < 0 ? '' : line.slice(colon + 1);
+        if (value.startsWith(' ')) value = value.slice(1);
+        if (field === 'data') eventData.push(value);
       };
       while (!done && active === job) {
         const packet = await Promise.race([reader.read(), abort]);
-        if (packet.done) { buffer += decoder.decode(); if (buffer.trim()) consume(buffer); break; }
+        if (packet.done) { buffer += decoder.decode(); break; }
         bytes += packet.value.byteLength;
         if (bytes > 2 * 1024 * 1024) throw new Error('reply-limit');
         buffer += decoder.decode(packet.value, { stream: true });
         if (buffer.length > 1024 * 1024) throw new Error('reply-limit');
         let newline;
-        while ((newline = buffer.indexOf('\n')) !== -1) { const line = buffer.slice(0, newline); buffer = buffer.slice(newline + 1); consume(line); }
+        while ((newline = buffer.indexOf('\n')) !== -1 && !done) { const line = buffer.slice(0, newline); buffer = buffer.slice(newline + 1); consumeLine(line); }
       }
       if (active !== job) return;
       if (!done) throw new Error('incomplete-stream');
@@ -248,7 +281,7 @@ function createChatService({ directory, personaPath = path.join(__dirname, 'chat
         : error.message === 'reply-limit' ? '回答超过长度限制，已保留收到的部分。请缩小问题范围后重试。'
         : ['invalid-stream', 'incomplete-stream'].includes(error.message) || error instanceof SyntaxError || error.code === 'ERR_ENCODING_INVALID_ENCODED_DATA'
           ? '模型响应格式异常或连接提前中断，已保留收到的部分，请重试。'
-          : '无法连接到 Ollama，或连接已中断。请确认 Ollama 已启动，并检查聊天设置中的服务地址。';
+          : '无法连接到本地聊天服务，或连接已中断。请在“设置 → 聊天”检查模型状态和服务地址。';
       finish(job, 'error', message);
     } finally { if (reader) void reader.cancel().catch(() => {}); }
   }
@@ -259,7 +292,12 @@ function createChatService({ directory, personaPath = path.join(__dirname, 'chat
     if (typeof text !== 'string' || !text.trim() || text.length > MAX_MESSAGE_LENGTH) return fail(`请输入 1–${MAX_MESSAGE_LENGTH} 个字符的消息。`);
     const before = getState();
     const conversation = state.conversations.find(item => item.id === state.activeConversationId) ?? makeConversation();
-    const payload = { model: state.settings.model, messages: messagesFor(conversation, text.trim()), stream: true, think: false, options: { num_ctx: 16384, num_predict: 1024 } };
+    const payload = { model: state.settings.model, messages: messagesFor(conversation, text.trim()), stream: true, max_tokens: 1024 };
+    if (state.settings.baseUrl === DEFAULT_CHAT_SETTINGS.baseUrl && state.settings.model === DEFAULT_CHAT_SETTINGS.model) {
+      // Documented llama.cpp chat-template option; do not send provider extensions
+      // to unrelated OpenAI-compatible services configured by the user.
+      payload.chat_template_kwargs = { enable_thinking: false };
+    }
     const now = iso();
     const user = { id: randomUUID(), role: 'user', content: text.trim(), createdAt: now, username: state.settings.username, status: 'complete' };
     const reply = { id: randomUUID(), role: 'assistant', content: '', createdAt: now, status: 'streaming' };

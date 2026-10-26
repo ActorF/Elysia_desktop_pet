@@ -23,7 +23,7 @@ const {migrateSampleProfile}=require('./profile-migration.cjs');
 const {createChatService}=require('./chat-service.cjs');
 const {createChatWindow}=require('./chat-window.cjs');
 const {registerChatIpc}=require('./chat-ipc.cjs');
-const {createChatSpeech}=require('./chat-speech.cjs');
+const {createChatSpeech,getChatSpeechBlockReason}=require('./chat-speech.cjs');
 const {createModelSetup}=require('./model-setup.cjs');
 const {registerModelSetupIpc}=require('./model-setup-ipc.cjs');
 const {createVoiceSetup}=require('./voice-setup.cjs');
@@ -490,10 +490,7 @@ else {
       getProjectRoot: () => chat.getState().settings.voiceProjectRoot,
       isEnabled: () => chat.getState().settings.readAloud === true && (!isSmokeTest || isChatSmoke),
       isWindowOpen: () => !!chatWindow.getWindow(),
-      canSpeak: () => {
-        const state = voices?.getState();
-        return !!state && !state.settings.dnd && state.settings.volume > 0 && !state.environment.locked && !state.environment.suspended && !state.environment.fullscreen;
-      },
+      getBlockReason: manual => getChatSpeechBlockReason(voices?.getState(), { manual }),
       volume: () => voices?.getState().settings.volume ?? .8,
       sendAudio: packet => chatWindow.getWindow()?.webContents.send('chat:speech-audio', packet),
       stopAudio: packet => chatWindow.getWindow()?.webContents.send('chat:speech-stop', packet),
@@ -507,7 +504,7 @@ else {
       getPreferences: () => preferences, isSmokeTest, isPackaged: app.isPackaged, quit: () => app.quit(), testHooks: voiceTestHooks,
       publish: snapshot => {
         const environment = snapshot.environment;
-        if (snapshot.settings.dnd || snapshot.settings.volume === 0 || environment.locked || environment.suspended || environment.fullscreen) chatSpeech?.release();
+        chatSpeech?.refreshPermission();
         cursorTrail?.setBlocked(environment.locked || environment.suspended || environment.fullscreen || environment.monitorReady === false);
         const panel = settingsWindow?.getWindow();
         if (panel && !panel.webContents.isDestroyed()) panel.webContents.send('settings:voice-state', snapshot);
@@ -534,8 +531,7 @@ else {
     configureLegacyHotkeys();
     configureTypedKeys();
     await createWindow();
-    if (firstRunSetup.needsSetup()) {
-      firstRunSetup.start({ chat: modelSetup, voice: voiceSetup });
+    if (firstRunSetup.start({ chat: modelSetup, voice: voiceSetup, chatBaseUrl: chat.getState().settings.baseUrl })) {
       const setupWindow = await settingsWindow.open();
       await setupWindow?.webContents.executeJavaScript('document.querySelector("[data-tab=chat]")?.click(); true');
     }

@@ -5,21 +5,21 @@
 <p align="center"><a href="README.md">简体中文</a> · <strong>English</strong></p>
 <p align="center"><a href="#download">Download</a> · <a href="#character-gallery">Gallery</a> · <a href="#usage">Usage</a> · <a href="#run-from-source">Run from source</a></p>
 
-A chibi Elysia companion for Windows, with a transparent full-body character, mouse-following eyes, and gentle motion. Mix expressions, cat mode, glasses, and four actions, with little clouds that respond to your typing. Version 1.4.1 adds local chat, optional read-aloud replies, automatic model setup, conversation history management, and body-region interactions, and fixes window ordering in Taskbar in front mode.
+A chibi Elysia companion for Windows, with a transparent full-body character, mouse-following eyes, and gentle motion. Mix expressions, cat mode, glasses, and four actions, with little clouds that respond to your typing. Includes local chat, optional read-aloud replies, automatic model setup, conversation history management, and body-region interactions. Version 1.4.2 switches to app-managed llama.cpp and fixes manual reading blocked by Windows busy-state detection.
 
-**Current test version: 1.4.1 — not a stable release.** See [Local chat and read-aloud](#local-chat-and-read-aloud) and the [1.4.1 release notes](docs/releases/v1.4.1.md).
+**Current test version: 1.4.2, not a stable release.** Installer and portable builds are available on `version-control`; no 1.4.2 GitHub Release has been created. Chat and read-aloud succeeded on the current PC; full verification on a second PC is pending. See [Local chat and read-aloud](#local-chat-and-read-aloud) and the [1.4.2 release notes and checklist](docs/releases/v1.4.2.md).
 
 ## Download
 
 | Edition | Program | Features | Checksum |
 | --- | --- | --- | --- |
-| 1.4.1 Windows installer (test) | [Download installer](https://media.githubusercontent.com/media/ActorF/Elysia_desktop_pet/main/release/Elysia_desktop_pet-1.4.1-setup.exe) | Full features, including chat and optional read-aloud replies | [SHA256](https://raw.githubusercontent.com/ActorF/Elysia_desktop_pet/main/release/Elysia_desktop_pet-1.4.1-setup.exe.sha256) |
-| 1.4.1 Windows portable (test) | [Download EXE](https://media.githubusercontent.com/media/ActorF/Elysia_desktop_pet/main/release/Elysia_desktop_pet-1.4.1.exe) | Same features; double-click to run | [SHA256](https://raw.githubusercontent.com/ActorF/Elysia_desktop_pet/main/release/Elysia_desktop_pet-1.4.1.exe.sha256) |
+| 1.4.2 Windows installer (test) | [Download installer](https://media.githubusercontent.com/media/ActorF/Elysia_desktop_pet/version-control/release/Elysia_desktop_pet-1.4.2-setup.exe) | Full features, including chat and optional read-aloud replies | [SHA256](https://raw.githubusercontent.com/ActorF/Elysia_desktop_pet/version-control/release/Elysia_desktop_pet-1.4.2-setup.exe.sha256) |
+| 1.4.2 Windows portable (test) | [Download EXE](https://media.githubusercontent.com/media/ActorF/Elysia_desktop_pet/version-control/release/Elysia_desktop_pet-1.4.2.exe) | Same features; double-click to run | [SHA256](https://raw.githubusercontent.com/ActorF/Elysia_desktop_pet/version-control/release/Elysia_desktop_pet-1.4.2.exe.sha256) |
 | 1.3.0 Windows portable | [Download EXE](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.3.0/Elysia_desktop_pet-1.3.0.exe) | **No chat or read-aloud replies**; daily and click-interaction recordings remain included | [SHA256](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.3.0/Elysia_desktop_pet-1.3.0.exe.sha256) |
 
-Click these links to download the complete program; Git, Git LFS, and Node.js are not required. Both 1.4.1 editions automatically prepare chat and speech dependencies on first run, which requires an internet connection. Version 1.3.0 does not download chat or speech-synthesis models.
+Click these links to download the complete program; Git, Git LFS, and Node.js are not required. Both 1.4.2 editions automatically prepare chat and speech dependencies on first run, which requires an internet connection. Version 1.3.0 does not download chat or speech-synthesis models.
 
-Run `Elysia_desktop_pet-1.4.1-setup.exe` to install the app, or double-click the portable EXE to run it. Before upgrading, quit the old version from the tray. Position, size, outfit switches, and preferences in your existing release profile are preserved without manual migration.
+Run `Elysia_desktop_pet-1.4.2-setup.exe` to install the app, or double-click the portable EXE to run it. Before upgrading, quit the old version from the tray. Position, size, outfit switches, and preferences in your existing release profile are preserved without manual migration.
 
 [1.3.0 release notes](docs/releases/v1.3.0.md) · [1.3.0 release page](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.3.0) · [Source and build instructions](#run-from-source)
 
@@ -28,7 +28,7 @@ Run `Elysia_desktop_pet-1.4.1-setup.exe` to install the app, or double-click the
 
 The app is currently unsigned. If Microsoft Edge says the file “isn't commonly downloaded,” confirm you used one of the program links above. In the downloads list, choose **⋯ → Keep → Show more → Keep anyway**, then wait for the download to finish. See [Microsoft's instructions](https://learn.microsoft.com/en-us/troubleshoot/microsoft-edge/development/download-failures#check-security-and-smartscreen-settings).
 
-**If the download has fully completed but the file is still named `Unconfirmed <number>.crdownload`, you can rename it to use the `.exe` extension.** Enable **File name extensions** in File Explorer, then use **`Elysia_desktop_pet-1.4.1.exe`** or **`Elysia_desktop_pet-1.4.1-setup.exe`**, matching the edition you downloaded. Remove the trailing `.crdownload` entirely.
+**If the download has fully completed but the file is still named `Unconfirmed <number>.crdownload`, you can rename it to use the `.exe` extension.** Enable **File name extensions** in File Explorer, then use **`Elysia_desktop_pet-1.4.2.exe`** or **`Elysia_desktop_pet-1.4.2-setup.exe`**, matching the edition you downloaded. Remove the trailing `.crdownload` entirely.
 
 This only applies to a file that has finished downloading. If the download is still running or was interrupted, complete it first; renaming an incomplete file does not finish the download.
 
@@ -90,11 +90,11 @@ Transparent space around the character lets clicks pass through to the windows b
 
 The new tray icon is a pink emblem on a transparent background. Position, size, and preferences are saved automatically.
 
-Version 1.4.1 keeps the existing release profile in `%APPDATA%/Elysia Desktop Pet/`, preserving position, size, appearance, and preferences. Quit the old app from its tray before starting the new version; existing release settings need no manual migration.
+Version 1.4.2 keeps the existing release profile in `%APPDATA%/Elysia Desktop Pet/`, preserving position, size, appearance, and preferences. Quit the old app from its tray before starting the new version; existing release settings need no manual migration.
 
 ### Settings window
 
-Settings and the pet stay on screen together, and you can move or resize the window independently. Drag its empty header area to move it. The three standard icons at the top right minimize, maximize/restore, and close the window. Closing Settings leaves the pet running. Version 1.4.1 has seven tabs: **Appearance, Animation, Desktop, Interaction, Voice, Chat, and Chat history**.
+Settings and the pet stay on screen together, and you can move or resize the window independently. Drag its empty header area to move it. The three standard icons at the top right minimize, maximize/restore, and close the window. Closing Settings leaves the pet running. There are seven tabs: **Appearance, Animation, Desktop, Interaction, Voice, Chat, and Chat history**.
 
 <table>
   <tr><th>Appearance</th><th>Animation</th><th>Desktop</th></tr>
@@ -120,7 +120,7 @@ Click a screenshot to view it at full size. The app currently uses Chinese label
 - **Desktop (`桌面`):** change character size, always-on-top behavior, taskbar order, click-through, and shortcuts. Enter a size percentage starting at 1%, with no fixed upper size limit.
 - **Interaction (`互动`):** toggle click responses and cursor trails independently, and choose the trail style and duration.
 - **Voice (`语音`):** control automatic greetings, Do not disturb, volume, and birthday month/day, and view playback status. The release UI has no audition or simulated-trigger tools.
-- **Chat (`聊天`):** change your username, toggle automatic read-aloud, and check independent chat-model and speech-environment setup progress. Advanced options support an existing Ollama service or speech environment.
+- **Chat (`聊天`):** change your username, toggle automatic read-aloud, and check independent model and speech setup progress. Advanced options support a compatible chat service or speech environment.
 - **Chat history (`聊天记录`):** select a conversation in the left list and read its messages on the right. Continue chatting, delete one conversation, or clear history after confirmation.
 
 | Animation parameter | Range | Default |
@@ -137,13 +137,13 @@ Version 1.4.1 fixes the pet falling behind ordinary apps when a secondary taskba
 
 ### Local chat and read-aloud
 
-First run needs an internet connection to prepare Ollama, the default Qwen chat model, and speech resources automatically. Check progress or retry in **Settings → Chat**.
+Choose **Open chat (打开聊天框)** from the tray. Enter sends; Shift + Enter adds a line. First run requires an internet connection to prepare llama.cpp, the default Qwen chat model, and speech resources; Ollama is no longer required. The app starts its own background chat service, releases it on exit, and starts it again on the next launch. **Settings → Chat** shows separate chat and speech progress, cancellation, and retry.
 
-Choose **Open chat (`打开聊天框`)** from the system tray. Enter sends; Shift + Enter adds a line. The plus starts a new conversation; closing chat leaves the pet running. Use Stop to cancel a reply or stop it being read aloud.
+In **Settings → Chat**, change your username or enable automatic read-aloud, which is **off by default**. Use the icons below messages to copy text or choose **Read Aloud** for one reply without changing that setting. Loading the speech model for the first time can take a while; wait for the status to update.
 
-In **Settings → Chat**, change your username or enable automatic read-aloud, which is **off by default**. Use the icons below messages to copy text or read one reply aloud.
+Manual reading is no longer blocked by ordinary fullscreen or Windows busy-state detection. It still respects Do not disturb, mute, screen lock, and suspend, and failed requests explain the reason. Automatic speech retains screen-state restrictions.
 
-**Settings → Chat history (`聊天记录`)** lets you view or delete locally saved conversations. Deletion asks for confirmation. The persona prompt is in [electron/chat-persona.md](electron/chat-persona.md). See the [release notes](docs/releases/v1.4.1.md) for technical details.
+**Settings → Chat history (聊天记录)** lets you view or delete local conversations after confirmation. Upgrades retain your username, history, and preferences; old default chat connections migrate while custom connections are preserved. Custom services must support OpenAI-compatible streaming chat. The persona prompt is in [electron/chat-persona.md](electron/chat-persona.md). Resource sizes and verification limits are in the [1.4.2 release notes](docs/releases/v1.4.2.md).
 
 ### Daily voices and speech bubbles
 
@@ -207,7 +207,7 @@ Requires **Windows and Node.js 22 or later**. Executables in `release/` use Git 
 
 ```powershell
 git lfs install
-git clone --branch main https://github.com/ActorF/Elysia_desktop_pet.git
+git clone --branch version-control https://github.com/ActorF/Elysia_desktop_pet.git
 cd Elysia_desktop_pet
 git lfs pull
 npm ci
@@ -232,9 +232,9 @@ npm run make:release
 npm run verify:release
 ```
 
-`npm run make:release` (`node scripts/package-release.cjs`) creates `release/Elysia_desktop_pet-1.4.1.exe` and `release/Elysia_desktop_pet-1.4.1-setup.exe`. Build them individually with `npm run make:portable` or `npm run make:setup`. `npm run verify:release` (`node scripts/verify-package.cjs`) verifies the release package. These commands do not publish to GitHub. Prepare the speech asset archive before building; `npm run package` produces an unpacked application directory.
+`npm run make:release` (`node scripts/package-release.cjs`) creates `release/Elysia_desktop_pet-1.4.2.exe` and `release/Elysia_desktop_pet-1.4.2-setup.exe`. Build them individually with `npm run make:portable` or `npm run make:setup`. `npm run verify:release` (`node scripts/verify-package.cjs`) verifies the release package. These commands do not publish to GitHub. Prepare the speech asset archive before building; `npm run package` produces an unpacked application directory.
 
-See the [1.4.1 release notes](docs/releases/v1.4.1.md#verification-and-limits) for chat, speech, body-region interaction, and window-order verification. A complete first installation on a fresh Windows environment has not yet been tested. Full commands and checks are in the [verification guide](docs/verification.md), currently in Chinese.
+See the [1.4.2 release notes](docs/releases/v1.4.2.md#english-summary) for chat and speech results, known check limitations, and the second-PC checklist. A complete first installation on a fresh Windows environment remains pending. Full commands and checks are in the [verification guide](docs/verification.md), currently in Chinese.
 
 ## Project structure
 
@@ -248,7 +248,7 @@ See the [1.4.1 release notes](docs/releases/v1.4.1.md#verification-and-limits) f
 | `scripts/` | Launch, package verification, and preview tools |
 | `tests/` | Automated tests |
 | `docs/` | Character previews, release notes, and verification documentation |
-| `release/` | Windows installer, portable app, and checksums; EXEs are stored on `main` through Git LFS |
+| `release/` | Windows installer, portable app, and checksums; 1.4.2 EXEs are stored on `version-control` through Git LFS |
 | `LICENSE` | MIT license for the code |
 
 The app uses an Electron transparent window, composited PNG artwork, and WebGL mesh animation. When WebGL is unavailable, it displays the statically composited character.

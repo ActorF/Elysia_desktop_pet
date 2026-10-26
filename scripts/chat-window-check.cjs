@@ -27,7 +27,7 @@ async function main() {
       const listeners = new Set(), windowListeners = new Set(), calls = [];
       const stamp = '2026-10-25T12:00:00.000Z';
       let id = 1, rejectNext = false, windowState = { maximized: false };
-      let state = { settings: { username: '旅行者', baseUrl: 'http://localhost:11434', model: 'tobestyledintro/qwen3.8-9b-distill:latest', readAloud: false, voiceProjectRoot: 'D:\\Elysia_AI' }, conversations: [], activeConversationId: null, busy: false, error: null, storageError: null };
+      let state = { settings: { username: '旅行者', baseUrl: 'http://127.0.0.1:18434', model: 'elysia-chat', readAloud: false, voiceProjectRoot: 'D:\\Elysia_AI' }, conversations: [], activeConversationId: null, busy: false, error: null, storageError: null };
       const copy = () => structuredClone(state);
       const publish = patch => { state = { ...state, ...patch }; for (const listener of listeners) listener(copy()); return copy(); };
       const current = () => state.conversations.find(item => item.id === state.activeConversationId);
@@ -41,7 +41,7 @@ async function main() {
         if (action === 'toggle-maximize') { windowState.maximized = !windowState.maximized; for (const listener of windowListeners) listener(structuredClone(windowState)); }
       };
       const onWindowState = callback => { windowListeners.add(callback); return () => windowListeners.delete(callback); };
-      const finish = (text, status = 'complete') => { const reply = current().messages.at(-1); reply.content = text; reply.status = status; return publish({ busy: false, error: status === 'error' ? '无法连接 Ollama，请检查服务后重试。' : null }); };
+      const finish = (text, status = 'complete') => { const reply = current().messages.at(-1); reply.content = text; reply.status = status; return publish({ busy: false, error: status === 'error' ? '无法连接本地模型，请检查服务后重试。' : null }); };
       const send = async text => {
         calls.push(['send', text]);
         if (rejectNext) { rejectNext = false; return publish({ error: '无法保存消息，请重试。' }); }
@@ -78,8 +78,8 @@ async function main() {
         const automatic = new URL(location.href).searchParams.get('modelSetup') === 'auto';
         if (!automatic) state.settings = { ...state.settings, baseUrl: 'https://example.test/ollama', model: 'custom-remote' };
         const setupListeners = new Set(), setupCalls = [];
-        let setup = { phase: automatic ? 'pulling-model' : 'idle', busy: automatic, canCancel: automatic, ollamaReady: automatic, modelReady: false,
-          model: 'tobestyledintro/qwen3.8-9b-distill:latest', baseUrl: 'http://localhost:11434', expectedModelBytes: 6700000000,
+        let setup = { phase: automatic ? 'pulling-model' : 'idle', busy: automatic, canCancel: automatic, runtimeReady: automatic, modelReady: false,
+          model: 'elysia-chat', baseUrl: 'http://127.0.0.1:18434', expectedModelBytes: 5780090176,
           completedBytes: 0, totalBytes: 0, progress: null, error: null, message: null };
         const publishSetup = patch => { setup = { ...setup, ...patch }; for (const listener of setupListeners) listener(structuredClone(setup)); return structuredClone(setup); };
         window.__modelSetupQA = { calls: setupCalls, publish: publishSetup, snapshot: () => structuredClone(setup) };
@@ -345,13 +345,13 @@ async function main() {
     await setup.goto(`${base}/renderer/settings.html?modelSetup=manual`); await setup.waitForSelector('html[data-model-setup-ready=true][data-voice-setup-ready=true]');
     await setup.locator('[data-tab=chat]').click();
     assert.deepEqual(await setup.evaluate(() => window.__modelSetupQA.calls), ['inspect']);
-    assert.match(await setup.locator('#model-setup-card').innerText(), /首次运行自动准备.*6\.7 GB/s);
+    assert.match(await setup.locator('#model-setup-card').innerText(), /首次运行自动准备.*5\.8 GB/s);
     assert.doesNotMatch(await setup.locator('#model-setup-card').innerText(), /D:\\|AppData|python|\.exe/);
     await setup.locator('#model-setup-install').click();
     assert.equal(await setup.locator('#model-setup-install').isDisabled(), true); assert.equal(await setup.locator('#model-setup-cancel').isEnabled(), true);
     assert.deepEqual(await setup.evaluate(() => window.__modelSetupQA.calls), ['inspect', 'install']);
-    await setup.evaluate(() => window.__modelSetupQA.publish({ phase: 'pulling-model', ollamaReady: true, completedBytes: 3350000000, totalBytes: 6700000000, progress: .5 }));
-    assert.equal(await setup.locator('#model-setup-progress').getAttribute('value'), '50'); assert.match(await setup.locator('#model-setup-progress-text').innerText(), /3\.35 GB.*6\.70 GB.*50%/);
+    await setup.evaluate(() => window.__modelSetupQA.publish({ phase: 'pulling-model', runtimeReady: true, completedBytes: 2890045088, totalBytes: 5780090176, progress: .5 }));
+    assert.equal(await setup.locator('#model-setup-progress').getAttribute('value'), '50'); assert.match(await setup.locator('#model-setup-progress-text').innerText(), /2\.89 GB.*5\.78 GB.*50%/);
     await capture(setup, 'model-setup-progress');
     await setup.evaluate(() => window.__modelSetupQA.publish({ phase: 'installing', canCancel: false, completedBytes: 0, totalBytes: 0, progress: null }));
     assert.equal(await setup.locator('#model-setup-cancel').isDisabled(), true); assert.equal(await setup.locator('#model-setup-progress').getAttribute('value'), null);
@@ -367,7 +367,7 @@ async function main() {
     await setup.evaluate(() => window.__chatQA.reject()); await setup.locator('#model-setup-use-local').click();
     assert.equal(await setup.locator('#model-setup-error').isVisible(), true); assert.equal(await setup.evaluate(() => window.__chatQA.snapshot().settings.model), 'custom-remote');
     await setup.locator('#model-setup-use-local').click();
-    assert.deepEqual(await setup.evaluate(() => window.__chatQA.calls.at(-1)), ['setChatSettings', { baseUrl: 'http://localhost:11434', model: 'tobestyledintro/qwen3.8-9b-distill:latest' }]);
+    assert.deepEqual(await setup.evaluate(() => window.__chatQA.calls.at(-1)), ['setChatSettings', { baseUrl: 'http://127.0.0.1:18434', model: 'elysia-chat' }]);
     assert.equal(await setup.locator('#model-setup-use-local').isDisabled(), true); assert.match(await setup.locator('#model-setup-status').innerText(), /当前聊天正在使用本地模型/);
     await setup.setViewportSize({ width: 500, height: 500 }); await layout(setup); await capture(setup, 'model-setup-ready-compact');
     const automaticSetup = await context.newPage(); automaticSetup.on('pageerror', error => errors.push(error.message));

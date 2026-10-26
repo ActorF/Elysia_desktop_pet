@@ -1,0 +1,35 @@
+Local chat runtime and model provenance
+
+Runtime: llama.cpp, developed by the ggml authors.
+Upstream: https://github.com/ggml-org/llama.cpp
+Pinned build: b11669 (stable v0.7.0), commit 620d2225cc436ab0b001e3200e590e3b286ef9ab
+Artifact: llama-b11669-bin-win-vulkan-x64.zip
+URL: https://github.com/ggml-org/llama.cpp/releases/download/b11669/llama-b11669-bin-win-vulkan-x64.zip
+Size: 32182350 bytes
+SHA256: 2c07574e7bde71321cb785282b20cc821e951132149eeceeea32ddebdbf0598e
+License: MIT; full text in llama.cpp-LICENSE.txt.
+The runtime includes LLVM OpenMP; its notice is preserved in LLVM-OpenMP-LICENSE.txt.
+
+Model: Qwen3.8-9B-Q4_K_M.gguf, published by Empero / empero-ai.
+Upstream: https://huggingface.co/empero-ai/Qwen3.8-9B-Distill-GGUF
+Pinned revision: 760121cd70bb4c36b2b5ec58eb765e0df5987efe
+URL: https://huggingface.co/empero-ai/Qwen3.8-9B-Distill-GGUF/resolve/760121cd70bb4c36b2b5ec58eb765e0df5987efe/Qwen3.8-9B-Q4_K_M.gguf
+Size: 5780090176 bytes
+SHA256: df13d66021cef676f82be74053220fd75af6bf2a6a7fb77f5222ab9e50744a7a
+Architecture: qwen35, Q4_K_M quantization.
+License: Apache-2.0 according to the pinned publisher model card.
+Model card: https://huggingface.co/empero-ai/Qwen3.8-9B-Distill-GGUF/blob/760121cd70bb4c36b2b5ec58eb765e0df5987efe/README.md
+Checksums: https://huggingface.co/empero-ai/Qwen3.8-9B-Distill-GGUF/blob/760121cd70bb4c36b2b5ec58eb765e0df5987efe/SHA256SUMS
+
+The publisher identifies this GGUF as a quantization of empero-ai/Qwen3.8-9B,
+a distilled model using the Qwen/Qwen3.5-9B architecture. Attribution to
+Empero and the Alibaba Qwen team is retained from that model card.
+This application uses the published quantized weights without modifying them.
+
+Qwen3.8-9B-LICENSE.txt preserves the Apache-2.0 license distributed with the
+same model through tobestyledintro/qwen3.8-9b-distill on the Ollama registry.
+License source: https://registry.ollama.ai/v2/tobestyledintro/qwen3.8-9b-distill/blobs/sha256:a4e4b2468504e54741ba589a2dd3c2d39469511d6c805951e36e2c5c9943ccae
+License SHA256: a4e4b2468504e54741ba589a2dd3c2d39469511d6c805951e36e2c5c9943ccae
+
+Upstream model and runtime licenses do not grant rights to the character,
+brands, voice identity, or other materials described in ASSET-NOTICE.md.

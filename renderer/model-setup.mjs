@@ -3,14 +3,14 @@ const desktop = window.elysiaSettings;
 const required = ['getModelSetup', 'inspectModelSetup', 'installChatModel', 'cancelModelSetup', 'onModelSetup'];
 async function initializeChatModelSetup() {
 if (desktop && required.every(method => typeof desktop[method] === 'function')) {
-  const LOCAL_SETTINGS = { baseUrl: 'http://localhost:11434', model: 'tobestyledintro/qwen3.8-9b-distill:latest' };
+  const LOCAL_SETTINGS = { baseUrl: 'http://127.0.0.1:18434', model: 'elysia-chat' };
   const element = (tag, className, text) => {
     const node = document.createElement(tag); if (className) node.className = className; if (text !== undefined) node.textContent = text; return node;
   };
   const card = element('section', 'card model-setup-card'); card.id = 'model-setup-card'; card.setAttribute('aria-labelledby', 'model-setup-title');
   const heading = element('div', 'section-heading'), title = element('h2', '', '本地聊天模型'); title.id = 'model-setup-title';
   const badge = element('span', 'voice-badge', '正在检查'); badge.id = 'model-setup-badge'; heading.append(title, badge);
-  const description = element('p', 'hint', '首次运行自动准备所需模型，可在这里查看进度或取消。聊天模型约 6.7 GB，另需下载 Ollama。');
+  const description = element('p', 'hint', '首次运行自动准备所需模型，可在这里查看进度或取消。聊天模型约 5.8 GB，之后随桌宠在后台启动。');
   const status = element('p', 'model-setup-status'); status.id = 'model-setup-status'; status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite');
   const meter = element('div', 'model-setup-progress'); meter.hidden = true;
   const progress = element('progress'); progress.id = 'model-setup-progress'; progress.max = 100; progress.setAttribute('aria-label', '模型配置进度');
@@ -29,8 +29,8 @@ if (desktop && required.every(method => typeof desktop[method] === 'function')) 
   const labels = { idle: '待检测', checking: '正在检测', 'needs-install': '待安装', 'needs-model': '待下载', 'downloading-installer': '正在下载', 'verifying-installer': '正在校验', installing: '正在安装', starting: '正在启动', 'pulling-model': '正在下载', ready: '已就绪', cancelled: '已取消', error: '未完成' };
   const messages = {
     idle: '检查这台电脑上的聊天环境。', checking: '正在检查聊天环境…', 'needs-install': '本地聊天环境尚未准备好，可以重新开始配置。',
-    'needs-model': 'Ollama 已就绪，聊天模型尚待准备。', 'downloading-installer': '正在下载 Ollama…', 'verifying-installer': '正在校验下载内容…',
-    installing: '正在安装 Ollama，请稍候…', starting: '正在启动本地聊天服务…', 'pulling-model': '正在下载聊天模型，所需时间取决于网络速度。',
+    'needs-model': '聊天运行环境已就绪，模型尚待准备。', 'downloading-installer': '正在下载聊天运行环境…', 'verifying-installer': '正在校验下载内容…',
+    installing: '正在解压聊天运行环境，请稍候…', starting: '正在加载本地聊天模型…', 'pulling-model': '正在下载聊天模型，所需时间取决于网络速度。',
     ready: '本地聊天模型已就绪。', cancelled: '已取消，可以稍后继续配置。', error: '配置尚未完成，请重试。',
   };
   const bytes = value => value >= 1e9 ? `${(value / 1e9).toFixed(2)} GB` : `${(value / 1e6).toFixed(1)} MB`;
@@ -38,7 +38,7 @@ if (desktop && required.every(method => typeof desktop[method] === 'function')) 
     const phase = state?.phase || 'idle', busy = state?.busy === true;
     const current = chatState?.settings?.baseUrl === LOCAL_SETTINGS.baseUrl && chatState?.settings?.model === LOCAL_SETTINGS.model;
     badge.textContent = labels[phase] || '配置中';
-    status.textContent = phase === 'ready' && current ? '已就绪，当前聊天正在使用本地模型。' : messages[phase] || '正在配置聊天环境…';
+    status.textContent = phase === 'ready' && current ? '已就绪，当前聊天正在使用本地模型。' : state?.message || messages[phase] || '正在配置聊天环境…';
     install.hidden = phase === 'ready'; install.disabled = !state || pending || busy;
     install.textContent = ['error', 'cancelled', 'needs-install', 'needs-model'].includes(phase) ? '重试配置' : busy ? '正在配置…' : '准备本地模型';
     cancel.hidden = !busy; cancel.disabled = pending || !state?.canCancel;
@@ -116,7 +116,7 @@ async function initializeVoiceSetup() {
   const messages = {
     idle: '检查这台电脑上的语音环境。', 'needs-install': '语音资源尚未准备好，可以重新开始配置。', checking: '正在检查语音环境…',
     verifying: '正在校验语音资源…', downloading: '正在下载语音资源，完成后会自动配置。', extracting: '正在解压语音资源…', validating: '正在检查语音环境是否完整…',
-    ready: '本地语音环境已就绪，可以朗读聊天回复。', cancelled: '已取消语音配置，文字聊天不受影响。', error: '语音配置尚未完成，文字聊天仍可使用。',
+    ready: '本地语音资源已准备好。朗读仍需满足当前语音和屏幕状态要求。', cancelled: '已取消语音配置，文字聊天不受影响。', error: '语音配置尚未完成，文字聊天仍可使用。',
   };
   const bytes = value => value >= 1e9 ? `${(value / 1e9).toFixed(2)} GB` : `${(value / 1e6).toFixed(1)} MB`;
   function render() {

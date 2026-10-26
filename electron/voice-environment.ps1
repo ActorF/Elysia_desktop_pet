@@ -17,13 +17,20 @@ public static class VoiceEnvironment {
   [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr window, out uint process);
   [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
   public static void Init() { SetProcessDPIAware(); }
+  public static bool BlocksNotification(int state, bool ownForeground) {
+    // Windows can report BUSY while our ordinary chat window is focused.
+    // Keep explicit presentation, quiet-time and unavailable-session states blocked.
+    return state == 1 || (state == 2 && !ownForeground) || state == 3 || state == 4 || state == 6;
+  }
   public static bool Blocked(int parent) {
-    int state;
-    if (SHQueryUserNotificationState(out state) >= 0 && (state == 1 || state == 2 || state == 3 || state == 4 || state == 6)) return true;
     IntPtr window = GetForegroundWindow();
+    uint process = 0;
+    if (window != IntPtr.Zero) GetWindowThreadProcessId(window, out process);
+    bool ownForeground = process == (uint)parent;
+    int state;
+    if (SHQueryUserNotificationState(out state) >= 0 && BlocksNotification(state, ownForeground)) return true;
     if (window == IntPtr.Zero || window == GetShellWindow() || window == GetDesktopWindow()) return false;
-    uint process; GetWindowThreadProcessId(window, out process);
-    if (process == (uint)parent) return false;
+    if (ownForeground) return false;
     Rect bounds; var info = new MonitorInfo(); info.Size = Marshal.SizeOf(info);
     if (!GetWindowRect(window, out bounds) || !GetMonitorInfo(MonitorFromWindow(window, 2), ref info)) return false;
     return bounds.Left <= info.Monitor.Left && bounds.Top <= info.Monitor.Top && bounds.Right >= info.Monitor.Right && bounds.Bottom >= info.Monitor.Bottom;

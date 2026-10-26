@@ -4,21 +4,21 @@
 <p align="center"><strong>简体中文</strong> · <a href="README.en.md">English</a></p>
 <p align="center"><a href="#下载程序">下载程序</a> · <a href="#角色展示">角色展示</a> · <a href="#使用">使用说明</a> · <a href="#源码运行">源码运行</a></p>
 
-透明全身立绘、鼠标目光跟随、轻柔摆动。表情、猫猫形态、眼镜和四种动作可以自由搭配，输入字符时还有小云朵回应。1.4.1 加入本地聊天、可选回复朗读、模型自动配置、可管理的聊天记录与身体部位互动，并修复“任务栏在前”模式下的置顶顺序。
+透明全身立绘、鼠标目光跟随、轻柔摆动。表情、猫猫形态、眼镜和四种动作可以自由搭配，输入字符时还有小云朵回应。支持本地聊天、可选回复朗读、模型自动配置、聊天记录管理与身体部位互动。1.4.2 改用桌宠自行管理的 llama.cpp，并修复手动朗读被系统忙碌状态误拦截的问题。
 
-**当前测试版本：1.4.1，尚非正式版。** 使用方法见[本地聊天与朗读](#本地聊天与朗读)，完整变化见 [1.4.1 更新说明](docs/releases/v1.4.1.md)。
+**当前测试版本：1.4.2，尚非正式版。** 安装版与便携版放在 `version-control` 分支，尚未创建 1.4.2 GitHub Release；当前电脑已实测聊天与朗读成功，仍待第二台电脑完成验收。使用方法见[本地聊天与朗读](#本地聊天与朗读)，变化和测试清单见 [1.4.2 更新说明](docs/releases/v1.4.2.md)。
 
 ## 下载程序
 
 | 版本 | 程序 | 功能 | 校验文件 |
 | --- | --- | --- | --- |
-| 1.4.1 测试版 · Windows 安装版 | [下载安装器](https://media.githubusercontent.com/media/ActorF/Elysia_desktop_pet/main/release/Elysia_desktop_pet-1.4.1-setup.exe) | 含聊天与可选回复朗读 | [SHA256](https://raw.githubusercontent.com/ActorF/Elysia_desktop_pet/main/release/Elysia_desktop_pet-1.4.1-setup.exe.sha256) |
-| 1.4.1 测试版 · Windows 便携版 | [下载 EXE](https://media.githubusercontent.com/media/ActorF/Elysia_desktop_pet/main/release/Elysia_desktop_pet-1.4.1.exe) | 相同功能，双击即可运行 | [SHA256](https://raw.githubusercontent.com/ActorF/Elysia_desktop_pet/main/release/Elysia_desktop_pet-1.4.1.exe.sha256) |
+| 1.4.2 测试版 · Windows 安装版 | [下载安装器](https://media.githubusercontent.com/media/ActorF/Elysia_desktop_pet/version-control/release/Elysia_desktop_pet-1.4.2-setup.exe) | 含聊天与可选回复朗读 | [SHA256](https://raw.githubusercontent.com/ActorF/Elysia_desktop_pet/version-control/release/Elysia_desktop_pet-1.4.2-setup.exe.sha256) |
+| 1.4.2 测试版 · Windows 便携版 | [下载 EXE](https://media.githubusercontent.com/media/ActorF/Elysia_desktop_pet/version-control/release/Elysia_desktop_pet-1.4.2.exe) | 相同功能，双击即可运行 | [SHA256](https://raw.githubusercontent.com/ActorF/Elysia_desktop_pet/version-control/release/Elysia_desktop_pet-1.4.2.exe.sha256) |
 | 1.3.0 Windows 便携版 | [下载 EXE](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.3.0/Elysia_desktop_pet-1.3.0.exe) | **不含聊天及回复朗读**，保留日常与点击互动录音 | [SHA256](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.3.0/Elysia_desktop_pet-1.3.0.exe.sha256) |
 
-点击上述链接即可下载完整程序，无需安装 Git、Git LFS 或 Node.js。1.4.1 的安装版与便携版均会在首次运行时自动准备聊天与语音环境，首次配置需要联网；1.3.0 无需下载聊天或语音合成模型。
+点击上述链接即可下载完整程序，无需安装 Git、Git LFS 或 Node.js。1.4.2 的安装版与便携版均会在首次运行时自动准备聊天与语音环境，首次配置需要联网；1.3.0 无需下载聊天或语音合成模型。
 
-安装版运行 `Elysia_desktop_pet-1.4.1-setup.exe` 完成安装；便携版双击 EXE 即可运行。升级前先从右下角托盘退出旧版，已有正式配置中的位置、大小、装扮开关和偏好会保留，无需手动迁移。
+安装版运行 `Elysia_desktop_pet-1.4.2-setup.exe` 完成安装；便携版双击 EXE 即可运行。升级前先从右下角托盘退出旧版，已有正式配置中的位置、大小、装扮开关和偏好会保留，无需手动迁移。
 
 [1.3.0 更新说明](docs/releases/v1.3.0.md) · [1.3.0 发布页](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.3.0) · [源码运行与构建步骤](#源码运行)
 
@@ -27,7 +27,7 @@
 
 **下载提示：** 当前版本未进行数字签名。如果 Edge 提示“isn't commonly downloaded（不常下载）”，确认使用本页上方的程序下载链接后，在下载列表选择 **⋯ → 保留 → 显示更多 → 仍然保留**，等待下载完成。[微软操作说明](https://learn.microsoft.com/en-us/troubleshoot/microsoft-edge/development/download-failures#check-security-and-smartscreen-settings)
 
-**下载完成后，如果文件仍叫 `Unconfirmed 数字.crdownload`，可以将后缀改为 `.exe` 使用。** 先在文件资源管理器中显示“文件扩展名”，再根据所下载的版本，将完整文件名改为 **`Elysia_desktop_pet-1.4.1.exe`** 或 **`Elysia_desktop_pet-1.4.1-setup.exe`**，不要保留末尾的 `.crdownload`。此操作只适用于已经完整下载的文件；仍在下载或下载中断时，请先完成下载。
+**下载完成后，如果文件仍叫 `Unconfirmed 数字.crdownload`，可以将后缀改为 `.exe` 使用。** 先在文件资源管理器中显示“文件扩展名”，再根据所下载的版本，将完整文件名改为 **`Elysia_desktop_pet-1.4.2.exe`** 或 **`Elysia_desktop_pet-1.4.2-setup.exe`**，不要保留末尾的 `.crdownload`。此操作只适用于已经完整下载的文件；仍在下载或下载中断时，请先完成下载。
 
 </details>
 
@@ -84,11 +84,11 @@
 
 新版使用透明底粉色托盘图标。位置、大小和偏好会自动保存。
 
-1.4.1 沿用 `%APPDATA%/Elysia Desktop Pet/` 中的正式配置，保留已有位置、大小、装扮和偏好。升级前从托盘退出旧版，再运行新版本，无需手动迁移已有正式配置。
+1.4.2 沿用 `%APPDATA%/Elysia Desktop Pet/` 中的正式配置，保留已有位置、大小、装扮和偏好。升级前从托盘退出旧版，再运行新版本，无需手动迁移已有正式配置。
 
 ### 设置窗口
 
-设置和人物可以同时显示，窗口可单独移动、调整大小。拖动顶部空白处移动窗口，右上角三个标准图标分别是最小化、最大化／还原和关闭。关闭设置窗口后，桌宠会继续运行。1.4.1 的设置分为 **外观、动画、桌面、互动、语音、聊天、聊天记录** 七页。
+设置和人物可以同时显示，窗口可单独移动、调整大小。拖动顶部空白处移动窗口，右上角三个标准图标分别是最小化、最大化／还原和关闭。关闭设置窗口后，桌宠会继续运行。当前设置分为 **外观、动画、桌面、互动、语音、聊天、聊天记录** 七页。
 
 <table>
   <tr><th>外观</th><th>动画</th><th>桌面</th></tr>
@@ -114,7 +114,7 @@
 - **桌面：** 调整人物大小、置顶、任务栏前后顺序、鼠标穿透和快捷键。大小支持直接输入百分比，从 1% 起，没有固定的放大上限。
 - **互动：** 分别开关点击互动和鼠标流光，选择流光样式与轨迹保留时间。
 - **语音：** 控制自动问候、勿扰、音量与生日月日，查看当前播放状态。正式界面不含试听或模拟触发入口。
-- **聊天：** 修改用户名，开关自动朗读，查看聊天模型和语音环境各自的配置进度；高级选项可指定已有 Ollama 服务及语音环境。
+- **聊天：** 修改用户名，开关自动朗读，查看聊天模型和语音环境各自的配置进度；高级选项可指定兼容聊天接口及语音环境。
 - **聊天记录：** 左侧选择会话，右侧查看消息，可继续聊天、删除单段或清空记录，删除前会确认。
 
 | 动画参数 | 范围 | 默认值 |
@@ -131,9 +131,13 @@
 
 ### 本地聊天与朗读
 
-从托盘选择 **打开聊天框** 即可聊天，Enter 发送、Shift + Enter 换行。首次启动会联网自动准备 Ollama、默认 Qwen 模型与语音资源，可在 **设置 → 聊天** 查看进度、修改用户名和开关自动朗读（默认关闭）。
+从托盘选择 **打开聊天框** 即可聊天，Enter 发送、Shift + Enter 换行。首次启动需要联网，自动准备 llama.cpp、默认 Qwen 聊天模型与语音资源，无需安装 Ollama。桌宠在后台启动自己的聊天服务，退出时释放，下次打开自动恢复；在 **设置 → 聊天** 查看聊天和语音各自的进度、取消或重试。
 
-消息下方可复制文字，回复可单独朗读。**设置 → 聊天记录** 可查看或删除保存在本机的对话。人设 system prompt 位于 [electron/chat-persona.md](electron/chat-persona.md)。
+在 **设置 → 聊天** 修改用户名或开关自动朗读，自动朗读**默认关闭**。消息下方可复制文字，点击回复的 **Read Aloud／朗读** 可单独读这一条，不改变自动朗读设置。首次加载语音模型可能需要较长时间，请等待状态更新。
+
+手动朗读不会被普通全屏或 Windows 忙碌状态误拦截，仍遵守“语音”页的勿扰、静音、锁屏和休眠限制；失败提示会说明具体原因。自动朗读与自动问候保留屏幕状态限制。
+
+**设置 → 聊天记录** 可查看或删除保存在本机的对话，删除前会确认。升级保留用户名、聊天记录与偏好；旧版默认聊天连接会迁移，自定义连接保留。高级自定义服务需支持 OpenAI 兼容的流式聊天接口。人设 system prompt 位于 [electron/chat-persona.md](electron/chat-persona.md)，资源体积与验证范围见 [1.4.2 更新说明](docs/releases/v1.4.2.md)。
 
 ### 日常语音与台词气泡
 
@@ -197,7 +201,7 @@ Enter、Ctrl、Tab、方向键等功能键，以及 Ctrl／Alt／Win 快捷组�
 
 ```powershell
 git lfs install
-git clone --branch main https://github.com/ActorF/Elysia_desktop_pet.git
+git clone --branch version-control https://github.com/ActorF/Elysia_desktop_pet.git
 cd Elysia_desktop_pet
 git lfs pull
 npm ci
@@ -222,9 +226,9 @@ npm run make:release
 npm run verify:release
 ```
 
-`npm run make:release`（`node scripts/package-release.cjs`）生成 `release/Elysia_desktop_pet-1.4.1.exe` 和 `release/Elysia_desktop_pet-1.4.1-setup.exe`。也可分别运行 `npm run make:portable`、`npm run make:setup`。`npm run verify:release`（`node scripts/verify-package.cjs`）校验正式包；这些命令不会发布到 GitHub。构建需先准备语音资源包，`npm run package` 可生成未封装的应用目录。
+`npm run make:release`（`node scripts/package-release.cjs`）生成 `release/Elysia_desktop_pet-1.4.2.exe` 和 `release/Elysia_desktop_pet-1.4.2-setup.exe`。也可分别运行 `npm run make:portable`、`npm run make:setup`。`npm run verify:release`（`node scripts/verify-package.cjs`）校验正式包；这些命令不会发布到 GitHub。构建需先准备语音资源包，`npm run package` 可生成未封装的应用目录。
 
-聊天、朗读、身体部位互动与置顶修复的验证范围见 [1.4.1 更新说明](docs/releases/v1.4.1.md#验证范围)。首次自动配置尚未在全新 Windows 环境中完成从零安装的全链路验收。完整命令与检查范围见[验证说明](docs/verification.md)。
+本次聊天与朗读验证结果、已知检查限制和第二台电脑测试清单见 [1.4.2 更新说明](docs/releases/v1.4.2.md#验证结果与限制)。首次自动配置仍待全新 Windows 环境的全链路验收。完整命令与检查范围见[验证说明](docs/verification.md)。
 
 ## 项目结构
 
@@ -238,7 +242,7 @@ npm run verify:release
 | `scripts/` | 启动、构建验证与预览工具 |
 | `tests/` | 自动测试 |
 | `docs/` | 角色预览与验证说明 |
-| `release/` | Windows 安装版、便携版与校验文件；EXE 通过 Git LFS 保存在 `main` |
+| `release/` | Windows 安装版、便携版与校验文件；1.4.2 EXE 通过 Git LFS 保存在 `version-control` |
 | `LICENSE` | MIT 代码许可证 |
 
 项目使用 Electron 透明窗口、PNG 素材合成与 WebGL 网格动画。WebGL 不可用时显示静态合成角色。

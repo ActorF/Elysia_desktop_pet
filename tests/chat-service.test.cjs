@@ -1,4 +1,4 @@
-// Exercise persistent host chat state against controlled Ollama streams without a model or real profile.
+// Exercise persistent host chat state against controlled SSE streams without a model or real profile.
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -22,18 +22,94 @@ async function settled(service) {
   assert.equal(service.getState().busy, false, 'request should settle promptly');
   return service.getState();
 }
+function event(content, finishReason = null) {
+  return `data: ${JSON.stringify({ choices: [{ index: 0, delta: { content }, finish_reason: finishReason }] })}\n\n`;
+}
 function complete(content, extra = {}) {
-  return new Response(`${JSON.stringify({ message: { role: 'assistant', content }, done: true, ...extra })}\n`, { headers: { 'Content-Type': 'application/x-ndjson' } });
+  return new Response(event(content, extra.finish_reason || 'stop') + 'data: [DONE]\n\n', { headers: { 'Content-Type': 'text/event-stream' } });
 }
 const latest = service => service.getState().conversations.find(item => item.id === service.getState().activeConversationId);
 
-test('streaming joins split UTF-8/NDJSON, persists replies and sends role prompt plus bounded successful history', async t => {
+test('recognized previous local defaults migrate on load and persist without losing history or speech preferences', async t => {
+  for (const baseUrl of ['http://localhost:11434', 'http://127.0.0.1:11434/', 'http://[::1]:11434']) {
+    const f = fixture(t), original = f.create({ fetchImpl: async () => complete('原有回复') });
+    original.setSettings({ username: '保留名字', readAloud: true, voiceProjectRoot: 'D:\\MyVoice' });
+    original.send('保留聊天'); await settled(original); original.dispose();
+    const saved = JSON.parse(fs.readFileSync(f.file, 'utf8'));
+    saved.settings.baseUrl = baseUrl;
+    saved.settings.model = baseUrl.includes('[::1]') ? 'tobestyledintro/qwen3.8-9b-distill' : 'tobestyledintro/qwen3.8-9b-distill:latest';
+    fs.writeFileSync(f.file, JSON.stringify(saved));
+    const calls = [], migrated = f.create({ fetchImpl: async (url, options) => { calls.push({ url, payload: JSON.parse(options.body) }); return complete('迁移后的回复'); } });
+    const after = migrated.getState();
+    assert.equal(after.settings.baseUrl, DEFAULT_CHAT_SETTINGS.baseUrl); assert.equal(after.settings.model, DEFAULT_CHAT_SETTINGS.model);
+    assert.equal(after.settings.username, '保留名字'); assert.equal(after.settings.readAloud, true); assert.equal(after.settings.voiceProjectRoot, 'D:\\MyVoice');
+    assert.deepEqual(after.conversations, saved.conversations); assert.equal(after.activeConversationId, saved.activeConversationId);
+    assert.equal(calls.length, 0, 'Migration itself cannot contact a service');
+    assert.deepEqual(JSON.parse(fs.readFileSync(f.file, 'utf8')).settings, after.settings);
+    migrated.send('迁移后的问题'); await settled(migrated);
+    assert.deepEqual(calls.map(item => item.url), ['http://127.0.0.1:18434/v1/chat/completions']);
+    assert.equal(calls[0].payload.model, 'elysia-chat');
+  }
+});
+
+test('migration preserves custom servers and models and uses a single compatible endpoint without fallback', async t => {
+  for (const settings of [
+    { baseUrl: 'https://example.test/service/v1', model: 'custom:model' },
+    { baseUrl: 'http://localhost:11434', model: 'my-custom-model' },
+    { baseUrl: 'https://example.test', model: 'tobestyledintro/qwen3.8-9b-distill:latest' },
+    { baseUrl: 'http://localhost:11434/proxy', model: 'tobestyledintro/qwen3.8-9b-distill:latest' },
+  ]) {
+    const f = fixture(t), original = f.create(); original.setSettings(settings); original.dispose();
+    const before = fs.readFileSync(f.file), calls = [];
+    const restarted = f.create({ fetchImpl: async (url, options) => { calls.push({ url, payload: JSON.parse(options.body) }); throw new Error('offline'); } });
+    assert.equal(restarted.getState().settings.baseUrl, settings.baseUrl); assert.equal(restarted.getState().settings.model, settings.model);
+    assert.deepEqual(fs.readFileSync(f.file), before);
+    restarted.send('检查连接'); await settled(restarted);
+    assert.deepEqual(calls.map(item => item.url), [`${settings.baseUrl}${settings.baseUrl.endsWith('/v1') ? '' : '/v1'}/chat/completions`]);
+    assert.equal(calls[0].payload.chat_template_kwargs, undefined);
+    assert.equal(calls[0].payload.options, undefined); assert.match(restarted.getState().error, /无法连接到本地聊天服务/);
+  }
+});
+
+test('SSE accepts CRLF, comments, split events, role-only deltas and usage while excluding reasoning from visible text', async t => {
+  const f = fixture(t);
+  const stream = ': keepalive\r\n\r\nevent: message\r\nid: 1\r\n'
+    + 'data: {"choices": [\r\ndata: {"index":0,"delta":{"role":"assistant","content":null},"finish_reason":null}]}\r\n\r\n'
+    + 'data: {"choices":[{"index":0,"delta":{"reasoning_content":"内部推理"},"finish_reason":null}]}\r\n\r\n'
+    + event('可见回答')
+    + 'data: {"choices":[],"usage":{"total_tokens":10}}\n\n'
+    + 'data: [DONE]\n\n';
+  const bytes = new TextEncoder().encode(stream);
+  const service = f.create({ fetchImpl: async () => new Response(new ReadableStream({ start(controller) {
+    for (let index = 0; index < bytes.length; index++) controller.enqueue(bytes.slice(index, index + 1));
+    controller.close();
+  } })) });
+  service.send('测试'); await settled(service);
+  assert.equal(service.getState().error, null); assert.equal(latest(service).messages.at(-1).content, '可见回答');
+  assert.equal(latest(service).messages.at(-1).status, 'complete');
+});
+
+test('malformed SSE events and incomplete event boundaries never fabricate a completed reply', async t => {
+  for (const suffix of [
+    'data: {"error":{"message":"SECRET server diagnostic"}}\n\n',
+    'data: {"choices":[{"index":0,"delta":{"content":42}}]}\n\n',
+    'data: {"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}\n\n',
+    'data: [DONE]\n',
+  ]) {
+    const f = fixture(t), service = f.create({ fetchImpl: async () => new Response(event('保留部分') + suffix) });
+    service.send('测试'); await settled(service);
+    assert.match(service.getState().error, /格式异常|提前中断/); assert.doesNotMatch(service.getState().error, /SECRET/);
+    assert.equal(latest(service).messages.at(-1).content, '保留部分'); assert.equal(latest(service).messages.at(-1).status, 'error');
+  }
+});
+
+test('streaming joins split UTF-8/SSE, persists replies and sends role prompt plus bounded successful history', async t => {
   const calls = [], f = fixture(t);
   let round = 0;
   const fetchImpl = async (url, options) => {
     calls.push({ url, options, body: JSON.parse(options.body) });
     if (++round > 1) return complete('记得呀。');
-    const bytes = new TextEncoder().encode(`${JSON.stringify({ message: { role: 'assistant', content: '你好，' }, done: false })}\n${JSON.stringify({ message: { role: 'assistant', content: '<img src=x onerror=alert(1)>' }, done: true })}`);
+    const bytes = new TextEncoder().encode(event('你好，') + event('<img src=x onerror=alert(1)>', 'stop') + 'data: [DONE]\n\n');
     return new Response(new ReadableStream({ start(controller) {
       for (let index = 0; index < bytes.length; index += 3) controller.enqueue(bytes.slice(index, index + 3));
       controller.close();
@@ -48,10 +124,12 @@ test('streaming joins split UTF-8/NDJSON, persists replies and sends role prompt
   await settled(service);
   assert.equal(latest(service).messages[1].content, '你好，<img src=x onerror=alert(1)>');
   assert.equal(latest(service).messages[1].status, 'complete');
-  assert.equal(calls[0].url, 'http://localhost:11434/api/chat');
+  assert.equal(calls[0].url, 'http://127.0.0.1:18434/v1/chat/completions');
   assert.equal(calls[0].options.redirect, 'error');
-  assert.equal(calls[0].body.model, 'tobestyledintro/qwen3.8-9b-distill:latest');
-  assert.equal(calls[0].body.think, false); assert.equal(calls[0].body.stream, true);
+  assert.equal(calls[0].body.model, 'elysia-chat');
+  assert.deepEqual(calls[0].body.chat_template_kwargs, { enable_thinking: false });
+  assert.equal(calls[0].body.max_tokens, 1024); assert.equal(calls[0].body.stream, true);
+  assert.equal(calls[0].body.think, undefined); assert.equal(calls[0].body.options, undefined);
   assert.match(calls[0].body.messages[0].content, /Elysia 运行时人格合同/);
   assert.match(calls[0].body.messages[0].content, /USER_PROFILE_JSON\n\{"user_name":"小星"\}/);
   assert.match(calls[0].body.messages[0].content, /应用可以按用户设置朗读完成的回答/);
@@ -71,7 +149,7 @@ test('cancel preserves received text, rejects concurrent changes and excludes th
   const service = f.create({ fetchImpl: async (_url, options) => {
     calls.push(JSON.parse(options.body)); signal = options.signal;
     if (++fetchCount > 1) return complete('重新回答');
-    return new Response(new ReadableStream({ start(controller) { stream = controller; controller.enqueue(new TextEncoder().encode('{"message":{"content":"一半"},"done":false}\n')); } }));
+    return new Response(new ReadableStream({ start(controller) { stream = controller; controller.enqueue(new TextEncoder().encode(event('一半'))); } }));
   } });
   service.send('失败的问题');
   await new Promise(resolve => setTimeout(resolve, 20));
@@ -158,7 +236,7 @@ test('failed delete and clear writes roll back live history and leave the origin
 test('delete and clear reject a running generation without mutating its history or detaching the streamed reply', async t => {
   const f = fixture(t); let stream;
   const service = f.create({ fetchImpl: async () => new Response(new ReadableStream({ start(controller) {
-    stream = controller; controller.enqueue(new TextEncoder().encode('{"message":{"content":"前半"},"done":false}\n'));
+    stream = controller; controller.enqueue(new TextEncoder().encode(event('前半')));
   } })) });
   service.send('继续回答'); await new Promise(resolve => setTimeout(resolve, 15));
   const before = service.getState(), original = fs.readFileSync(f.file);
@@ -167,7 +245,7 @@ test('delete and clear reject a running generation without mutating its history 
     assert.deepEqual(result.conversations, before.conversations); assert.equal(result.activeConversationId, before.activeConversationId);
     assert.deepEqual(fs.readFileSync(f.file), original);
   }
-  stream.enqueue(new TextEncoder().encode('{"message":{"content":"后半"},"done":true}\n')); stream.close(); await settled(service);
+  stream.enqueue(new TextEncoder().encode(event('后半', 'stop'))); stream.close(); await settled(service);
   assert.equal(latest(service).messages.at(-1).content, '前半后半'); assert.equal(latest(service).messages.at(-1).status, 'complete');
 });
 
@@ -232,9 +310,9 @@ test('network errors, missing models, malformed/truncated streams and empty repl
     ['offline', async () => { throw new Error('SECRET do not expose'); }, /无法连接/, ''],
     ['model missing', async () => new Response('SECRET', { status: 404 }), /找不到/, ''],
     ['bad stream', async () => new Response('not json\n'), /格式异常/, ''],
-    ['interrupted', async () => new Response('{"message":{"content":"部分"},"done":false}\n'), /提前中断/, '部分'],
+    ['interrupted', async () => new Response(event('部分')), /提前中断/, '部分'],
     ['empty', async () => complete(''), /没有返回回答/, ''],
-    ['length', async () => complete('太长了', { done_reason: 'length' }), /长度上限/, '太长了'],
+    ['length', async () => complete('太长了', { finish_reason: 'length' }), /长度上限/, '太长了'],
   ]) await t.test(name, async sub => {
     const f = fixture(sub), service = f.create({ fetchImpl }); service.send('测试'); const state = await settled(service);
     assert.match(state.error, expected); assert.doesNotMatch(state.error, /SECRET/);
@@ -255,12 +333,12 @@ test('timeout and dispose abort even an unresponsive fetch and no late result ov
 
 test('context retains recent whole successful pairs and never splits a pair to fit', async t => {
   const calls = [], f = fixture(t);
-  const service = f.create({ fetchImpl: async (_url, options) => { calls.push(JSON.parse(options.body)); return complete('答'.repeat(1600)); } });
-  for (const letter of ['甲', '乙', '丙']) { service.send(letter.repeat(1600)); await settled(service); }
+  const service = f.create({ fetchImpl: async (_url, options) => { calls.push(JSON.parse(options.body)); return complete('答'.repeat(600)); } });
+  for (const letter of ['甲', '乙', '丙']) { service.send(letter.repeat(600)); await settled(service); }
   service.send('最新'); await settled(service);
   const context = calls.at(-1).messages.slice(1);
   assert.deepEqual(context.map(message => message.role), ['user', 'assistant', 'user']);
-  assert.equal(context[0].content, '丙'.repeat(1600)); assert.equal(context[2].content, '最新');
+  assert.equal(context[0].content, '丙'.repeat(600)); assert.equal(context[2].content, '最新');
 });
 
 test('read-aloud defaults off, migrates old settings, persists explicit booleans and rejects coercion', t => {
@@ -284,7 +362,7 @@ test('read-aloud defaults off, migrates old settings, persists explicit booleans
 test('read-aloud can change during generation without changing request identity or detaching live reply references', async t => {
   const f = fixture(t); let stream;
   const service = f.create({ fetchImpl: async () => new Response(new ReadableStream({ start(controller) {
-    stream = controller; controller.enqueue(new TextEncoder().encode('{"message":{"content":"前半句"},"done":false}\n'));
+    stream = controller; controller.enqueue(new TextEncoder().encode(event('前半句')));
   } })) });
   service.send('一条慢回答'); await new Promise(resolve => setTimeout(resolve, 15));
   const original = latest(service), activeId = service.getState().activeConversationId;
@@ -294,10 +372,10 @@ test('read-aloud can change during generation without changing request identity 
     assert.match(service.setSettings({ ...patch, readAloud: false }).error, /先等待/);
     assert.equal(service.getState().settings.readAloud, true, 'A rejected mixed patch must be atomic');
   }
-  const normalizedNoChange = { ...service.getState().settings, baseUrl: 'http://localhost:11434/', readAloud: false };
+  const normalizedNoChange = { ...service.getState().settings, baseUrl: 'http://127.0.0.1:18434/', readAloud: false };
   assert.equal(service.setSettings(normalizedNoChange).error, null);
   assert.equal(service.getState().settings.readAloud, false);
-  stream.enqueue(new TextEncoder().encode('{"message":{"content":"后半句"},"done":true}\n')); stream.close();
+  stream.enqueue(new TextEncoder().encode(event('后半句', 'stop'))); stream.close();
   await settled(service);
   assert.equal(service.getState().activeConversationId, activeId);
   assert.equal(latest(service).messages.at(-1).id, original.messages.at(-1).id);
@@ -309,7 +387,7 @@ test('read-aloud can change during generation without changing request identity 
 test('failed read-aloud enable rolls back, while disabling stays effective and streaming survives a failed save', async t => {
   const f = fixture(t); let stream;
   const service = f.create({ fetchImpl: async () => new Response(new ReadableStream({ start(controller) {
-    stream = controller; controller.enqueue(new TextEncoder().encode('{"message":{"content":"开始"},"done":false}\n'));
+    stream = controller; controller.enqueue(new TextEncoder().encode(event('开始')));
   } })) });
   service.send('回答中切换'); await new Promise(resolve => setTimeout(resolve, 15));
   fs.mkdirSync(f.file + '.tmp');
@@ -321,7 +399,7 @@ test('failed read-aloud enable rolls back, while disabling stays effective and s
   const muted = service.setSettings({ readAloud: false });
   assert.ok(muted.storageError); assert.equal(muted.settings.readAloud, false); assert.equal(muted.busy, true);
   fs.rmdirSync(f.file + '.tmp');
-  stream.enqueue(new TextEncoder().encode('{"message":{"content":"结束"},"done":true}\n')); stream.close();
+  stream.enqueue(new TextEncoder().encode(event('结束', 'stop'))); stream.close();
   await settled(service);
   assert.equal(latest(service).messages.at(-1).content, '开始结束');
   assert.equal(latest(service).messages.at(-1).status, 'complete');
@@ -356,7 +434,7 @@ test('callback failures remain separate from successful text, including rejected
 
 test('completion callback excludes failed, empty, truncated, cancelled and timed-out responses', async t => {
   const calls = [];
-  for (const fetchImpl of [async () => { throw new Error('offline'); }, async () => complete(''), async () => complete('部分', { done_reason: 'length' }), async () => new Response('{"message":{"content":"中断"},"done":false}\n')]) {
+  for (const fetchImpl of [async () => { throw new Error('offline'); }, async () => complete(''), async () => complete('部分', { finish_reason: 'length' }), async () => new Response(event('中断'))]) {
     const f = fixture(t), service = f.create({ fetchImpl, onReplyCompleted: reply => calls.push(reply) });
     service.setSettings({ readAloud: true }); service.send('问题'); await settled(service);
   }

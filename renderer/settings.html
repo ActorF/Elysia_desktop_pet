@@ -161,11 +161,11 @@
         <p class="hint">爱莉希雅会用这个名字称呼你。已保存的消息保留当时的名字。</p>
         <details class="chat-connection">
           <summary>模型与连接</summary>
-          <label for="chat-base-url">Ollama 服务地址</label>
-          <input id="chat-base-url" name="baseUrl" type="url" maxlength="2048" placeholder="http://localhost:11434" autocomplete="off" spellcheck="false" required disabled>
+          <label for="chat-base-url">模型服务地址</label>
+          <input id="chat-base-url" name="baseUrl" type="url" maxlength="2048" placeholder="http://127.0.0.1:18434" autocomplete="off" spellcheck="false" required disabled>
           <label for="chat-model-name">模型名称</label>
-          <input id="chat-model-name" name="model" type="text" maxlength="200" placeholder="tobestyledintro/qwen3.8-9b-distill:latest" autocomplete="off" spellcheck="false" required disabled>
-          <p class="hint">默认使用本机的 Qwen 3.8 9B。发送前请启动 Ollama，并确认模型已安装。若改为远程地址，对话会发送到该服务。</p>
+          <input id="chat-model-name" name="model" type="text" maxlength="200" placeholder="elysia-chat" autocomplete="off" spellcheck="false" required disabled>
+          <p class="hint">默认本地模型由桌宠管理，无需额外启动程序。高级地址需支持 OpenAI 兼容聊天接口；若改为远程地址，对话会发送到该服务。</p>
           <label for="chat-voice-project">语音项目目录</label>
           <input id="chat-voice-project" name="voiceProjectRoot" type="text" maxlength="2048" placeholder="D:\Elysia_AI" autocomplete="off" spellcheck="false" disabled aria-describedby="chat-voice-project-hint">
           <p id="chat-voice-project-hint" class="hint">检测已有的 Elysia_AI 语音环境。</p>

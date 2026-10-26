@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 const path = require('node:path');
-const { createChatSpeech, wavDuration } = require('../electron/chat-speech.cjs');
+const { createChatSpeech, wavDuration, getChatSpeechBlockReason } = require('../electron/chat-speech.cjs');
 
 function wav(seconds = .02) {
   const rate = 16000, dataSize = Math.round(seconds * rate) * 2;
@@ -228,6 +228,114 @@ test('manual speech bypasses only auto-read preference and reports the selected 
     assert.equal(f.controller.speak('受限回答'), false); assert.equal(f.children.length, before);
     f.gates[gate] = true;
   }
+});
+
+function voiceSnapshot() {
+  return { settings: { dnd: false, volume: .8 },
+    environment: { monitorReady: true, locked: false, suspended: false, fullscreen: false } };
+}
+
+test('manual refusal explains the current cause without file probes or stale worker errors', t => {
+  const voice = voiceSnapshot();
+  const f = fixture(t, { getBlockReason: manual => getChatSpeechBlockReason(voice, { manual }) });
+  f.controller.speak('先前的请求');
+  f.children[0].packet({ type: 'error', code: 'runtime_unavailable' });
+  const before = { probes: f.paths.length, workers: f.children.length };
+  const cases = [
+    [voice.settings, 'dnd', true, /勿扰已开启/],
+    [voice.settings, 'volume', 0, /音量为 0/],
+    [voice.environment, 'locked', true, /锁屏/],
+    [voice.environment, 'suspended', true, /休眠/],
+    [voice.environment, 'monitorReady', false, /屏幕状态检测尚未就绪/],
+  ];
+  for (const [object, field, value, message] of cases) {
+    const previous = object[field]; object[field] = value;
+    assert.equal(f.controller.speak('重试同一条回复'), false);
+    assert.match(f.controller.getState().error, message);
+    assert.deepEqual({ probes: f.paths.length, workers: f.children.length }, before);
+    object[field] = previous;
+  }
+  for (const [text, message] of [['  ', /没有需要朗读/], ['x'.repeat(16001), /过长/]]) {
+    assert.equal(f.controller.speak(text), false); assert.match(f.controller.getState().error, message);
+  }
+  f.gates.open = false;
+  assert.equal(f.controller.speak('关闭的聊天'), false); assert.match(f.controller.getState().error, /打开聊天窗口/);
+  f.gates.open = true;
+  assert.equal(f.controller.speak('状态恢复后可以重试'), true);
+  assert.equal(f.controller.getState().error, null);
+});
+
+test('explicit reading survives a stale BUSY sample on first click and later foreground switches', t => {
+  const voice = voiceSnapshot(); voice.environment.fullscreen = true;
+  let controller;
+  const f = fixture(t, {
+    isEnabled: () => false,
+    getBlockReason: manual => getChatSpeechBlockReason(voice, { manual }),
+    // Match the synchronous main-process publication when audio ownership changes.
+    claimAudio: () => controller.refreshPermission(),
+  });
+  controller = f.controller;
+  assert.equal(controller.speak('刚从其他程序切回聊天后点击朗读'), true);
+  const child = f.children[0];
+  voice.environment.fullscreen = false; controller.refreshPermission();
+  voice.environment.fullscreen = true; controller.refreshPermission();
+  assert.equal(child.killCount, 0, 'Passive notification suppression must not cancel explicit synthesis');
+  child.packet(audio());
+  assert.equal(f.played.length, 1, 'The late playback gate must retain the manual request intent');
+  controller.report({ token: f.played[0].token, type: 'ended' });
+  child.packet(audio());
+  assert.equal(f.played.length, 2);
+  voice.settings.dnd = true; controller.refreshPermission(); controller.refreshPermission();
+  assert.equal(child.killCount, 1, 'DND still stops explicit playback exactly once');
+  assert.equal(controller.isActive(), false);
+  const played = f.played.length; child.packet(audio());
+  assert.equal(f.played.length, played);
+});
+
+test('automatic warmup and reading retain BUSY protection while manual playback retains hard blocks', t => {
+  const voice = voiceSnapshot(); voice.environment.fullscreen = true;
+  const f = fixture(t, { getBlockReason: manual => getChatSpeechBlockReason(voice, { manual }) });
+  assert.equal(f.controller.warmup(), false); assert.equal(f.controller.start('自动回复'), false);
+  assert.equal(f.paths.length, 0); assert.equal(f.controller.getState().error, null);
+  voice.environment.fullscreen = false;
+  assert.equal(f.controller.start('可以自动朗读'), true); const auto = f.children[0];
+  voice.environment.fullscreen = true; f.controller.refreshPermission();
+  assert.equal(auto.killCount, 1); auto.packet(audio()); assert.equal(f.played.length, 0);
+
+  for (const [object, field, value] of [
+    [voice.settings, 'dnd', true], [voice.settings, 'volume', 0],
+    [voice.environment, 'locked', true], [voice.environment, 'suspended', true],
+    [voice.environment, 'monitorReady', false],
+  ]) {
+    assert.equal(f.controller.speak('手动开始后状态改变'), true);
+    const child = f.children.at(-1), previous = object[field]; object[field] = value;
+    f.controller.refreshPermission();
+    assert.equal(child.killCount, 1); assert.equal(f.controller.isActive(), false);
+    object[field] = previous;
+  }
+  assert.match(getChatSpeechBlockReason(undefined, { manual: true }), /语音状态尚未就绪/);
+  voice.environment.monitorReady = false;
+  assert.match(getChatSpeechBlockReason(voice, { manual: true }), /屏幕状态检测/,
+    'An unready monitor must not be reported as fullscreen even though its sample sets fullscreen too');
+});
+
+test('a hard block published while claiming audio cannot revive the cancelled manual job', t => {
+  const voice = voiceSnapshot(), claims = [];
+  let controller;
+  const f = fixture(t, {
+    getBlockReason: manual => getChatSpeechBlockReason(voice, { manual }),
+    claimAudio: claimed => {
+      claims.push(claimed);
+      if (claimed) voice.settings.dnd = true;
+      controller.refreshPermission();
+    },
+  });
+  controller = f.controller;
+  assert.equal(controller.speak('请求与勿扰状态同时改变'), false);
+  assert.match(controller.getState().error, /勿扰已开启/);
+  assert.deepEqual(claims, [true, false]);
+  assert.equal(f.children.length, 0); assert.equal(f.paths.length, 0);
+  assert.equal(controller.isActive(), false);
 });
 
 test('complete replies replay from bounded cache without inference and keep per-segment acknowledgement', async t => {

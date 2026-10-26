@@ -154,6 +154,27 @@ test('manual reading only accepts a finished assistant message in the active idl
   assert.equal(muted.ok, false); assert.equal(muted.error, '勿扰已开启。');
 });
 
+test('Read Aloud returns the real speech controller refusal instead of the generic fallback', async t => {
+  const { createChatSpeech, getChatSpeechBlockReason } = require('../electron/chat-speech.cjs');
+  const f = fixture({ withSpeech: true, chatState: storedChat() });
+  const voice = { settings: { dnd: true, volume: .8 }, environment: { monitorReady: true } };
+  const controller = createChatSpeech({
+    root: __dirname, isWindowOpen: () => true,
+    getBlockReason: manual => getChatSpeechBlockReason(voice, { manual }),
+    exists: () => { throw new Error('A refused request must never probe model files'); },
+  });
+  t.after(() => controller.dispose());
+  f.speech.speak = controller.speak; f.speech.getState = controller.getState;
+  const read = f.handlers.get('chat:read-aloud');
+  const reference = { conversationId: 'current', messageId: 'reply-1' };
+  const dnd = await read(f.chatWindow.event, reference);
+  assert.equal(dnd.ok, false); assert.match(dnd.error, /勿扰已开启/);
+  voice.settings.dnd = false; voice.settings.volume = 0;
+  const muted = await read(f.chatWindow.event, reference);
+  assert.equal(muted.ok, false); assert.match(muted.error, /音量为 0/);
+  assert.doesNotMatch(muted.error, /请检查语音设置和勿扰状态/);
+});
+
 test('successful history removal clears generated audio caches, but rejected deletion preserves them', async () => {
   const f = fixture({ withSpeech: true });
   for (const [channel, operation] of [['settings:chat-delete', 'deleteConversation'], ['settings:chat-clear', 'clearHistory']]) {

@@ -1,7 +1,7 @@
 {
   "name": "elysia_desktop_pet",
   "productName": "爱莉希雅桌宠",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "private": true,
   "description": "独立爱莉希雅桌面伙伴",
   "author": "ActorF",
@@ -27,6 +27,7 @@
     "test:chat": "node scripts/chat-window-check.cjs",
     "test:chat-native": "node scripts/launch.cjs --chat-smoke-test",
     "test:chat-model": "node scripts/chat-model-check.cjs",
+    "test:chat-runtime": "node scripts/chat-runtime-check.cjs",
     "test:chat-tts": "node scripts/chat-tts-check.cjs",
     "build:icon": "node scripts/build-icon.cjs",
     "prepare:voice": "node scripts/package-voice-bootstrap.cjs",
@@ -62,20 +63,31 @@
       {
         "from": "build-resources/voice-bootstrap/tools",
         "to": "tools",
-        "filter": ["7za.exe", "LICENSE.txt", "COPYING"]
+        "filter": [
+          "7za.exe",
+          "LICENSE.txt",
+          "COPYING"
+        ]
       },
       {
         "from": "assets/voice",
         "to": "voice",
-        "filter": ["final-audio-map.json", "audio-final/*.wav"]
+        "filter": [
+          "final-audio-map.json",
+          "audio-final/*.wav"
+        ]
       },
       {
         "from": "assets/interaction-voice",
         "to": "interaction-voice",
-        "filter": ["final-audio-map.json", "audio-final/*.wav"]
+        "filter": [
+          "final-audio-map.json",
+          "audio-final/*.wav"
+        ]
       }
     ],
     "asarUnpack": [
+      "electron/chat-runtime-host.ps1",
       "electron/chat-tts-worker.py",
       "electron/legacy-hotkeys.ps1",
       "electron/typed-keys.ps1",

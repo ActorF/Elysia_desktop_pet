@@ -44,9 +44,12 @@ function filesWithin(directory) {
   function visit(current) {
     for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
       const file = path.join(current, entry.name);
-      assert.equal(entry.isSymbolicLink(), false, `Unexpected resource link: ${file}`);
-      if (entry.isDirectory()) visit(file);
-      else { assert.ok(entry.isFile(), `Unexpected resource entry: ${file}`); files.push(path.relative(directory, file).replaceAll('\\', '/')); }
+      // Windows directory entries can classify OneDrive placeholders as links.
+      // lstat identifies their real type without following actual symbolic links.
+      const stat = fs.lstatSync(file);
+      assert.equal(stat.isSymbolicLink(), false, `Unexpected resource link: ${file}`);
+      if (stat.isDirectory()) visit(file);
+      else { assert.ok(stat.isFile(), `Unexpected resource entry: ${file}`); files.push(path.relative(directory, file).replaceAll('\\', '/')); }
     }
   }
   visit(directory); return files.sort();

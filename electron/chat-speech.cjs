@@ -6,6 +6,20 @@ const { spawn } = require('node:child_process');
 const { randomUUID } = require('node:crypto');
 const EMOTIONS = new Set(['neutral', 'happy', 'sad', 'caring', 'moved', 'playful', 'affectionate', 'teasing', 'serious', 'surprised']);
 
+function getChatSpeechBlockReason(voice, { manual = false } = {}) {
+  if (!voice?.settings || !voice.environment) return '语音状态尚未就绪，请稍后重试。';
+  const { settings, environment } = voice;
+  if (environment.locked) return '锁屏期间暂停朗读，请解锁后重试。';
+  if (environment.suspended) return '休眠期间暂停朗读，请唤醒电脑后重试。';
+  if (settings.dnd) return '勿扰已开启，请在“设置 → 语音”关闭勿扰后重试。';
+  if (!(settings.volume > 0)) return '语音音量为 0，请在“设置 → 语音”调高音量后重试。';
+  if (environment.monitorReady === false) return '屏幕状态检测尚未就绪，请稍后重试；若持续出现，请重新启动桌宠。';
+  // An explicit playback request is not an unsolicited notification. The cached
+  // screen sample may still describe the window that was focused before the click.
+  if (!manual && environment.fullscreen) return '系统当前处于全屏、忙碌或演示状态，暂停自动朗读。';
+  return null;
+}
+
 function wavDuration(bytes) {
   if (bytes.length < 44 || bytes.toString('ascii', 0, 4) !== 'RIFF' || bytes.toString('ascii', 8, 12) !== 'WAVE') throw new Error('audio');
   let rate = 0, data = 0;
@@ -22,6 +36,7 @@ function wavDuration(bytes) {
 
 function createChatSpeech({ root, projectRoot = 'D:\\Elysia_AI', getProjectRoot = () => projectRoot,
   isEnabled = () => false, isWindowOpen = () => false, canSpeak = () => true, volume = () => .8,
+  getBlockReason = () => canSpeak() ? null : '当前语音状态不允许朗读，请稍后重试。',
   sendAudio = () => {}, stopAudio = () => {}, onChange = () => {}, claimAudio = () => {},
   spawnImpl = spawn, exists = fs.existsSync, timeoutMs = 600000, idleTimeoutMs = 45000,
   maxCacheEntries = 8, maxCacheBytes = 24 * 1024 * 1024 }) {
@@ -35,7 +50,13 @@ function createChatSpeech({ root, projectRoot = 'D:\\Elysia_AI', getProjectRoot 
     state = next; if (!disposed) onChange(getState());
   }
   function claim(value) { if (claimed !== value) { claimed = value; claimAudio(value); } }
-  const permitted = manual => !disposed && (manual || isEnabled()) && isWindowOpen() && canSpeak();
+  function blockReason(manual) {
+    if (disposed) return '朗读已关闭，请重新打开聊天窗口。';
+    if (!manual && !isEnabled()) return '自动朗读已关闭。';
+    if (!isWindowOpen()) return '请先打开聊天窗口再朗读。';
+    return getBlockReason(manual);
+  }
+  const permitted = manual => !blockReason(manual);
   function currentProject() {
     const value = getProjectRoot();
     return typeof value === 'string' && path.isAbsolute(value) ? path.resolve(value) : null;
@@ -74,6 +95,10 @@ function createChatSpeech({ root, projectRoot = 'D:\\Elysia_AI', getProjectRoot 
     if (active?.source === 'worker') killWorker();
     discardActive(); status(worker?.warming ? 'warming' : worker ? 'ready' : 'idle', { messageId: null, emotion: null, cached: false });
     scheduleIdle(); return getState();
+  }
+  function refreshPermission() {
+    if ((active || worker) && !permitted(active?.manual === true)) release();
+    return getState();
   }
   function write(owner, packet) {
     if (owner !== worker || owner.exited) return false;
@@ -190,7 +215,17 @@ function createChatSpeech({ root, projectRoot = 'D:\\Elysia_AI', getProjectRoot 
   }
   function start(text, options = {}) {
     const manual = options.manual === true;
-    if (!permitted(manual) || typeof text !== 'string' || !text.trim() || text.length > 16000) return false;
+    if (disposed) return false;
+    const blocked = blockReason(manual);
+    if (blocked) { if (manual) fail(blocked); return false; }
+    if (typeof text !== 'string' || !text.trim()) {
+      if (manual) fail('这条回答没有需要朗读的文字。');
+      return false;
+    }
+    if (text.length > 16000) {
+      if (manual) fail('这条回答过长，暂时无法朗读。');
+      return false;
+    }
     const project = currentProject();
     if (!project) { fail('请在设置中选择有效的语音项目路径。'); return false; }
     stop(); clearTimeout(idleTimer); idleTimer = null;
@@ -198,7 +233,14 @@ function createChatSpeech({ root, projectRoot = 'D:\\Elysia_AI', getProjectRoot 
     const messageId = typeof options.messageId === 'string' && options.messageId.length <= 100 ? options.messageId : null;
     const job = { source: cached ? 'cache' : 'worker', key, manual, messageId, clips: [], bytes: 0,
       cacheable: true, receivedAudio: false, audioToken: null, audioTimer: null, deadline: null, cachedClips: cached?.clips, index: 0 };
-    active = job; claim(true); status('starting', { messageId, emotion: null, cached: Boolean(cached) });
+    active = job; claim(true);
+    // Claiming audio publishes the latest voice state synchronously. A newly
+    // applied DND/lock may release this job before a worker has been created.
+    if (active !== job) {
+      if (manual) fail(blockReason(manual) || '朗读已停止，请重试。');
+      return false;
+    }
+    status('starting', { messageId, emotion: null, cached: Boolean(cached) });
     job.deadline = setTimeout(() => { if (active === job) fail('本次朗读等待超时，文字回答已保留。'); }, timeoutMs);
     if (cached) {
       cache.delete(key); cache.set(key, cached);
@@ -224,6 +266,6 @@ function createChatSpeech({ root, projectRoot = 'D:\\Elysia_AI', getProjectRoot 
   function clearCache() { release(); cache.clear(); cacheBytes = 0; }
   function dispose() { clearCache(); disposed = true; }
   return { getState, start, speak: (text, options = {}) => start(text, { ...options, manual: true }), warmup,
-    stop, release, clearCache, report, dispose, isActive: () => active !== null || worker?.warming === true };
+    stop, release, refreshPermission, clearCache, report, dispose, isActive: () => active !== null || worker?.warming === true };
 }
-module.exports = { createChatSpeech, wavDuration };
+module.exports = { createChatSpeech, wavDuration, getChatSpeechBlockReason };

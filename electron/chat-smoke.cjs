@@ -14,10 +14,10 @@ async function checkChatRuntime({ chat, chatWindow, chatSpeech, chatSpeechTestHo
     let body = '';
     for await (const chunk of request) body += chunk;
     requests.push(JSON.parse(body));
-    assert.equal(request.url, '/api/chat');
-    response.writeHead(200, { 'Content-Type': 'application/x-ndjson' });
-    response.write(JSON.stringify({ message: { content: '你好，测试旅人。' }, done: false }) + '\n');
-    setTimeout(() => response.end(JSON.stringify({ message: { content: `<img src=x onerror=alert(1)> 一起聊聊吧♪（${requests.length}）` }, done: true }) + '\n'), 300);
+    assert.equal(request.url, '/v1/chat/completions');
+    response.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    response.write('data: ' + JSON.stringify({ choices: [{ index: 0, delta: { content: '你好，测试旅人。' }, finish_reason: null }] }) + '\n\n');
+    setTimeout(() => response.end('data: ' + JSON.stringify({ choices: [{ index: 0, delta: { content: `<img src=x onerror=alert(1)> 一起聊聊吧♪（${requests.length}）` }, finish_reason: 'stop' }] }) + '\n\ndata: [DONE]\n\n'), 300);
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const poll = async (label, read, matches) => {
@@ -72,7 +72,7 @@ async function checkChatRuntime({ chat, chatWindow, chatSpeech, chatSpeechTestHo
     assert.equal(messages[1].status, 'complete'); assert.match(messages[1].content, /一起聊聊吧/);
     await poll('rendered answer', () => reopened.webContents.executeJavaScript('document.body.textContent'), value => value.includes('<img src=x onerror=alert(1)>'));
     assert.equal(await reopened.webContents.executeJavaScript('document.querySelectorAll("img[src=x]").length'), 0);
-    assert.equal(requests.length, 1); assert.equal(requests[0].think, false);
+    assert.equal(requests.length, 1); assert.equal(requests[0].stream, true);
     assert.match(requests[0].messages[0].content, /测试旅人/);
     const restored = createChatService({ directory });
     assert.deepEqual(restored.getState().conversations, complete.conversations); restored.dispose();
@@ -104,10 +104,19 @@ async function checkChatRuntime({ chat, chatWindow, chatSpeech, chatSpeechTestHo
     await poll('manual speech with auto preference off', () => chatSpeech.getState(), value => value.status === 'playing' && value.messageId === manualMessage.id);
     assert.equal(chat.getState().settings.readAloud, false);
     assert.equal(chatSpeechTestHooks.calls.length, 2);
+    await requestSettings(settings, 'setVoiceSettings', { dnd: true });
+    assert.equal(chatSpeech.getState().status, 'idle'); assert.equal(chatSpeechTestHooks.calls[1].killed, true);
+    const blockedManual = await requestChat(reopened, 'readAloud', { conversationId: selectedId, messageId: manualMessage.id });
+    assert.equal(blockedManual.ok, false); assert.match(blockedManual.error, /勿扰已开启/);
+    assert.equal(chatSpeechTestHooks.calls.length, 2, 'Denied manual requests cannot launch another worker');
+    await requestSettings(settings, 'setVoiceSettings', { dnd: false });
+    await requestChat(reopened, 'readAloud', { conversationId: selectedId, messageId: manualMessage.id });
+    await poll('manual retry after DND', () => chatSpeech.getState(), value => value.status === 'playing' && !value.error);
+    assert.equal(chatSpeechTestHooks.calls.length, 3);
     assert.equal(reopened.isVisible(), false); assert.equal(settings.isVisible(), false); assert.equal(pet.isVisible(), false);
     await requestChat(reopened, 'windowControl', 'close');
     await poll('manual speech stops with closed chat', () => chatWindow.getWindow(), value => value === null);
-    assert.equal(chatSpeech.getState().status, 'idle'); assert.equal(chatSpeechTestHooks.calls[1].killed, true);
+    assert.equal(chatSpeech.getState().status, 'idle'); assert.equal(chatSpeechTestHooks.calls[2].killed, true);
     const originalSettings = chat.getState().settings;
     const remainingIds = chat.getState().conversations.filter(item => item.id !== selectedId).map(item => item.id);
     const deleted = await requestSettings(settings, 'deleteChatConversation', selectedId);
@@ -118,7 +127,7 @@ async function checkChatRuntime({ chat, chatWindow, chatSpeech, chatSpeechTestHo
     const afterDeletion = createChatService({ directory });
     assert.deepEqual(afterDeletion.getState().conversations, []); afterDeletion.dispose();
     return { isolatedProfile: true, ipc: true, settingsOpenedFromChat: true, settingsReopenedFromChat: true, streaming: true, closeAndReopenDuringReply: true, persistence: true, history: true, textOnlyRendering: true, petPreserved: true, hiddenThroughout: true,
-      silentAudioPlayback: true, disabledSpeechNeverStartsModel: true, speechOffCancelsWorker: true, speechWarmup: true, speechWorkerReused: true, manualSpeechWithoutAuto: true, closeReleasesSpeech: true, deleteHistory: true, clearHistoryPersisted: true };
+      silentAudioPlayback: true, disabledSpeechNeverStartsModel: true, speechOffCancelsWorker: true, speechWarmup: true, speechWorkerReused: true, manualSpeechWithoutAuto: true, manualSpeechHonorsDnd: true, closeReleasesSpeech: true, deleteHistory: true, clearHistoryPersisted: true };
   } finally {
     chat.cancel(); chatWindow.getWindow()?.close(); settingsWindow.getWindow()?.close();
     server.closeAllConnections(); await new Promise(resolve => server.close(resolve));

@@ -52,10 +52,12 @@ const resources = path.join(inspection, 'resources'), directoryResources = path.
 const actual = [];
 function walk(directory) {
   for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-    assert.equal(entry.isSymbolicLink(), false);
     const full = path.join(directory, entry.name);
-    if (entry.isDirectory()) walk(full);
-    else { assert.ok(entry.isFile()); actual.push(path.relative(resources, full).replaceAll('\\', '/')); }
+    // lstat distinguishes ordinary OneDrive placeholders from actual links.
+    const stat = fs.lstatSync(full);
+    assert.equal(stat.isSymbolicLink(), false);
+    if (stat.isDirectory()) walk(full);
+    else { assert.ok(stat.isFile()); actual.push(path.relative(resources, full).replaceAll('\\', '/')); }
   }
 }
 walk(resources);

@@ -1,4 +1,4 @@
-/** Optional live Ollama check with synthetic messages and an isolated, locally ignored history. */
+/** Optional live llama.cpp check with synthetic messages and an isolated, locally ignored history. */
 'use strict';
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
