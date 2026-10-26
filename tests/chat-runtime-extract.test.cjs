@@ -6,6 +6,9 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { EXTRACT_SCRIPT } = require('../electron/chat-runtime-extract.cjs');
+// Match the native host fixture's allowance for hosted Windows cold starts.
+// A timeout or failed launch must never count as rejecting an unsafe archive.
+const EXTRACT_TIMEOUT_MS = 45000;
 
 function crc32(bytes) {
   let crc = 0xffffffff;
@@ -45,10 +48,16 @@ test('native extractor accepts ordinary nested files and rejects unsafe entries 
     const archive = path.join(root, scenario.name + '.zip'), stage = path.join(root, scenario.name);
     fs.mkdirSync(stage); fs.writeFileSync(archive, zip(scenario.entries));
     const child = spawnSync('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(EXTRACT_SCRIPT, 'utf16le').toString('base64')],
-      { windowsHide: true, encoding: 'utf8', timeout: 15000, env: { ...process.env, ELYSIA_CHAT_ARCHIVE: archive, ELYSIA_CHAT_STAGE: stage } });
+      { windowsHide: true, encoding: 'utf8', timeout: EXTRACT_TIMEOUT_MS, env: { ...process.env, ELYSIA_CHAT_ARCHIVE: archive, ELYSIA_CHAT_STAGE: stage } });
+    const diagnostic = JSON.stringify({ scenario: scenario.name, timeoutMs: EXTRACT_TIMEOUT_MS,
+      error: child.error && { code: child.error.code, message: child.error.message },
+      status: child.status, signal: child.signal, stderr: child.stderr?.slice(-2048) });
+    assert.ok(!child.error, diagnostic);
+    assert.equal(child.signal, null, diagnostic);
+    assert.ok(Number.isInteger(child.status), diagnostic);
     if (scenario.valid) {
-      assert.equal(child.status, 0, child.stderr); assert.equal(fs.readFileSync(path.join(stage, 'lib/runtime.dll'), 'utf8'), 'library');
-    } else { assert.notEqual(child.status, 0, scenario.name); assert.deepEqual(fs.readdirSync(stage), [], scenario.name); }
+      assert.equal(child.status, 0, diagnostic); assert.equal(fs.readFileSync(path.join(stage, 'lib/runtime.dll'), 'utf8'), 'library');
+    } else { assert.notEqual(child.status, 0, diagnostic); assert.deepEqual(fs.readdirSync(stage), [], scenario.name); }
   }
   assert.equal(fs.existsSync(path.join(root, 'outside.txt')), false);
 });
