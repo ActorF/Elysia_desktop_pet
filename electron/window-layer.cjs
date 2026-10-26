@@ -128,6 +128,12 @@ function createTopmostController(window, options = {}) {
       configuredLevel = null;
       if (enabled) enable();
       else { try { window.setAlwaysOnTop(false); } catch (error) { report(error); } }
+      // The native batch also preserves our subtitle/trail windows. Its last
+      // operation may have raced a preference change, so restore companions
+      // only after the helper has exited and our current policy was reapplied.
+      if (!disposed && alive()) {
+        try { options.onLayerRestored?.(); } catch (error) { report(error); }
+      }
     } });
   }
   for (const event of ['show', 'restore', 'focus', 'blur', 'leave-full-screen']) window.on(event, refresh);

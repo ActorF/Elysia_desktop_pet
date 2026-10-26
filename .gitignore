@@ -1,9 +1,9 @@
 node_modules/
 release/*
-!release/Elysia_desktop_pet-1.4.0.exe
-!release/Elysia_desktop_pet-1.4.0.exe.sha256
-!release/Elysia_desktop_pet-1.4.0-setup.exe
-!release/Elysia_desktop_pet-1.4.0-setup.exe.sha256
+!release/Elysia_desktop_pet-1.4.1.exe
+!release/Elysia_desktop_pet-1.4.1.exe.sha256
+!release/Elysia_desktop_pet-1.4.1-setup.exe
+!release/Elysia_desktop_pet-1.4.1-setup.exe.sha256
 artifacts/
 build-resources/
 tmp/

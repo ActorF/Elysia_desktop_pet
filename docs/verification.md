@@ -1,6 +1,6 @@
 # 验证说明
 
-本文件说明 **1.4.0** 的检查范围与执行方式，包含已有桌宠、54 条原录音、部位互动、聊天与历史管理、按需朗读和首次自动配置。正式产物为 `release/Elysia_desktop_pet-1.4.0.exe` 和 `release/Elysia_desktop_pet-1.4.0-setup.exe`，通过 Git LFS 保存到 `version-control` 分支；源码与对应 SHA256 文件随同提交，尚未创建 1.4.0 GitHub Release。检查报告位于 `artifacts/validation-v1.4.0/`，历史版本说明保留在 `docs/releases/`。
+本文件说明 **1.4.1** 的检查范围与执行方式，包含已有桌宠、54 条原录音、部位互动、聊天与历史管理、按需朗读和首次自动配置。正式产物为 `release/Elysia_desktop_pet-1.4.1.exe` 和 `release/Elysia_desktop_pet-1.4.1-setup.exe`，通过 Git LFS 保存到 `version-control` 分支；源码与对应 SHA256 文件随同提交，尚未创建 1.4.1 GitHub Release。检查报告位于 `artifacts/validation-v1.4.1/`，历史版本说明保留在 `docs/releases/`。
 
 `npm run make:release` 同时生成便携版与安装版；`npm run verify:release` 校验完整文件清单、源码字节、原录音、语音资源包摘要、更新配置及隐藏窗口行为，并验证重复启动不会删除现有实例的临时文件。`npm run verify:setup` 核对安装器中的程序和资源与已验证的便携版完全一致。所需语音构建资源保留在被忽略的 `build-resources/voice-bootstrap/`，不依赖旧样本或草稿目录。
 
@@ -24,13 +24,16 @@ npm run test:settings
 npm run test:voice
 npm run test:interactions
 npm run test:interaction-settings
+npm run test:chat
+npm run test:chat-native
 node scripts/hit-region-check.cjs
 node scripts/drag-interaction-check.cjs
 node scripts/key-cloud-check.cjs
 node scripts/taskbar-layer-check.cjs
 npm run test:zoom
-npm run make:portable
-node scripts/verify-package.cjs
+npm run make:release
+npm run verify:release
+npm run verify:setup
 ```
 
 `npm test` 只运行 `tests/` 下的测试。浏览器和原生自动化检查使用隔离测试状态；语音整机检查隐藏且静音，模拟输入只用于测试页面，不向用户窗口注入鼠标或键盘输入。正式设置页面不提供试听或模拟触发入口，规则模拟由测试脚本完成。
@@ -56,7 +59,11 @@ node scripts/verify-package.cjs
 - 覆盖 1%、普通尺寸和超大尺寸，验证光标锚点、画布预算、缩小后的清屏和恢复 100% 功能。
 - 覆盖连续拖动、跨 DPI 屏幕、四边出屏、窗口恢复与置顶维护。
 
-1.2.0 的设置窗口“桌面”页包含“任务栏层级”选择。`taskbar-layer-check.cjs` 使用独立透明窗口读取真实 Windows 窗口顺序，检查主、副任务栏的前后关系、周期维护、临时遮挡后的恢复，以及隐藏和关闭置顶后的行为。检查只调整测试窗口，不移动任务栏、不注入输入，并核对键盘焦点没有被抢走；报告位于 `artifacts/taskbar-layer-check.json`。
+“桌面”页包含“任务栏层级”选择。1.4.1 修复“始终置顶＋任务栏在前”时副屏任务栏实际顺序落后导致桌宠被放到普通应用后方，以及其他置顶应用遮挡后未恢复的问题。维护目标为可见任务栏在桌宠上方、桌宠在普通应用上方；保留字幕、流光等辅助窗的前后顺序，并在关闭置顶或切换模式后恢复当前设置。
+
+`taskbar-layer-check.cjs` 使用独立透明窗口和独立进程的置顶应用，读取真实 Windows 窗口顺序，检查主、副任务栏排序、外部置顶窗口竞争、自有辅助窗同时存在、原生置顶标志丢失后的恢复，以及隐藏、关闭置顶和切换模式。修复仅校正当前可见且已置顶的真实 Windows Shell 任务栏与自有窗口的 Z 顺序，不改变任务栏位置、尺寸或可见性，不激活窗口或注入输入；检查同时核对当前输入焦点保持不变。报告默认位于 `artifacts/taskbar-layer-check.json`，可通过 `--report` 指定路径。
+
+范围限于普通 Windows 桌面，不承诺覆盖安全桌面、独占全屏或特殊系统层；不会强行显示已隐藏的任务栏或提升被系统取消置顶的任务栏。原生窗口检查与最终包内验收共同验证修复，具体结果以对应报告为准。
 
 “动画”页通过滑块和数值框调节摆动幅度与速度。执行 `node scripts/motion-settings-check.cjs` 检查实际渲染中的幅度、速度变化和关闭摆动的行为；结合 `npm test` 核对 0–200% 幅度、0.25–3× 速度的范围、100%／1× 默认值、上下部位同向运动，以及最大幅度下的网格和点击范围。检查还关注修改速度或切换表情、动作时是否保持摆动进度，并确认眨眼和目光跟随不随摆动速度变化。实际结果以 `artifacts/motion-settings-check.json` 和 smoke 输出为准。
 
@@ -114,4 +121,4 @@ Windows 的原生窗口有最小尺寸限制；1% 人物仍按约 4.2×5.6 DIP �
 
 `verify-package.cjs` 从最终 EXE 提取应用内容，核对文件清单、源码与素材字节、54 条录音及其校验清单、代码许可证和版权说明。随后运行目录应用和便携程序的验收，检查启动、桌面交互、缩放、独立设置窗口及语音资源。具体执行项目和通过状态以脚本输出为准。
 
-验收会核对运行前后的原有桌宠进程，保留用户正在使用的实例。结果与 SHA256 写入 `artifacts/validation-v1.4.0/release-check.json`，校验文件生成在 `release/`。
+验收会核对运行前后的原有桌宠进程，保留用户正在使用的实例。结果与 SHA256 写入 `artifacts/validation-v1.4.1/release-check.json`，校验文件生成在 `release/`。

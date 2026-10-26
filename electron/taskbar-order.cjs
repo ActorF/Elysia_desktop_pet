@@ -3,7 +3,8 @@ const path = require('node:path');
 const { spawn: nativeSpawn } = require('node:child_process');
 
 // Electron's floating level only handles Shell_TrayWnd. This Windows helper
-// keeps our HWND below secondary taskbars too; it never reorders their HWNDs.
+// keeps visible shell taskbars above our HWND and our HWND above other apps.
+// Native repairs preserve taskbar geometry/visibility and never activate a window.
 function createTaskbarOrderer(window, options = {}) {
   const spawn = options.spawn ?? nativeSpawn;
   const platform = options.platform ?? process.platform;

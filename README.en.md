@@ -5,31 +5,31 @@
 <p align="center"><a href="README.md">简体中文</a> · <strong>English</strong></p>
 <p align="center"><a href="#download">Download</a> · <a href="#character-gallery">Gallery</a> · <a href="#usage">Usage</a> · <a href="#run-from-source">Run from source</a></p>
 
-A chibi Elysia companion for Windows, with a transparent full-body character, mouse-following eyes, and gentle motion. Mix expressions, cat mode, glasses, and four actions, with little clouds that respond to your typing. Version 1.4.0 adds local chat, read-aloud replies, automatic model setup, and more precise body-region interactions to the existing voices and cursor trails.
+A chibi Elysia companion for Windows, with a transparent full-body character, mouse-following eyes, and gentle motion. Mix expressions, cat mode, glasses, and four actions, with little clouds that respond to your typing. Version 1.4.1 fixes window ordering in Taskbar in front mode, retaining the local chat, read-aloud replies, automatic model setup, and body-region interactions introduced in 1.4.0.
 
-**Version 1.4.0 source, README, executables, and checksums are synchronized on the `version-control` branch.** Download the programs through the branch links below. The `main` branch and GitHub Release are unchanged; no 1.4.0 Release has been created. See [Local chat and read-aloud](#local-chat-and-read-aloud) and the [1.4.0 release notes](docs/releases/v1.4.0.md).
+**Version 1.4.1 source, README, executables, and checksums are synchronized on the `version-control` branch.** Download the programs through the branch links below. The `main` branch and GitHub Release are unchanged; no 1.4.1 Release has been created. See [Local chat and read-aloud](#local-chat-and-read-aloud) and the [1.4.1 release notes](docs/releases/v1.4.1.md).
 
 ## Download
 
-**1.4.0 downloads from the `version-control` branch:**
+**1.4.1 downloads from the `version-control` branch:**
 
 | Edition | Program | Checksum |
 | --- | --- | --- |
-| Windows portable | [Download 1.4.0 EXE](https://media.githubusercontent.com/media/ActorF/Elysia_desktop_pet/version-control/release/Elysia_desktop_pet-1.4.0.exe) | [SHA256](https://raw.githubusercontent.com/ActorF/Elysia_desktop_pet/version-control/release/Elysia_desktop_pet-1.4.0.exe.sha256) |
-| Windows installer | [Download 1.4.0 installer](https://media.githubusercontent.com/media/ActorF/Elysia_desktop_pet/version-control/release/Elysia_desktop_pet-1.4.0-setup.exe) | [SHA256](https://raw.githubusercontent.com/ActorF/Elysia_desktop_pet/version-control/release/Elysia_desktop_pet-1.4.0-setup.exe.sha256) |
+| Windows portable | [Download 1.4.1 EXE](https://media.githubusercontent.com/media/ActorF/Elysia_desktop_pet/version-control/release/Elysia_desktop_pet-1.4.1.exe) | [SHA256](https://raw.githubusercontent.com/ActorF/Elysia_desktop_pet/version-control/release/Elysia_desktop_pet-1.4.1.exe.sha256) |
+| Windows installer | [Download 1.4.1 installer](https://media.githubusercontent.com/media/ActorF/Elysia_desktop_pet/version-control/release/Elysia_desktop_pet-1.4.1-setup.exe) | [SHA256](https://raw.githubusercontent.com/ActorF/Elysia_desktop_pet/version-control/release/Elysia_desktop_pet-1.4.1-setup.exe.sha256) |
 
 Click these links to download the complete program; Git, Git LFS, and Node.js are not required. Both editions automatically prepare chat and speech dependencies on first run, which requires an internet connection.
 
-Double-click `Elysia_desktop_pet-1.4.0.exe` to run the portable app, or run `Elysia_desktop_pet-1.4.0-setup.exe` to install it. Before upgrading, quit the old version from the tray. Position, size, outfit switches, and preferences in your existing release profile are preserved without manual migration.
+Double-click `Elysia_desktop_pet-1.4.1.exe` to run the portable app, or run `Elysia_desktop_pet-1.4.1-setup.exe` to install it. Before upgrading, quit the old version from the tray. Position, size, outfit switches, and preferences in your existing release profile are preserved without manual migration.
 
-Historical GitHub Release: [1.3.0 release page](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.3.0), which does not include chat. The [1.3.0 notes](docs/releases/v1.3.0.md) and [1.2.0 notes](docs/releases/v1.2.0.md) remain available. You can also use the [source and build instructions](#run-from-source) below.
+Historical feature notes: [1.4.0](docs/releases/v1.4.0.md). Historical GitHub Release: [1.3.0 release page](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.3.0), which does not include chat. The [1.3.0 notes](docs/releases/v1.3.0.md) and [1.2.0 notes](docs/releases/v1.2.0.md) remain available. You can also use the [source and build instructions](#run-from-source) below.
 
 <details>
 <summary>Download warnings and files ending in .crdownload</summary>
 
 The app is currently unsigned. If Microsoft Edge says the file “isn't commonly downloaded,” confirm you used one of the program links above. In the downloads list, choose **⋯ → Keep → Show more → Keep anyway**, then wait for the download to finish. See [Microsoft's instructions](https://learn.microsoft.com/en-us/troubleshoot/microsoft-edge/development/download-failures#check-security-and-smartscreen-settings).
 
-**If the download has fully completed but the file is still named `Unconfirmed <number>.crdownload`, you can rename it to use the `.exe` extension.** Enable **File name extensions** in File Explorer, then use **`Elysia_desktop_pet-1.4.0.exe`** or **`Elysia_desktop_pet-1.4.0-setup.exe`**, matching the edition you downloaded. Remove the trailing `.crdownload` entirely.
+**If the download has fully completed but the file is still named `Unconfirmed <number>.crdownload`, you can rename it to use the `.exe` extension.** Enable **File name extensions** in File Explorer, then use **`Elysia_desktop_pet-1.4.1.exe`** or **`Elysia_desktop_pet-1.4.1-setup.exe`**, matching the edition you downloaded. Remove the trailing `.crdownload` entirely.
 
 This only applies to a file that has finished downloading. If the download is still running or was interrupted, complete it first; renaming an incomplete file does not finish the download.
 
@@ -91,11 +91,11 @@ Transparent space around the character lets clicks pass through to the windows b
 
 The new tray icon is a pink emblem on a transparent background. Position, size, and preferences are saved automatically.
 
-Version 1.4.0 keeps the existing release profile in `%APPDATA%/Elysia Desktop Pet/`, preserving position, size, appearance, and preferences. Quit the old app from its tray before starting the new version; existing release settings need no manual migration.
+Version 1.4.1 keeps the existing release profile in `%APPDATA%/Elysia Desktop Pet/`, preserving position, size, appearance, and preferences. Quit the old app from its tray before starting the new version; existing release settings need no manual migration.
 
 ### Settings window
 
-Settings and the pet stay on screen together, and you can move or resize the window independently. Drag its empty header area to move it. The three standard icons at the top right minimize, maximize/restore, and close the window. Closing Settings leaves the pet running. Version 1.4.0 has seven tabs: **Appearance, Animation, Desktop, Interaction, Voice, Chat, and Chat history**.
+Settings and the pet stay on screen together, and you can move or resize the window independently. Drag its empty header area to move it. The three standard icons at the top right minimize, maximize/restore, and close the window. Closing Settings leaves the pet running. Version 1.4.1 has seven tabs: **Appearance, Animation, Desktop, Interaction, Voice, Chat, and Chat history**.
 
 <table>
   <tr><th>Appearance</th><th>Animation</th><th>Desktop</th></tr>
@@ -134,9 +134,11 @@ Eye tracking keeps the original effect at its default strength: 0% removes the d
 
 Enable Always on top (`始终置顶`) to choose Taskbar in front (`任务栏在前`) or Pet in front (`桌宠在前`); Pet in front is the default. Settings remains usable while the pet is in click-through mode, and the buttons at the bottom can bring her back at any time.
 
+Version 1.4.1 fixes the pet falling behind ordinary apps when a secondary taskbar is out of order or another topmost app covers her. Taskbar in front mode restores taskbars above the pet and the pet above ordinary apps, preserving taskbar geometry, visibility, and keyboard focus. Captions and cursor-trail windows keep their relative order, and disabling always-on-top or switching modes restores the current setting. This applies to the ordinary Windows desktop, without promising precedence over the secure desktop, exclusive fullscreen, or special system layers.
+
 ### Local chat and read-aloud
 
-Version 1.4.0 automatically prepares local [Ollama](https://ollama.com/) and the default `tobestyledintro/qwen3.8-9b-distill:latest` model on first run. You do not need to install the model manually or enter a project path. **Settings → Chat** shows separate chat-model and speech-environment progress, with cancellation and retry. Readiness is independent for each, and existing custom service settings are preserved.
+Version 1.4.1 automatically prepares local [Ollama](https://ollama.com/) and the default `tobestyledintro/qwen3.8-9b-distill:latest` model on first run. You do not need to install the model manually or enter a project path. **Settings → Chat** shows separate chat-model and speech-environment progress, with cancellation and retry. Readiness is independent for each, and existing custom service settings are preserved.
 
 Choose **Open chat (`打开聊天框`)** from the system tray to type messages to Elysia and see replies appear as they are generated. The chat window moves, resizes, and closes independently; closing it leaves the pet running. The top-left plus starts a conversation. The bottom gear, input field, and notched diagonal send arrow share one row; hover over the gear for its settings/history description. The arrow sends a message; Enter sends and Shift + Enter inserts a newline. Confirming an IME composition does not accidentally send. Stop can cancel generation or read-aloud.
 
@@ -247,9 +249,9 @@ npm run make:release
 npm run verify:release
 ```
 
-`npm run make:release` (`node scripts/package-release.cjs`) creates `release/Elysia_desktop_pet-1.4.0.exe` and `release/Elysia_desktop_pet-1.4.0-setup.exe`. Build them individually with `npm run make:portable` or `npm run make:setup`. `npm run verify:release` (`node scripts/verify-package.cjs`) verifies the release package. These commands do not publish to GitHub. Prepare the speech asset archive before building; `npm run package` produces an unpacked application directory.
+`npm run make:release` (`node scripts/package-release.cjs`) creates `release/Elysia_desktop_pet-1.4.1.exe` and `release/Elysia_desktop_pet-1.4.1-setup.exe`. Build them individually with `npm run make:portable` or `npm run make:setup`. `npm run verify:release` (`node scripts/verify-package.cjs`) verifies the release package. These commands do not publish to GitHub. Prepare the speech asset archive before building; `npm run package` produces an unpacked application directory.
 
-Promotion to 1.4.0 followed **391 passing unit tests**, plus chat UI, native-window, real Qwen response, real speech, and body-region interaction checks. See the [1.4.0 release notes](docs/releases/v1.4.0.md#verification-and-limits) for scope and first-run setup limitations. Full commands and checks are in the [verification guide](docs/verification.md), currently in Chinese.
+See the [1.4.1 release notes](docs/releases/v1.4.1.md#verification-and-limits) for the window-order fix and verification scope. Earlier chat, speech, and body-region validation remains in the [1.4.0 notes](docs/releases/v1.4.0.md#verification-and-limits). A complete first installation on a fresh Windows environment has not yet been tested. Full commands and checks are in the [verification guide](docs/verification.md), currently in Chinese.
 
 ## Project structure
 

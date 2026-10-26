@@ -343,6 +343,7 @@ async function createWindow() {
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false, webSecurity: true, backgroundThrottling: false, devTools: !app.isPackaged },
   });
   topmost=createTopmostController(pet,{enabled:preferences.alwaysOnTop,taskbarInFront:preferences.taskbarInFront,
+    onLayerRestored:()=>voices?.reposition(),
     onError:error=>console.error('Could not update pet window layer:',error.message)});
   windowShape=createWindowShape(pet,{screen});
   viewport=viewportSnapshot(characterBounds,pet.getContentBounds(),planned.clipped);

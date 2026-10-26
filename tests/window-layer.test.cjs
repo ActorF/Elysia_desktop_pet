@@ -232,6 +232,72 @@ test('late native helper exit reapplies the latest enabled policy without resurr
   assert.deepEqual(f.window.calls, []); assert.equal(f.backend.disposals, 1);
 });
 
+test('late helper exit restores companions after the latest pet policy, including disabled topmost', () => {
+  for (const enabled of [false, true]) {
+    const companion = { topmost: true, taskbarInFront: true }, restored = [];
+    const f = nativeFixture({}, { onLayerRestored() {
+      restored.push(f.window.calls.slice());
+      companion.topmost = f.controller.enabled;
+      companion.taskbarInFront = f.controller.taskbarInFront;
+    } });
+    f.backend.ready = true;
+    if (enabled) f.controller.setTaskbarInFront(false);
+    else f.controller.setEnabled(false);
+    assert.equal(restored.length, 0, 'Stopping is not yet an acknowledgement of native exit');
+    // The cancelled helper completes an old batch after the settings UI has
+    // already applied its new settings to the subtitle window.
+    companion.topmost = true; companion.taskbarInFront = true;
+    f.window.calls.length = 0;
+    f.stopped();
+    assert.deepEqual(restored, [enabled
+      ? [['topmost', true, 'screen-saver'], ['raise']]
+      : [['topmost', false]]]);
+    assert.deepEqual(companion, { topmost: enabled, taskbarInFront: !enabled });
+    assert.equal(f.window.topmost, enabled);
+    assert.equal(f.timers.size, enabled ? 1 : 0);
+    f.controller.dispose(); f.stopped();
+    assert.equal(restored.length, 1, 'A late exit cannot restore companions after disposal');
+  }
+});
+
+test('companion restoration errors are reported without reviving disabled maintenance', () => {
+  const errors = [];
+  let restored = 0;
+  const f = nativeFixture({}, {
+    onLayerRestored() { restored++; throw new Error('Subtitle window closed during restoration'); },
+    onError: error => errors.push(error.message),
+  });
+  f.backend.ready = true; f.controller.setEnabled(false);
+  assert.doesNotThrow(() => f.stopped());
+  assert.deepEqual(errors, ['Subtitle window closed during restoration']);
+  assert.equal(restored, 1); assert.equal(f.window.topmost, false);
+  assert.equal(f.controller.enabled, false); assert.equal(f.timers.size, 0);
+  f.window.emit('restore'); f.tick();
+  assert.equal(f.window.topmost, false); assert.equal(f.timers.size, 0);
+  f.controller.dispose(); f.stopped();
+  assert.equal(restored, 1); assert.equal(f.backend.disposals, 1);
+});
+
+test('helper exit never restores companions for a destroyed pet, including destruction during restoration', () => {
+  for (const duringRestore of [false, true]) {
+    let restored = 0;
+    const f = nativeFixture({}, { onLayerRestored() { restored++; } });
+    f.backend.ready = true;
+    if (duringRestore) {
+      f.window.setAlwaysOnTop = () => {
+        f.window.destroyed = true;
+        throw new Error('Native window destroyed during restoration');
+      };
+    } else {
+      f.window.destroyed = true;
+      f.window.emit('closed');
+    }
+    assert.doesNotThrow(() => f.stopped());
+    assert.equal(restored, 0); assert.equal(f.controller.disposed, true);
+    assert.equal(f.timers.size, 0); assert.equal(f.backend.disposals, 1);
+  }
+});
+
 test('hidden and minimized windows stop the helper and restart ordering only on restore', () => {
   const f = nativeFixture({ visible: false });
   assert.equal(f.backend.starts, 0);

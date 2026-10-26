@@ -4,31 +4,31 @@
 <p align="center"><strong>简体中文</strong> · <a href="README.en.md">English</a></p>
 <p align="center"><a href="#下载程序">下载程序</a> · <a href="#角色展示">角色展示</a> · <a href="#使用">使用说明</a> · <a href="#源码运行">源码运行</a></p>
 
-透明全身立绘、鼠标目光跟随、轻柔摆动。表情、猫猫形态、眼镜和四种动作可以自由搭配，输入字符时还有小云朵回应。1.4.0 在日常语音、点击互动和鼠标流光基础上，加入本地聊天、回复朗读、模型自动配置与更细致的身体部位互动。
+透明全身立绘、鼠标目光跟随、轻柔摆动。表情、猫猫形态、眼镜和四种动作可以自由搭配，输入字符时还有小云朵回应。1.4.1 修复“任务栏在前”模式下的置顶顺序，保留 1.4.0 的本地聊天、回复朗读、模型自动配置与身体部位互动。
 
-**1.4.0 正式源码、README、程序与校验文件在 `version-control` 分支同步。** 程序可通过下方分支下载入口获取；`main` 分支和 GitHub Release 保持不变，未创建 1.4.0 Release。使用方法见[本地聊天与朗读](#本地聊天与朗读)，完整变化见 [1.4.0 更新说明](docs/releases/v1.4.0.md)。
+**1.4.1 正式源码、README、程序与校验文件在 `version-control` 分支同步。** 程序可通过下方分支下载入口获取；`main` 分支和 GitHub Release 保持不变，未创建 1.4.1 Release。使用方法见[本地聊天与朗读](#本地聊天与朗读)，完整变化见 [1.4.1 更新说明](docs/releases/v1.4.1.md)。
 
 ## 下载程序
 
-**1.4.0 · `version-control` 分支下载：**
+**1.4.1 · `version-control` 分支下载：**
 
 | 版本 | 程序 | 校验文件 |
 | --- | --- | --- |
-| Windows 便携版 | [下载 1.4.0 EXE](https://media.githubusercontent.com/media/ActorF/Elysia_desktop_pet/version-control/release/Elysia_desktop_pet-1.4.0.exe) | [SHA256](https://raw.githubusercontent.com/ActorF/Elysia_desktop_pet/version-control/release/Elysia_desktop_pet-1.4.0.exe.sha256) |
-| Windows 安装版 | [下载 1.4.0 安装器](https://media.githubusercontent.com/media/ActorF/Elysia_desktop_pet/version-control/release/Elysia_desktop_pet-1.4.0-setup.exe) | [SHA256](https://raw.githubusercontent.com/ActorF/Elysia_desktop_pet/version-control/release/Elysia_desktop_pet-1.4.0-setup.exe.sha256) |
+| Windows 便携版 | [下载 1.4.1 EXE](https://media.githubusercontent.com/media/ActorF/Elysia_desktop_pet/version-control/release/Elysia_desktop_pet-1.4.1.exe) | [SHA256](https://raw.githubusercontent.com/ActorF/Elysia_desktop_pet/version-control/release/Elysia_desktop_pet-1.4.1.exe.sha256) |
+| Windows 安装版 | [下载 1.4.1 安装器](https://media.githubusercontent.com/media/ActorF/Elysia_desktop_pet/version-control/release/Elysia_desktop_pet-1.4.1-setup.exe) | [SHA256](https://raw.githubusercontent.com/ActorF/Elysia_desktop_pet/version-control/release/Elysia_desktop_pet-1.4.1-setup.exe.sha256) |
 
 点击上述链接即可下载完整程序，无需安装 Git、Git LFS 或 Node.js。两种版本均会在首次运行时自动准备聊天与语音环境，首次配置需要联网。
 
-便携版下载后双击 `Elysia_desktop_pet-1.4.0.exe` 即可运行；安装版运行 `Elysia_desktop_pet-1.4.0-setup.exe` 完成安装。升级前先从右下角托盘退出旧版，已有正式配置中的位置、大小、装扮开关和偏好会保留，无需手动迁移。
+便携版下载后双击 `Elysia_desktop_pet-1.4.1.exe` 即可运行；安装版运行 `Elysia_desktop_pet-1.4.1-setup.exe` 完成安装。升级前先从右下角托盘退出旧版，已有正式配置中的位置、大小、装扮开关和偏好会保留，无需手动迁移。
 
-历史 GitHub Release：[1.3.0 发布页](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.3.0)（不含聊天功能）。历史 [1.3.0 更新说明](docs/releases/v1.3.0.md)与 [1.2.0 更新说明](docs/releases/v1.2.0.md)保留，也可按下方[源码运行与构建步骤](#源码运行)自行构建。
+历史功能说明：[1.4.0](docs/releases/v1.4.0.md)。历史 GitHub Release：[1.3.0 发布页](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.3.0)（不含聊天功能）。历史 [1.3.0 更新说明](docs/releases/v1.3.0.md)与 [1.2.0 更新说明](docs/releases/v1.2.0.md)保留，也可按下方[源码运行与构建步骤](#源码运行)自行构建。
 
 <details>
 <summary>下载提示与文件后缀</summary>
 
 **下载提示：** 当前版本未进行数字签名。如果 Edge 提示“isn't commonly downloaded（不常下载）”，确认使用本页上方的程序下载链接后，在下载列表选择 **⋯ → 保留 → 显示更多 → 仍然保留**，等待下载完成。[微软操作说明](https://learn.microsoft.com/en-us/troubleshoot/microsoft-edge/development/download-failures#check-security-and-smartscreen-settings)
 
-**下载完成后，如果文件仍叫 `Unconfirmed 数字.crdownload`，可以将后缀改为 `.exe` 使用。** 先在文件资源管理器中显示“文件扩展名”，再根据所下载的版本，将完整文件名改为 **`Elysia_desktop_pet-1.4.0.exe`** 或 **`Elysia_desktop_pet-1.4.0-setup.exe`**，不要保留末尾的 `.crdownload`。此操作只适用于已经完整下载的文件；仍在下载或下载中断时，请先完成下载。
+**下载完成后，如果文件仍叫 `Unconfirmed 数字.crdownload`，可以将后缀改为 `.exe` 使用。** 先在文件资源管理器中显示“文件扩展名”，再根据所下载的版本，将完整文件名改为 **`Elysia_desktop_pet-1.4.1.exe`** 或 **`Elysia_desktop_pet-1.4.1-setup.exe`**，不要保留末尾的 `.crdownload`。此操作只适用于已经完整下载的文件；仍在下载或下载中断时，请先完成下载。
 
 </details>
 
@@ -85,11 +85,11 @@
 
 新版使用透明底粉色托盘图标。位置、大小和偏好会自动保存。
 
-1.4.0 沿用 `%APPDATA%/Elysia Desktop Pet/` 中的正式配置，保留已有位置、大小、装扮和偏好。升级前从托盘退出旧版，再运行新版本，无需手动迁移已有正式配置。
+1.4.1 沿用 `%APPDATA%/Elysia Desktop Pet/` 中的正式配置，保留已有位置、大小、装扮和偏好。升级前从托盘退出旧版，再运行新版本，无需手动迁移已有正式配置。
 
 ### 设置窗口
 
-设置和人物可以同时显示，窗口可单独移动、调整大小。拖动顶部空白处移动窗口，右上角三个标准图标分别是最小化、最大化／还原和关闭。关闭设置窗口后，桌宠会继续运行。1.4.0 的设置分为 **外观、动画、桌面、互动、语音、聊天、聊天记录** 七页。
+设置和人物可以同时显示，窗口可单独移动、调整大小。拖动顶部空白处移动窗口，右上角三个标准图标分别是最小化、最大化／还原和关闭。关闭设置窗口后，桌宠会继续运行。1.4.1 的设置分为 **外观、动画、桌面、互动、语音、聊天、聊天记录** 七页。
 
 <table>
   <tr><th>外观</th><th>动画</th><th>桌面</th></tr>
@@ -128,9 +128,11 @@
 
 开启“始终置顶”后，可选择“任务栏在前”或“桌宠在前”，默认桌宠在前。即使人物开启鼠标穿透，设置窗口仍可操作，底部按钮可以随时找回人物。
 
+1.4.1 修复副屏任务栏顺序异常或其他置顶程序遮挡后，桌宠落到普通窗口后方的问题。“任务栏在前”模式会恢复任务栏在桌宠上方、桌宠在普通应用上方的顺序，并保持任务栏的位置、可见性和当前焦点；保留字幕、流光等辅助窗的前后顺序，关闭置顶或切换模式后恢复当前设置。适用范围是普通 Windows 桌面，不承诺覆盖安全桌面、独占全屏或特殊系统层。
+
 ### 本地聊天与朗读
 
-1.4.0 首次运行会自动准备本地 [Ollama](https://ollama.com/) 与默认模型 `tobestyledintro/qwen3.8-9b-distill:latest`，无需手动安装模型或填写项目路径。**设置 → 聊天** 分别显示聊天模型与语音环境的进度，可取消或在失败后重试；两项就绪状态互相独立。已有自定义服务设置不会被自动覆盖。
+1.4.1 首次运行会自动准备本地 [Ollama](https://ollama.com/) 与默认模型 `tobestyledintro/qwen3.8-9b-distill:latest`，无需手动安装模型或填写项目路径。**设置 → 聊天** 分别显示聊天模型与语音环境的进度，可取消或在失败后重试；两项就绪状态互相独立。已有自定义服务设置不会被自动覆盖。
 
 从右下角托盘选择 **打开聊天框**，输入消息即可和爱莉希雅聊天，回答会逐步显示。聊天窗口可单独移动、缩放和关闭，关闭窗口后桌宠继续运行。左上加号开启新对话；底部齿轮、输入框和内凹斜箭头同排，齿轮打开设置与记录，悬停可查看说明；箭头发送消息，支持 Enter 发送、Shift + Enter 换行，中文输入法选词时不会误发。停止按钮可停止生成或朗读。
 
@@ -241,9 +243,9 @@ npm run make:release
 npm run verify:release
 ```
 
-`npm run make:release`（`node scripts/package-release.cjs`）生成 `release/Elysia_desktop_pet-1.4.0.exe` 和 `release/Elysia_desktop_pet-1.4.0-setup.exe`。也可分别运行 `npm run make:portable`、`npm run make:setup`。`npm run verify:release`（`node scripts/verify-package.cjs`）校验正式包；这些命令不会发布到 GitHub。构建需先准备语音资源包，`npm run package` 可生成未封装的应用目录。
+`npm run make:release`（`node scripts/package-release.cjs`）生成 `release/Elysia_desktop_pet-1.4.1.exe` 和 `release/Elysia_desktop_pet-1.4.1-setup.exe`。也可分别运行 `npm run make:portable`、`npm run make:setup`。`npm run verify:release`（`node scripts/verify-package.cjs`）校验正式包；这些命令不会发布到 GitHub。构建需先准备语音资源包，`npm run package` 可生成未封装的应用目录。
 
-1.4.0 晋升时已通过 **391 项单元测试**，并完成聊天界面、原生窗口、真实 Qwen 回复、真实语音及身体部位互动回归；测试范围与首次自动配置限制见 [1.4.0 更新说明](docs/releases/v1.4.0.md#验证范围)。完整命令与检查范围见[验证说明](docs/verification.md)。
+1.4.1 的置顶修复与验证范围见 [1.4.1 更新说明](docs/releases/v1.4.1.md#验证范围)，聊天、朗读和身体部位互动的原有验证记录保留在 [1.4.0 更新说明](docs/releases/v1.4.0.md#验证范围)。首次自动配置尚未在全新 Windows 环境中完成从零安装的全链路验收。完整命令与检查范围见[验证说明](docs/verification.md)。
 
 ## 项目结构
 

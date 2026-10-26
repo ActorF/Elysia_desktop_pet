@@ -63,13 +63,13 @@ function startProbe(hwnd) {
   });
   return {
     ready,
-    async read(action = 'snapshot', peerHwnd = null) {
+    async read(action = 'snapshot', peerHwnd = null, peerProcessId = process.pid) {
       await ready;
       const id = ++sequence;
       return new Promise((resolve, reject) => {
         const timer = setTimeout(() => { pending.delete(id); reject(new Error('Win32 probe response timed out.')); }, 5000);
         pending.set(id, { resolve, reject, timer });
-        child.stdin.write(JSON.stringify({ sequence: id, action, peerHwnd }) + '\n');
+        child.stdin.write(JSON.stringify({ sequence: id, action, peerHwnd, peerProcessId }) + '\n');
       });
     },
     async close() {
@@ -83,10 +83,59 @@ function startProbe(hwnd) {
   };
 }
 
+async function startExternalPeer() {
+  const temporaryProfile = fs.mkdtempSync(path.join(os.tmpdir(), 'elysia-taskbar-peer-'));
+  const env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE;
+  const child = spawn(process.execPath, [path.join(__dirname, 'taskbar-layer-peer.cjs'), '--profile', temporaryProfile],
+    { env, windowsHide: true, stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
+  let stderr = '', nextSequence = 0, readyResolve, readyReject;
+  const pending = new Map();
+  const ready = new Promise((resolve, reject) => { readyResolve = resolve; readyReject = reject; });
+  const startupTimer = setTimeout(() => readyReject(new Error('External test peer startup timed out.')), 15000);
+  child.stderr.on('data', chunk => { stderr = (stderr + chunk).slice(-3000); });
+  child.on('message', message => {
+    if (message.ready) { clearTimeout(startupTimer); readyResolve(message); return; }
+    const item = pending.get(message.sequence);
+    if (!item) return;
+    clearTimeout(item.timer); pending.delete(message.sequence);
+    if (message.error) item.reject(new Error(message.error)); else item.resolve(message);
+  });
+  function failed(error) {
+    clearTimeout(startupTimer); readyReject(error);
+    for (const item of pending.values()) { clearTimeout(item.timer); item.reject(error); }
+    pending.clear();
+  }
+  child.once('error', failed);
+  child.once('exit', code => failed(new Error(`External test peer exited (${code}): ${stderr}`)));
+  const peer = {
+    child, temporaryProfile,
+    async raise() {
+      const sequence = ++nextSequence;
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => { pending.delete(sequence); reject(new Error('External peer command timed out.')); }, 3000);
+        pending.set(sequence, { resolve, reject, timer }); child.send({ action: 'raise', sequence });
+      });
+    },
+    async close() {
+      clearTimeout(startupTimer);
+      if (child.connected) child.send({ action: 'stop' });
+      if (child.exitCode === null) await Promise.race([new Promise(resolve => child.once('exit', resolve)), delay(1500)]);
+      if (child.exitCode === null) { child.kill(); await Promise.race([new Promise(resolve => child.once('exit', resolve)), delay(1500)]); }
+      if (child.exitCode !== null && path.dirname(temporaryProfile) === os.tmpdir() && path.basename(temporaryProfile).startsWith('elysia-taskbar-peer-')) {
+        try { fs.rmSync(temporaryProfile, { recursive: true, force: true }); } catch {}
+      }
+    },
+  };
+  try {
+    const identity = await ready;
+    if (identity.processId !== child.pid || identity.processId === process.pid) throw new Error('External peer PID does not match its child process.');
+    return Object.assign(peer, identity);
+  } catch (error) { await peer.close(); throw error; }
+}
+
 async function worker() {
   const { app, BrowserWindow, screen } = require('electron');
   const { createTopmostController, REASSERT_INTERVAL_MS } = require(path.join(runtimeRoot, 'electron', 'window-layer.cjs'));
-  const { createTaskbarOrderer } = require(path.join(runtimeRoot, 'electron', 'taskbar-order.cjs'));
   const temporaryProfile = fs.mkdtempSync(path.join(os.tmpdir(), 'elysia-taskbar-check-'));
   app.setPath('userData', temporaryProfile);
   app.disableHardwareAcceleration();
@@ -95,23 +144,30 @@ async function worker() {
     status: 'running', startedAt: new Date().toISOString(), electron: process.versions.electron,
     platform: process.platform, controller: 'electron/window-layer.cjs',
     appArchive, runtimeRoot,
-    scope: 'Only the isolated test window is reordered. Native probe is read-only; no input is injected.',
+    scope: 'Invisible non-focusable test windows use isolated profiles. Native probe is read-only; no input is injected. The production controller may reorder visible topmost taskbars; their geometry, visibility and topmost styles must remain unchanged.',
     checks: [], samples: [], errors: [], focusEvents: 0,
   };
-  let window, controller, probe, sibling, siblingOrderer, baselineForeground;
+  let window, controller, probe, sibling, externalPeer, baselineForeground, baselineTaskbars;
   const nativeHandle = win => {
     const handle = win.getNativeWindowHandle();
     return '0x' + (handle.length === 8 ? handle.readBigUInt64LE() : BigInt(handle.readUInt32LE())).toString(16);
   };
   function check(name, passed, details) { report.checks.push({ name, passed: Boolean(passed), ...(details ? { details } : {}) }); }
+  const visibleTaskbars = snapshot => snapshot.taskbars.filter(taskbar => taskbar.visible && taskbar.topmost);
+  function checkTaskbarState(label, snapshot) {
+    const state = snapshot.taskbars.map(({ hwnd, processId, bounds, visible, topmost }) => ({ hwnd, processId, bounds, visible, topmost }))
+      .sort((a, b) => a.hwnd.localeCompare(b.hwnd));
+    if (!baselineTaskbars) baselineTaskbars = state;
+    check(`${label}: taskbar geometry, visibility and styles unchanged`, JSON.stringify(state) === JSON.stringify(baselineTaskbars));
+  }
   async function sample(label, expected = {}) {
     const started = Date.now();
     let snapshot = await probe.read();
     // The secondary-taskbar helper needs one PowerShell/Add-Type startup.
     // Require actual native convergence, rather than assuming a fixed delay.
     if (expected.order === 'below') {
-      while (Date.now() - started < 5000 && !(snapshot.target?.topmost && snapshot.taskbars.length &&
-          snapshot.taskbars.every(taskbar => snapshot.target.rank > taskbar.rank))) {
+      while (Date.now() - started < 5000 && !(snapshot.target?.topmost && visibleTaskbars(snapshot).length &&
+          visibleTaskbars(snapshot).every(taskbar => snapshot.target.rank > taskbar.rank))) {
         await delay(50); snapshot = await probe.read();
       }
     }
@@ -119,6 +175,7 @@ async function worker() {
     const state = { label, ...snapshot, convergenceMs: Date.now() - started, electronVisible: window.isVisible(), electronAlwaysOnTop: window.isAlwaysOnTop(),
       enabled: controller?.enabled ?? false, taskbarInFront: controller?.taskbarInFront ?? null };
     report.samples.push(state);
+    checkTaskbarState(label, snapshot);
     check(`${label}: complete native window walk`, snapshot.chainComplete && snapshot.target !== null);
     check(`${label}: test window never became foreground`, snapshot.foreground.hwnd !== snapshot.target?.hwnd);
     check(`${label}: foreground unchanged`, snapshot.foreground.hwnd === baselineForeground,
@@ -126,8 +183,8 @@ async function worker() {
     if ('visible' in expected) check(`${label}: visibility`, snapshot.target?.visible === expected.visible && window.isVisible() === expected.visible);
     if ('topmost' in expected) check(`${label}: actual WS_EX_TOPMOST`, snapshot.target?.topmost === expected.topmost);
     if (expected.order) {
-      check(`${label}: a visible Windows taskbar was found`, snapshot.taskbars.length > 0);
-      for (const taskbar of snapshot.taskbars) {
+      check(`${label}: a visible topmost Windows taskbar was found`, visibleTaskbars(snapshot).length > 0);
+      for (const taskbar of visibleTaskbars(snapshot)) {
         const passed = expected.order === 'above' ? snapshot.target.rank < taskbar.rank : snapshot.target.rank > taskbar.rank;
         check(`${label}: ${expected.order} ${taskbar.className} ${taskbar.hwnd}`, passed,
           { targetRank: snapshot.target.rank, taskbarRank: taskbar.rank, taskbarTopmost: taskbar.topmost });
@@ -166,38 +223,108 @@ async function worker() {
     await maintenance();
     await sample('below-taskbar timer repair', { visible: true, topmost: true, order: 'below' });
 
-    // A second invisible, non-focusable window owned by this test simulates a
-    // topmost app between the taskbars and pet. Use the same production helper
-    // for insertion, then stop its maintenance so the pet must recover above it.
+    // Use a separately owned process: same-process windows include legitimate
+    // subtitles and cursor overlays, so they must not be treated as competitors.
+    // The prior test only inserted a peer BELOW the taskbars, missing apps that
+    // legitimately became topmost ABOVE the shell taskbars (the reported bug).
+    externalPeer = await startExternalPeer();
+    report.externalPeer = { processId: externalPeer.processId, hwnd: externalPeer.hwnd };
+    let aboveTaskbarsObserved = false;
+    for (let attempt = 0; attempt < 3 && !aboveTaskbarsObserved; attempt++) {
+      const command = await externalPeer.raise();
+      check(`external peer raise ${attempt + 1}: zero focus events`, command.focusEvents === 0);
+      const snapshot = await probe.read('snapshot', externalPeer.hwnd, externalPeer.processId);
+      report.samples.push({ label: 'independent topmost app above taskbars', ...snapshot });
+      aboveTaskbarsObserved = snapshot.peer?.topmost && snapshot.peer.processId !== snapshot.target.processId &&
+        visibleTaskbars(snapshot).length > 0 && visibleTaskbars(snapshot).every(taskbar => snapshot.peer.rank < taskbar.rank);
+    }
+    check('competing topmost app was observed above the taskbars', aboveTaskbarsObserved);
+    await maintenance();
+    const aboveTaskbarsRecovered = await probe.read('snapshot', externalPeer.hwnd, externalPeer.processId);
+    report.samples.push({ label: 'pet recovers above app initially above taskbars', ...aboveTaskbarsRecovered });
+    check('taskbars remain above pet and pet returns above independent topmost app', aboveTaskbarsRecovered.target?.topmost &&
+      aboveTaskbarsRecovered.peer?.topmost && aboveTaskbarsRecovered.target.rank < aboveTaskbarsRecovered.peer.rank &&
+      visibleTaskbars(aboveTaskbarsRecovered).every(taskbar => taskbar.rank < aboveTaskbarsRecovered.target.rank));
+    check('above-taskbar competition did not change foreground', aboveTaskbarsRecovered.foreground.hwnd === baselineForeground);
+    checkTaskbarState('external topmost competitor recovery', aboveTaskbarsRecovered);
+    await externalPeer.close(); externalPeer = null;
+
     sibling = new BrowserWindow({ x: bounds.x + 8, y: bounds.y + 8, width: 32, height: 32,
       show: false, opacity: 0, frame: false, transparent: true, focusable: false, skipTaskbar: true,
       webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } });
     sibling.setIgnoreMouseEvents(true); sibling.on('focus', () => { report.focusEvents++; });
-    sibling.setAlwaysOnTop(true, 'screen-saver'); sibling.showInactive();
-    const peerHwnd = nativeHandle(sibling);
-    siblingOrderer = createTaskbarOrderer(sibling, { onError: error => report.errors.push(error.stack || error.message) });
-    let obstructionObserved = false;
-    for (let attempt = 0; attempt < 3 && !obstructionObserved; attempt++) {
-      siblingOrderer.start();
-      const deadline = Date.now() + 5000;
-      while (!siblingOrderer.running && Date.now() < deadline) { await delay(10); siblingOrderer.start(); }
-      check(`sibling insertion ${attempt + 1}: helper reached READY`, siblingOrderer.running);
-      const obstructed = await probe.read('snapshot', peerHwnd);
-      report.samples.push({ label: 'test-owned sibling insertion', ...obstructed });
-      obstructionObserved = obstructed.peer?.topmost && obstructed.peer.rank < obstructed.target.rank &&
-        obstructed.taskbars.every(taskbar => taskbar.rank < obstructed.peer.rank);
-      siblingOrderer.stop();
-      if (!obstructionObserved) await delay(150);
+    sibling.setAlwaysOnTop(true, 'screen-saver'); sibling.showInactive(); sibling.moveTop();
+    const siblingHwnd = nativeHandle(sibling);
+    const auxiliaryBefore = await probe.read('snapshot', siblingHwnd);
+    report.samples.push({ label: 'same-process auxiliary initially above pet', ...auxiliaryBefore });
+    const relevantOrder = snapshot => [snapshot.target, snapshot.peer, ...visibleTaskbars(snapshot)].sort((a, b) => a.rank - b.rank).map(info => info.hwnd);
+    check('same-process auxiliary starts above pet', auxiliaryBefore.peer?.processId === auxiliaryBefore.target.processId &&
+      auxiliaryBefore.peer.rank < auxiliaryBefore.target.rank);
+    // An already running external app may legitimately trigger one repair that
+    // moves the taskbars above this auxiliary. Compare subsequent maintenance
+    // against the converged order, while always requiring auxiliary > pet.
+    await maintenance();
+    const auxiliarySettled = await probe.read('snapshot', siblingHwnd);
+    report.samples.push({ label: 'same-process auxiliary after initial convergence', ...auxiliarySettled });
+    check('auxiliary remains above pet during initial convergence', auxiliarySettled.peer.rank < auxiliarySettled.target.rank);
+    checkTaskbarState('auxiliary initial convergence', auxiliarySettled);
+    for (let cycle = 1; cycle <= 2; cycle++) {
+      await maintenance();
+      const snapshot = await probe.read('snapshot', siblingHwnd);
+      report.samples.push({ label: `same-process auxiliary after maintenance ${cycle}`, ...snapshot });
+      check(`auxiliary maintenance ${cycle}: auxiliary stays above pet`, snapshot.peer.rank < snapshot.target.rank);
+      check(`auxiliary maintenance ${cycle}: relevant order remains unchanged`, JSON.stringify(relevantOrder(snapshot)) === JSON.stringify(relevantOrder(auxiliarySettled)));
+      check(`auxiliary maintenance ${cycle}: foreground unchanged`, snapshot.foreground.hwnd === baselineForeground);
+      checkTaskbarState(`auxiliary maintenance ${cycle}`, snapshot);
     }
-    check('test-owned sibling was observed between taskbars and pet', obstructionObserved);
-    await delay(350);
-    const recovered = await probe.read('snapshot', peerHwnd);
-    report.samples.push({ label: 'pet recovers above test-owned sibling', ...recovered });
-    check('pet returns above competing topmost sibling while below all taskbars', recovered.target.topmost &&
-      recovered.peer?.topmost && recovered.target.rank < recovered.peer.rank &&
-      recovered.taskbars.every(taskbar => taskbar.rank < recovered.target.rank));
-    check('sibling test did not change foreground', recovered.foreground.hwnd === baselineForeground);
-    siblingOrderer.dispose(); sibling.destroy(); sibling = null;
+
+    externalPeer = await startExternalPeer();
+    let simultaneousObstructionObserved = false;
+    for (let attempt = 0; attempt < 3 && !simultaneousObstructionObserved; attempt++) {
+      const command = await externalPeer.raise();
+      check(`external raise with auxiliary ${attempt + 1}: zero focus events`, command.focusEvents === 0);
+      const snapshot = await probe.read('snapshot', externalPeer.hwnd, externalPeer.processId);
+      report.samples.push({ label: 'independent topmost app raised with auxiliary present', ...snapshot });
+      simultaneousObstructionObserved = snapshot.peer?.topmost && visibleTaskbars(snapshot).length > 0 &&
+        visibleTaskbars(snapshot).every(taskbar => snapshot.peer.rank < taskbar.rank);
+    }
+    check('external competitor above taskbars observed while auxiliary exists', simultaneousObstructionObserved);
+    await maintenance();
+    const simultaneousRecovery = await probe.read('snapshot', externalPeer.hwnd, externalPeer.processId);
+    report.samples.push({ label: 'external recovery with auxiliary present', ...simultaneousRecovery });
+    check('external repair with auxiliary restores taskbars > pet > competitor', simultaneousRecovery.target?.topmost &&
+      simultaneousRecovery.peer?.topmost && simultaneousRecovery.target.rank < simultaneousRecovery.peer.rank &&
+      visibleTaskbars(simultaneousRecovery).every(taskbar => taskbar.rank < simultaneousRecovery.target.rank));
+    const auxiliaryAfterRepair = await probe.read('snapshot', siblingHwnd);
+    report.samples.push({ label: 'auxiliary preserved during external repair', ...auxiliaryAfterRepair });
+    check('external repair preserves same-process auxiliary above pet', auxiliaryAfterRepair.peer.rank < auxiliaryAfterRepair.target.rank);
+    check('external repair with auxiliary does not change foreground', auxiliaryAfterRepair.foreground.hwnd === baselineForeground);
+    checkTaskbarState('external repair with auxiliary', auxiliaryAfterRepair);
+
+    // Simulate an external native operation removing WS_EX_TOPMOST while the
+    // preference/controller remains enabled. Cached Electron policy alone must
+    // not leave the pet below every ordinary application indefinitely.
+    let lostNativeTopmostObserved = false;
+    for (let attempt = 0; attempt < 3 && !lostNativeTopmostObserved; attempt++) {
+      window.setAlwaysOnTop(false);
+      const snapshot = await probe.read('snapshot', externalPeer.hwnd, externalPeer.processId);
+      report.samples.push({ label: 'native topmost deliberately removed while controller enabled', ...snapshot });
+      lostNativeTopmostObserved = snapshot.target?.topmost === false;
+    }
+    check('native topmost loss observed with preference still enabled', lostNativeTopmostObserved && controller.enabled);
+    await maintenance();
+    const flagRecovery = await probe.read('snapshot', externalPeer.hwnd, externalPeer.processId);
+    report.samples.push({ label: 'native topmost and taskbar order recover automatically', ...flagRecovery });
+    check('enabled controller restores native topmost and taskbars > pet > competitor', flagRecovery.target?.topmost &&
+      flagRecovery.peer?.topmost && flagRecovery.target.rank < flagRecovery.peer.rank &&
+      visibleTaskbars(flagRecovery).every(taskbar => taskbar.rank < flagRecovery.target.rank));
+    const auxiliaryAfterFlagRecovery = await probe.read('snapshot', siblingHwnd);
+    report.samples.push({ label: 'auxiliary preserved during native topmost restoration', ...auxiliaryAfterFlagRecovery });
+    check('native topmost restoration preserves auxiliary above pet', auxiliaryAfterFlagRecovery.peer.rank < auxiliaryAfterFlagRecovery.target.rank);
+    check('native topmost restoration does not change foreground', flagRecovery.foreground.hwnd === baselineForeground);
+    checkTaskbarState('native topmost restoration', flagRecovery);
+    await externalPeer.close(); externalPeer = null;
+    sibling.destroy(); sibling = null;
 
     controller.setTaskbarInFront(false); await settle();
     await sample('above-taskbar preference switch', { visible: true, topmost: true, order: 'above' });
@@ -247,7 +374,7 @@ async function worker() {
     report.errors.push(error.stack || String(error));
   } finally {
     controller?.dispose();
-    siblingOrderer?.dispose();
+    await externalPeer?.close();
     if (probe) {
       try {
         const started = Date.now();
