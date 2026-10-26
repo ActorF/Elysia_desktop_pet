@@ -1,8 +1,8 @@
 # 验证说明
 
-本文件说明 **1.4.2 测试版的本地修复**，基于 `version-control` 的 `6f7e6ac`。修复包含手动朗读模型复用、16384 token 聊天上下文以及程序独立部署的 Visual C++ 运行库。安装版 `release/Elysia_desktop_pet-1.4.2-setup.exe`、便携版 `release/Elysia_desktop_pet-1.4.2.exe` 与 SHA256 保存在本地；远程分支下载尚未包含此次修复，尚未创建 1.4.2 GitHub Release。变化与验证范围见 [1.4.2 更新说明](releases/v1.4.2.md)。报告保存在本地忽略的 `artifacts/`。
+本文件说明 **1.4.2 正式版** 的验证范围。用户已确认修复后的程序人工测试全部通过，并授权晋升正式版。修复包含手动朗读模型复用、16384 token 聊天上下文以及程序独立部署的 Visual C++ 运行库。源码、安装版 `release/Elysia_desktop_pet-1.4.2-setup.exe`、便携版 `release/Elysia_desktop_pet-1.4.2.exe` 与 SHA256 通过 `main` 分支提供；本次不创建 1.4.2 GitHub Release。变化与下载入口见 [1.4.2 更新说明](releases/v1.4.2.md)。报告保存在本地忽略的 `artifacts/`。
 
-本地修复通过 **437 项单元测试**、真实 llama.cpp 中文与 8000 字消息、同一语音工作进程的连续手动朗读，以及完整包内检查。安装版的 69 项资源与便携版一致，9 次包内运行包含桌面、语音、互动、聊天和重复启动。另一台电脑曾在 1.4.1／1.4.2 触发隐藏置顶断言失败，本机完整检查未复现；仍需保留可见桌面人工验证。干净 Windows 从零安装、系统重启和 CPU-only 性能未作为本次已完成项目；1.4.1 历史结果见其[更新说明](releases/v1.4.1.md#验证范围)。
+正式版通过 **437 项单元测试**、真实 llama.cpp 中文与 8000 字消息、同一语音工作进程的连续手动朗读，以及完整包内检查。安装版的 69 项资源与便携版一致，9 次包内运行包含桌面、语音、互动、聊天和重复启动。另一台电脑曾在 1.4.1／1.4.2 触发隐藏置顶断言失败，本机完整检查未复现；可见桌面检查步骤保留用于后续跨环境回归。干净 Windows 从零安装、系统重启和 CPU-only 性能未作为本次已完成项目；1.4.1 历史结果见其[更新说明](releases/v1.4.1.md#验证范围)。
 
 `npm run make:release` 同时生成便携版与安装版；`npm run verify:release` 校验完整文件清单、源码字节、原录音、语音资源包摘要、更新配置及隐藏窗口行为，并验证重复启动不会删除现有实例的临时文件。`npm run verify:release -- --chat-only` 只运行聊天相关包内检查与重复启动检查，不能替代完整命令。`npm run verify:setup` 核对安装器中的程序和资源与已验证的便携版完全一致。所需语音构建资源保留在被忽略的 `build-resources/voice-bootstrap/`，不依赖旧样本或草稿目录。
 
@@ -22,7 +22,7 @@
 
 ## 环境与命令
 
-需要 Windows、Node.js 22 或更新版本；浏览器检查使用 Microsoft Edge。1.4.2 测试源码取自 `version-control`；通过克隆获取完整 EXE 时需安装 Git LFS 并执行 `git lfs pull`。先执行 `npm ci` 安装开发依赖。Windows 上需要 Python 的测试可使用已部署的 `voice-runtime/python`，或安装 Python；Windows Store 的占位命令不等于可运行的 Python。
+需要 Windows、Node.js 22 或更新版本；浏览器检查使用 Microsoft Edge。1.4.2 正式版源码取自 `main`；通过克隆获取完整 EXE 时需安装 Git LFS 并执行 `git lfs pull`。先执行 `npm ci` 安装开发依赖。Windows 上需要 Python 的测试可使用已部署的 `voice-runtime/python`，或安装 Python；Windows Store 的占位命令不等于可运行的 Python。
 
 ```powershell
 npm test
@@ -70,7 +70,7 @@ npm run test:chat-runtime
 
 该检查隐藏启动真实服务，确认 VC DLL 实际从 `chat-runtime/` 加载，随后在隔离历史中发送中文短句和原先超出 8192 token 的 8000 字回归样例。保持聊天模型驻留，关闭自动朗读并模拟全屏状态后，连续合成两条不同的手动朗读文本，验证 WAV 及同一个工作进程的复用。最后释放进程、从磁盘再次启动服务并检查退出清理。报告、测试回复与 WAV 只留在 `artifacts/chat-runtime-check/`，其中分别记录冷启动与暖模型耗时；不播放测试录音。
 
-`npm run test:chat-model` 连接已经运行的默认聊天服务验证中文多轮回复；`npm run test:chat-tts` 使用 `ELYSIA_VOICE_PROJECT_ROOT` 指定的环境单独验证语音。它们与上述联合检查有不同的前置条件，不要并行启动多个真实模型检查。第二台电脑的完整人工步骤见 [1.4.2 验收清单](releases/v1.4.2.md#第二台电脑验收清单)。
+`npm run test:chat-model` 连接已经运行的默认聊天服务验证中文多轮回复；`npm run test:chat-tts` 使用 `ELYSIA_VOICE_PROJECT_ROOT` 指定的环境单独验证语音。它们与上述联合检查有不同的前置条件，不要并行启动多个真实模型检查。换机与跨环境回归步骤见 [1.4.2 回归参考](releases/v1.4.2.md#跨环境回归参考)。
 
 ## 表情、形态与动作
 
@@ -137,7 +137,7 @@ Windows 的原生窗口有最小尺寸限制；1% 人物仍按约 4.2×5.6 DIP �
 
 `npm run test:settings` 检查小数输入、范围约束、默认按钮、暂时清空输入框、关闭流光时预设样式与时长、自动保存和重新打开。`npm run test:interaction-settings` 检查实际 Electron IPC 与磁盘持久化，以及三种样式的快速直线、持续折返、中段像素、独立开关、鼠标穿透和时长到期清理。
 
-隐藏窗口可能被 Chromium 降低绘制频率；像素截图接口可能唤醒合成器。因此隐藏 smoke 的像素通过，不能单独证明真实桌面一直可见。发布前还需在可见窗口中验证：
+隐藏窗口可能被 Chromium 降低绘制频率；像素截图接口可能唤醒合成器。因此隐藏 smoke 的像素通过，不能单独证明真实桌面一直可见。可见窗口的回归步骤如下：
 
 1. 刚启动立即快速移动 A→B，确认中间也有轨迹；等完全淡出后再甩动一次。
 2. 三种样式各做持续快速左右折返、顺时针画圈和急转弯；确认实际桌面持续显示，而不只是在截图回读后出现。
@@ -155,4 +155,4 @@ Windows 的原生窗口有最小尺寸限制；1% 人物仍按约 4.2×5.6 DIP �
 
 `verify-package.cjs` 从最终 EXE 提取应用内容，核对文件清单、源码与素材字节、54 条录音及其校验清单、代码许可证和版权说明。随后运行目录应用和便携程序的验收，检查启动、桌面交互、缩放、独立设置窗口及语音资源。具体执行项目和通过状态以脚本输出为准。
 
-验收会核对运行前后的原有桌宠进程，保留用户正在使用的实例。结果与 SHA256 写入 `artifacts/validation-v1.4.2/release-check.json`，校验文件生成在 `release/`。报告、真实环境日志与测试音频保留本地，不随测试版上传。
+验收会核对运行前后的原有桌宠进程，保留用户正在使用的实例。结果与 SHA256 写入 `artifacts/validation-v1.4.2/release-check.json`，校验文件生成在 `release/`。报告、真实环境日志与测试音频保留本地，不随发布包上传。
