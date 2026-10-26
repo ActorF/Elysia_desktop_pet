@@ -49,7 +49,7 @@ async function main() {
     });
     await page.addInitScript(() => {
       const listeners = new Set(), windowListeners = new Set(), windowControls = [], voiceListeners = new Set(), voiceCalls = [];
-      let windowState = { maximized: false };
+      let windowState = { maximized: false }, lastSettingsState = null;
       let voiceState = { settings: { enabled: true, dnd: false, volume: .8, birthday: '' }, playback: { status: 'idle' },
         available: true, interactionAvailable: true, error: null, interactionError: null, queuedInteraction: null,
         environment: { monitorReady: true, locked: false, suspended: false, fullscreen: false } };
@@ -58,7 +58,10 @@ async function main() {
         for (const callback of voiceListeners) callback(structuredClone(voiceState));
         return structuredClone(voiceState);
       };
-      const publish = state => { for (const callback of listeners) callback(structuredClone(state)); };
+      const publish = state => {
+        lastSettingsState = structuredClone(state);
+        for (const callback of listeners) callback(structuredClone(state));
+      };
       const publishWindowState = state => {
         windowState = { maximized: state.maximized === true };
         for (const callback of windowListeners) callback(structuredClone(windowState));
@@ -68,7 +71,7 @@ async function main() {
         if (method !== 'getState') publish(state);
         return method === 'action' ? true : state;
       };
-      window.__settingsQA = { publish, windowControls, publishWindowState, publishVoice, voiceCalls, voiceSnapshot: () => structuredClone(voiceState) };
+      window.__settingsQA = { publish, snapshot: () => structuredClone(lastSettingsState), windowControls, publishWindowState, publishVoice, voiceCalls, voiceSnapshot: () => structuredClone(voiceState) };
       window.elysiaSettings = Object.freeze({
         getState: () => invoke('getState'), setSettings: patch => invoke('setSettings', patch),
         action: action => invoke('action', action), resize: scale => invoke('resize', scale),
@@ -90,6 +93,12 @@ async function main() {
     await page.goto(`http://127.0.0.1:${server.address().port}/renderer/settings.html`);
     await page.waitForSelector('html[data-ready="true"][data-voice-ready="true"]');
     const settled = async () => { await page.waitForFunction(() => document.querySelector('#save-status').textContent === '自动保存'); };
+    const saved = async (key, value) => {
+      // A range input queues its save for a later animation frame. Wait for the
+      // host's published value, not an async predicate or the previous idle label.
+      await page.waitForFunction(({ key, value }) => window.__settingsQA.snapshot()?.settings[key] === value, { key, value });
+      await settled(); assert.equal(settings[key], value);
+    };
     const check = (name, details = {}) => report.checks.push({ name, passed: true, ...details });
     const tab = async name => { await page.locator(`[data-tab="${name}"]`).click(); assert.equal(await page.locator(`[data-tab="${name}"]`).getAttribute('aria-selected'), 'true'); };
     const selected = async (type, id) => assert.equal(await page.locator(`.choice[data-action="${type}"][data-id="${id}"]`).getAttribute('aria-pressed'), 'true');
@@ -191,8 +200,7 @@ async function main() {
     await toggle('hairMotion', false); await toggle('hairMotion', true); await toggle('keyDisplay', false); await toggle('keyDisplay', true);
     await page.locator('[name="motionAmplitude"]').fill('113'); await page.locator('[name="motionAmplitude"]').blur();
     await page.waitForFunction(() => document.querySelector('[name="motionAmplitudeValue"]').value === '113');
-    await page.waitForFunction(async () => (await window.elysiaSettings.getState()).settings.motionAmplitude === 1.13);
-    await settled(); assert.equal(settings.motionAmplitude, 1.13);
+    await saved('motionAmplitude', 1.13);
     check('sliders and numeric fields route percentage and speed values, extrema and independent toggles');
     await capture('animation-controls');
     await page.getByRole('button', { name: '恢复默认眼睛跟随幅度', exact: true }).click();
@@ -265,8 +273,7 @@ async function main() {
     await page.getByRole('button',{name:'恢复默认轨迹保留时间'}).click();await settled();
     assert.equal(settings.cursorTrailDuration,.6);assert.equal(await durationField.inputValue(),'0.6');
     await page.locator('[name="cursorTrailDuration"]').evaluate(slider=>{slider.value='1.3';slider.dispatchEvent(new Event('input',{bubbles:true}));});
-    await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(resolve)));
-    await settled();assert.equal(settings.cursorTrailDuration,1.3);
+    await saved('cursorTrailDuration', 1.3);
     assert.equal(settings.cursorTrailEnabled,false);assert.equal(settings.interactionsEnabled,true);assert.equal(settings.cursorTrailStyle,'ribbon');
     await page.reload();await page.waitForSelector('html[data-ready="true"]');await tab('interaction');
     assert.equal(await durationField.inputValue(),'1.3');assert.equal(await page.locator('[name="cursorTrailEnabled"]').isChecked(),false);
