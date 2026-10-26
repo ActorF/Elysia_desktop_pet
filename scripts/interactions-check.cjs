@@ -27,12 +27,14 @@ async function main() {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   let browser, activePage;
   try {
-    browser = await chromium.launch({ channel: 'msedge', headless: true });
+    browser = await chromium.launch({ channel: process.platform === 'darwin' ? 'chrome' : 'msedge', headless: true });
     async function freshPage({ scale = 1, characterX = 140, characterY = 0, interactionsEnabled = true } = {}) {
       if (activePage) await activePage.close();
       const page = activePage = await browser.newPage({ viewport: { width: 740, height: 800 }, deviceScaleFactor: 1 });
       page.on('pageerror', error => report.errors.push(error.message));
       await page.addInitScript(({ defaults, scale, characterX, characterY, interactionsEnabled }) => {
+        // Keep fixed-expression upstream assertions deterministic; unit tests cover all draws.
+        Math.random = () => 0;
         const callbacks = {};
         const host = { settings: { ...defaults, scale, interactionsEnabled }, hotkeys: { legacy: { active: false }, typing: { active: false } },
           viewport: { width: 740, height: 800, characterX, characterY, characterWidth: 600 * scale, characterHeight: 800 * scale, clipped: false } };
@@ -265,6 +267,21 @@ async function main() {
     await page.mouse.up(); assert.deepEqual(kinds(await snapshot(page)), []);
     await click(page); assert.deepEqual(kinds(await snapshot(page)), ['poke']);
     check('a press begun before disabling cannot become a ghost click when released after re-enabling');
+    // Exercise source-space regions on all four foreground-hand poses. The
+    // resulting voice kind still uses the upstream catalog and debounce path.
+    for (const [pose,x,y] of [['idle',770,752],['tea',635,741],['cake',702,750],['megaphone',337,751]]) {
+      page = await freshPage(); await action(page,{type:'pose',id:pose});
+      await click(page,38+x*.48,68+y*.48);
+      result = await snapshot(page);
+      assert.equal(result.state.expression,'blush'); assert.deepEqual(kinds(result),['poke']);
+      check(`fine hand region follows ${pose} without replacing the voice group`);
+    }
+    page = await freshPage();
+    await click(page,38+540*.48,68+1250*.48);
+    assert.equal((await snapshot(page)).state.expression,'surprise');
+    const count = (await snapshot(page)).calls.length;
+    await click(page,1,1); assert.equal((await snapshot(page)).calls.length,count);
+    check('legs use the startled group and transparent source pixels stay inert');
     assert.deepEqual(report.errors, [], 'No renderer exceptions');
     report.passed = true;
   } catch (error) {
