@@ -1,7 +1,7 @@
 {
   "name": "elysia_desktop_pet",
   "productName": "爱莉希雅桌宠",
-  "version": "1.4.2",
+  "version": "1.4.3",
   "private": true,
   "description": "独立爱莉希雅桌面伙伴",
   "author": "ActorF",
@@ -10,7 +10,7 @@
   "scripts": {
     "start": "node scripts/launch.cjs",
     "test": "node --test tests/*.test.cjs tests/*.test.mjs",
-    "package": "electron-builder --dir",
+    "package": "npm run prepare:chat && electron-builder --dir",
     "make:portable": "node scripts/package-release.cjs --portable",
     "make:setup": "node scripts/package-release.cjs --setup",
     "make:release": "node scripts/package-release.cjs",
@@ -31,6 +31,7 @@
     "test:chat-tts": "node scripts/chat-tts-check.cjs",
     "build:icon": "node scripts/build-icon.cjs",
     "prepare:voice": "node scripts/package-voice-bootstrap.cjs",
+    "prepare:chat": "node scripts/prepare-chat-bootstrap.cjs",
     "verify:release": "node scripts/verify-package.cjs",
     "verify:setup": "node scripts/verify-setup.cjs"
   },
@@ -56,6 +57,18 @@
       "ASSET-NOTICE.md"
     ],
     "extraResources": [
+      {
+        "from": "build-resources/chat-bootstrap/llama-b11669-bin-win-vulkan-x64.zip",
+        "to": "llama-b11669-bin-win-vulkan-x64.zip"
+      },
+      {
+        "from": "licenses",
+        "to": "licenses",
+        "filter": [
+          "llama.cpp-LICENSE.txt",
+          "llama.cpp-NOTICE.txt"
+        ]
+      },
       {
         "from": "build-resources/voice-bootstrap/Elysia-voice-assets-v1.zip",
         "to": "Elysia-voice-assets-v1.zip"

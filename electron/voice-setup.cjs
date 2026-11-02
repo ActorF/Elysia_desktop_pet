@@ -5,13 +5,15 @@ const path = require('node:path');
 const { createHash, randomUUID } = require('node:crypto');
 const { spawn } = require('node:child_process');
 const { StringDecoder } = require('node:string_decoder');
+const { downloadResource } = require('./resource-download.cjs');
 
 const RUNTIME_NAME = 'GPT-SoVITS-v2-240821';
 const REQUIRED = ['config/settings.py', 'python/python.exe', 'python/python314.zip', 'voice/managed_gpt_sovits.py',
   'scripts/gpt_sovits_worker.py', 'workspace/settings/voice-profiles.json', `models/cache/${RUNTIME_NAME}/runtime/python.exe`];
 const MESSAGES = Object.freeze({
   manifest: '语音资源清单尚未准备好，请使用包含完整配置资源的安装包。',
-  unavailable: '语音资源尚未发布或暂时无法下载，请稍后重试。文字聊天仍可使用。',
+  unavailable: '安装包中缺少语音资源，请重新下载完整安装包后重试。文字聊天仍可使用。',
+  download: '语音资源下载未完成，请检查网络后重试；已下载部分会继续使用。文字聊天仍可使用。',
   integrity: '语音资源校验未通过，未安装该文件。请重新下载后重试。',
   extractor: '安装包中的解压工具缺失或校验失败，请重新下载安装包。',
   archive: '语音压缩包目录或文件结构不符合预期，未部署该资源。',
@@ -22,16 +24,37 @@ const failure = code => Object.assign(new Error(code), { voiceSetupCode: code })
 const aborted = signal => { if (signal.aborted) throw Object.assign(new Error('cancelled'), { name: 'AbortError' }); };
 const digestPattern = /^[0-9a-f]{64}$/i;
 
-function allowedUrl(value) {
+function modelScopeSource(value) {
+  let url;
+  try { url = new URL(value); } catch { return false; }
+  return url.protocol === 'https:' && !url.username && !url.password && !url.port && !url.search && !url.hash
+    && url.hostname === 'www.modelscope.cn'
+    && /^\/models\/[A-Za-z0-9][A-Za-z0-9_.-]*\/[A-Za-z0-9][A-Za-z0-9_.-]*\/resolve\/[a-f0-9]{40}\/GPT-SoVITS-v2-240821\.7z$/.test(url.pathname);
+}
+
+function allowedUrl(value, sourceValue, asset) {
   let url;
   try { url = new URL(value); } catch { return false; }
   if (url.protocol !== 'https:' || url.username || url.password || url.port) return false;
+  if (sourceValue && modelScopeSource(sourceValue)) {
+    const source = new URL(sourceValue);
+    if (url.hostname === 'www.modelscope.cn') return url.pathname === source.pathname && !url.search && !url.hash;
+    const hash = asset?.sha256?.toLowerCase();
+    return digestPattern.test(hash) && url.hostname === 'cdn-lfs-cn-1.modelscope.cn'
+      && url.pathname === `/prod/lfs-objects/${hash.slice(0, 2)}/${hash.slice(2, 4)}/${hash.slice(4)}`;
+  }
   if (url.hostname === 'github.com') return url.pathname.startsWith('/ActorF/Elysia_desktop_pet/releases/download/');
   if (url.hostname === 'huggingface.co') return url.pathname.startsWith('/lj1995/GPT-SoVITS-windows-package/resolve/');
   if (['release-assets.githubusercontent.com', 'objects.githubusercontent.com'].includes(url.hostname)) {
     return /^\/github-production-release-asset(?:-2e65be)?\//.test(url.pathname);
   }
   return ['cdn-lfs.huggingface.co', 'cdn-lfs-us-1.hf.co', 'cdn-lfs.hf.co', 'cas-bridge.xethub.hf.co', 'us.aws.cdn.hf.co'].includes(url.hostname);
+}
+
+function allowedSource(value, kind, item) {
+  if (typeof value !== 'string') return false;
+  if (modelScopeSource(value)) return kind === 'runtime' && item.fileName === `${RUNTIME_NAME}.7z`;
+  return allowedUrl(value);
 }
 
 function validManifest(value) {
@@ -41,7 +64,9 @@ function validManifest(value) {
     const item = value[key];
     return item && typeof item.fileName === 'string' && /^[A-Za-z0-9_.-]+\.(?:zip|7z)$/.test(item.fileName)
       && Number.isSafeInteger(item.bytes) && item.bytes > 0 && item.bytes <= 12 * 1024 ** 3
-      && digestPattern.test(item.sha256) && (item.url === undefined || item.url === null || allowedUrl(item.url));
+      && digestPattern.test(item.sha256) && (item.url === undefined || item.url === null || allowedSource(item.url, key, item))
+      && (item.sources === undefined || (Array.isArray(item.sources) && item.sources.length > 0 && item.sources.length <= 4
+        && new Set(item.sources).size === item.sources.length && item.sources.every(source => allowedSource(source, key, item))));
   });
 }
 
@@ -56,7 +81,8 @@ function safeEntry(name) {
 function createVoiceSetup({ userData, onChange = () => {}, resourcesPath = process.resourcesPath,
   assetDirectory, fetchImpl = globalThis.fetch, spawnImpl = spawn, env = process.env,
   manifest: suppliedManifest, manifestPath = path.join(__dirname, 'voice-bootstrap-manifest.json'),
-  downloadTimeoutMs = 4 * 60 * 60 * 1000, extractionTimeoutMs = 45 * 60 * 1000 } = {}) {
+  downloadTimeoutMs = 4 * 60 * 60 * 1000, requestTimeoutMs = 15000, idleTimeoutMs = 30000,
+  extractionTimeoutMs = 45 * 60 * 1000 } = {}) {
   if (typeof userData !== 'string' || !path.isAbsolute(userData)) throw new TypeError('userData must be absolute.');
   const projectRoot = path.join(userData, 'voice-runtime');
   let manifest;
@@ -124,49 +150,25 @@ function createVoiceSetup({ userData, onChange = () => {}, resourcesPath = proce
       if (await matches(file, item, signal)) return file;
     }
     aborted(signal);
-    if (!item.url) throw failure('unavailable');
+    const sources = item.sources || (item.url ? [item.url] : []);
+    if (!sources.length) throw failure('unavailable');
     phase('downloading', `正在下载${kind}，完成后会自动配置…`);
     update({ totalBytes: item.bytes });
-    const partial = path.join(cacheDirectory, `${randomUUID()}.partial`);
-    const combined = AbortSignal.any([signal, AbortSignal.timeout(downloadTimeoutMs)]);
-    let response, url = item.url, handle;
     try {
-      for (let count = 0; count <= 8; count++) {
-        if (!allowedUrl(url)) throw failure('integrity');
-        try { response = await fetchImpl(url, { signal: combined, redirect: 'manual' }); } catch { throw failure('unavailable'); }
-        if (![301, 302, 303, 307, 308].includes(response.status)) break;
-        const target = response.headers.get('location'); await response.body?.cancel();
-        if (!target || count === 8) throw failure('integrity');
-        url = new URL(target, url).href;
-      }
-      if (!response?.ok || !response.body) throw failure('unavailable');
-      const declared = response.headers.get('content-length');
-      if (declared !== null && Number(declared) !== item.bytes) throw failure('integrity');
-      handle = await fs.promises.open(partial, 'wx', 0o600);
-      const hash = createHash('sha256'), reader = response.body.getReader(); let completed = 0;
-      const stop = () => { void reader.cancel().catch(() => {}); };
-      combined.addEventListener('abort', stop, { once: true });
-      try {
-        for (;;) {
-          aborted(combined);
-          const { done, value } = await reader.read(); aborted(combined);
-          if (done) break;
-          completed += value.length;
-          if (completed > item.bytes) throw failure('integrity');
-          hash.update(value); await handle.writeFile(value);
-          update({ completedBytes: completed, progress: completed / item.bytes }, true);
-        }
-      } finally { combined.removeEventListener('abort', stop); await reader.cancel().catch(() => {}); reader.releaseLock(); }
-      await handle.close(); handle = null;
-      if (completed !== item.bytes || hash.digest('hex').toLowerCase() !== item.sha256.toLowerCase()) throw failure('integrity');
+      return await downloadResource({ asset: item, destination: cached, sources, fetchImpl, signal,
+        isAllowedUrl: (url, source) => allowedUrl(url, source, item),
+        preserveInvalidDestination: false, downloadTimeoutMs, requestTimeoutMs, idleTimeoutMs,
+        onProgress: (completedBytes, totalBytes) => update({ phase: 'downloading',
+          message: `正在下载${kind}，完成后会自动配置…`, completedBytes, totalBytes, progress: completedBytes / totalBytes }, true),
+        onVerify: () => phase('verifying', `正在校验${kind}下载内容…`),
+        onSourceChange: ({ index }) => {
+          if (index > 0) phase('downloading', `正在切换${kind}下载源，已下载部分会继续使用…`);
+        } });
+    } catch (error) {
       aborted(signal);
-      // Cache names contain the expected digest. Replace only this exact failed
-      // cache entry; unrelated versions and concurrent partials are never pruned.
-      await fs.promises.rm(cached, { force: true });
-      await fs.promises.rename(partial, cached);
-      return cached;
-    } catch (error) { throw error.voiceSetupCode ? error : failure(combined.aborted && !signal.aborted ? 'unavailable' : 'storage'); }
-    finally { await handle?.close().catch(() => {}); await fs.promises.rm(partial, { force: true }).catch(() => {}); }
+      if (error.name === 'AbortError') throw error;
+      throw failure(['download', 'integrity', 'storage'].includes(error.setupCode) ? error.setupCode : 'storage');
+    }
   }
   function runExtractor(executable, args, signal) {
     return new Promise((resolve, reject) => {
@@ -300,7 +302,7 @@ function createVoiceSetup({ userData, onChange = () => {}, resourcesPath = proce
       const cancelled = signal.aborted;
       terminal = { phase: cancelled ? 'cancelled' : 'error', ready: false,
         error: cancelled ? null : MESSAGES[error.voiceSetupCode] || MESSAGES.storage,
-        message: cancelled ? '已取消语音配置，重试时会复用已校验的下载文件。' : MESSAGES[error.voiceSetupCode] || MESSAGES.storage };
+        message: cancelled ? '已取消语音配置，重试时会继续下载并复用已校验的文件。' : MESSAGES[error.voiceSetupCode] || MESSAGES.storage };
     } finally {
       if (!operation.child) await removeStage(stage).catch(() => {});
       if (active === operation) active = null;

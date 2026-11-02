@@ -4,25 +4,25 @@
 <p align="center"><strong>简体中文</strong> · <a href="README.en.md">English</a></p>
 <p align="center"><a href="#下载程序">下载程序</a> · <a href="#角色展示">角色展示</a> · <a href="#使用">使用说明</a> · <a href="#源码运行">源码运行</a></p>
 
-透明全身立绘、鼠标目光跟随、轻柔摆动。表情、猫猫形态、眼镜和四种动作可以自由搭配，输入字符时还有小云朵回应。支持本地聊天、可选回复朗读、模型自动配置、聊天记录管理与身体部位互动。1.4.2 改用桌宠自行管理的 llama.cpp，并修复手动朗读被系统忙碌状态误拦截的问题。
+透明全身立绘、鼠标目光跟随、轻柔摆动。表情、猫猫形态、眼镜和四种动作可以自由搭配，输入字符时还有小云朵回应。支持本地聊天、可选回复朗读、模型自动配置、聊天记录管理与身体部位互动。
 
-**当前正式版本：1.4.2。** 已包含手动朗读复用、长消息和聊天运行库修复。查看 [1.4.2 发布页](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.4.2) 与[更新说明](docs/releases/v1.4.2.md)。
+**当前正式版本：1.4.3。** 聊天模型与语音环境支持国内源自动下载。查看 [1.4.3 发布页](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.4.3) 与[更新说明](docs/releases/v1.4.3.md)。
 
 ## 下载程序
 
 | 版本 | 程序 | 功能 | 校验文件 |
 | --- | --- | --- | --- |
-| **1.4.2 Windows 安装版** | [下载安装器](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.4.2/Elysia_desktop_pet-1.4.2-setup.exe) | 含聊天与可选回复朗读 | [SHA256](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.4.2/Elysia_desktop_pet-1.4.2-setup.exe.sha256) |
-| **1.4.2 Windows 便携版** | [下载 EXE](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.4.2/Elysia_desktop_pet-1.4.2.exe) | 相同功能，双击即可运行 | [SHA256](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.4.2/Elysia_desktop_pet-1.4.2.exe.sha256) |
+| **1.4.3 Windows 安装版** | [下载安装器](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.4.3/Elysia_desktop_pet-1.4.3-setup.exe) | 含聊天与可选回复朗读 | [SHA256](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.4.3/Elysia_desktop_pet-1.4.3-setup.exe.sha256) |
+| **1.4.3 Windows 便携版** | [下载 EXE](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.4.3/Elysia_desktop_pet-1.4.3.exe) | 相同功能，双击即可运行 | [SHA256](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.4.3/Elysia_desktop_pet-1.4.3.exe.sha256) |
 | 1.3.0 Windows 便携版 | [下载旧版 EXE](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.3.0/Elysia_desktop_pet-1.3.0.exe) | **不含聊天及回复朗读**，保留日常与点击互动录音 | [SHA256](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.3.0/Elysia_desktop_pet-1.3.0.exe.sha256) |
 
 适用于 **Windows x64**。安装版按提示完成安装；便携版双击即可运行，无需 Git、Git LFS 或 Node.js。1.3.0 无需下载聊天或语音合成模型。
 
 升级前先从托盘退出旧版，再安装或打开新版。位置、大小、装扮、用户名、聊天记录与偏好会自动保存到 `%APPDATA%/Elysia Desktop Pet/`，升级后继续保留，无需手动迁移。
 
-程序未进行数字签名。请等待文件完整下载，再用对应 SHA256 核对完整性；下载中断时应重新下载。
+程序未进行数字签名。安装器或便携 EXE 下载完成后，可用对应 SHA256 核对文件完整性。
 
-[1.4.2 发布页](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.4.2) · [1.3.0 发布页](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.3.0) · [源码运行](#源码运行)
+[1.4.3 发布页](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.4.3) · [1.3.0 发布页](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.3.0) · [源码运行](#源码运行)
 
 ## 角色展示
 
@@ -115,7 +115,9 @@
 
 ### 本地聊天与朗读
 
-首次启动需要联网，自动准备 llama.cpp、默认 Qwen 聊天模型与语音资源，无需安装 Ollama。聊天模型约 **5.8 GB**，语音运行环境下载约 **5.7 GB**，还需预留解压空间。在 **设置 → 聊天** 查看两者各自的进度，可取消或重试；准备完成后复用已保存资源，聊天服务随桌宠启动和退出。
+首次启动自动下载默认 Qwen 聊天模型与语音环境，优先使用魔搭 ModelScope 国内源，连接失败时自动切换备用来源。无需注册下载账号、开启代理或手动配置模型。llama.cpp 已随安装版和便携版附带，无需另装 Ollama。
+
+聊天模型约 **5.8 GB**，语音运行环境下载约 **5.7 GB**，还需预留解压空间。在 **设置 → 聊天** 查看两者各自的进度，可取消或重试；两者均支持断点续传，中断后重试会继续使用已下载部分。准备完成后复用已保存资源，聊天服务随桌宠启动和退出。
 
 从托盘选择 **打开聊天框**，Enter 发送、Shift + Enter 换行。可在 **设置 → 聊天** 修改称呼你的名字，消息下方可复制文字。
 
@@ -123,7 +125,7 @@
 
 手动朗读不会被普通全屏或 Windows 忙碌状态误拦截，仍遵守勿扰、静音、锁屏和休眠限制；失败提示会说明具体原因。自动朗读与日常问候保留屏幕状态限制。发送新消息、停止或关闭聊天可中止当前朗读。
 
-默认模型与聊天记录都在本机。**设置 → 聊天记录** 可查看、继续或删除对话，删除前会确认。高级自定义服务需支持 OpenAI 兼容的流式聊天接口；选择远程地址后，对话会发送到该服务。人设文本位于 [electron/chat-persona.md](electron/chat-persona.md)，模型与升级细节见 [1.4.2 更新说明](docs/releases/v1.4.2.md)。
+默认模型与聊天记录都在本机。**设置 → 聊天记录** 可查看、继续或删除对话，删除前会确认。高级自定义服务需支持 OpenAI 兼容的流式聊天接口；选择远程地址后，对话会发送到该服务。人设文本位于 [electron/chat-persona.md](electron/chat-persona.md)。
 
 ### 日常语音与台词气泡
 
@@ -191,10 +193,11 @@ git clone --branch main https://github.com/ActorF/Elysia_desktop_pet.git
 cd Elysia_desktop_pet
 git lfs pull
 npm ci
+npm run prepare:chat
 npm start
 ```
 
-`npm test` 运行单元测试。`npm run make:release` 生成安装版与便携版，构建前需准备 `build-resources/voice-bootstrap/` 中的语音资源。完整测试、打包与 GitHub Actions 说明见[验证说明](docs/verification.md)。
+`npm test` 运行单元测试。`npm run make:release` 生成安装版与便携版，构建前需准备 `build-resources/voice-bootstrap/` 中的语音资源；构建脚本会自动准备随包附带的 llama.cpp。下载源与镜像维护见[模型下载说明](docs/model-downloads.md)，完整测试、打包与 GitHub Actions 说明见[验证说明](docs/verification.md)。
 
 ## 项目结构
 

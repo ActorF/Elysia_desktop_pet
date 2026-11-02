@@ -1,14 +1,16 @@
 # 验证说明
 
-本文件说明 **1.4.2 正式版** 的验证范围。修复后的程序已通过人工验收，包含手动朗读模型复用、16384 token 聊天上下文以及程序独立部署的 Visual C++ 运行库。安装版、便携版与 SHA256 发布于 [GitHub Release v1.4.2](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.4.2)，源码和 `release/` 中的程序包同步保留在 `main` 分支。变化与下载入口见 [1.4.2 更新说明](releases/v1.4.2.md)。报告保存在本地忽略的 `artifacts/`。
+本文件说明 **1.4.3 正式版** 的研发检查与构建流程。安装版、便携版与 SHA256 对应 [GitHub Release v1.4.3](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.4.3)，源码和 `release/` 中的程序包同步保留在 `main` 分支。产品变化与下载入口见 [1.4.3 更新说明](releases/v1.4.3.md)。报告保存在本地忽略的 `artifacts/`，不写入 Release 正文。
 
-正式版通过 **437 项单元测试**、真实 llama.cpp 中文与 8000 字消息、同一语音工作进程的连续手动朗读，以及完整包内检查。安装版的 69 项资源与便携版一致，9 次包内运行包含桌面、语音、互动、聊天和重复启动。另一台电脑曾在 1.4.1／1.4.2 触发隐藏置顶断言失败，本机完整检查未复现；可见桌面检查步骤保留用于后续跨环境回归。干净 Windows 从零安装、系统重启和 CPU-only 性能未作为本次已完成项目。
+1.4.3 保留已有模型与语音资源的固定版本，新增国内下载来源、随包附带的 llama.cpp 和共用的续传下载器。已对预览包中的真实代码检查聊天及语音的匿名魔搭下载、取消和 `206` 续传，并核对两种封装的 72 项资源。来源、摘要及下载记录见[模型下载说明](model-downloads.md)；正式构建检查保存在 `artifacts/validation-v1.4.3/`。
+
+正式 1.4.3 构建已通过 484 项单元测试、9 次包内运行及安装版比对。检查核对源码字节、72 项资源、54 条原录音、聊天运行库摘要，以及桌面、语音、互动、聊天和便携程序重复启动；检查后没有遗留测试进程。结果分别见 `unit-tests.log`、`release-check.json` 和 `setup-check.json`。
 
 `npm run make:release` 同时生成便携版与安装版；`npm run verify:release` 校验完整文件清单、源码字节、原录音、语音资源包摘要、更新配置及隐藏窗口行为，并验证重复启动不会删除现有实例的临时文件。`npm run verify:release -- --chat-only` 只运行聊天相关包内检查与重复启动检查，不能替代完整命令。`npm run verify:setup` 核对安装器中的程序和资源与已验证的便携版完全一致。所需语音构建资源保留在被忽略的 `build-resources/voice-bootstrap/`，不依赖旧样本或草稿目录。
 
 `npm run test:chat` 验证消息复制、单条朗读、左右历史布局、删除确认及自动配置进度；`npm run test:chat-native` 使用独立用户配置和模拟推理服务核对真实 IPC、流式回答、语音复用、勿扰拦截、关闭释放和删除记录的持久化。`npm run test:chat-runtime` 使用已准备资源验证真实 llama.cpp 生命周期、中文回复、模型驻留时的真实语音合成与再次启动；`npm run test:chat-tts` 单独测量语音冷启动、暖模型、缓存和进程清理，两者均生成音频但不播放。关闭自动朗读时普通聊天不启动声音模型，用户主动点击朗读可以单独播放。
 
-首次安装逻辑已覆盖固定下载来源、SHA256 验证、取消、重试与自动部署；本机已通过正式配置流程部署 llama.cpp，可移动语音环境已实际合成验证。聊天与语音各自就绪，聊天只有在模型加载并响应健康检查后才报告就绪。尚未在全新 Windows 实机或虚拟机中完成全部大型资源的首次下载安装，不把模拟安装检查或已有资源启动表述为该项验收。
+下载准备检查覆盖固定来源、SHA256、自动换源、取消与续传、错误范围、超时、损坏缓存和磁盘错误。聊天与语音各自就绪，聊天只有在模型加载并响应健康检查后才报告就绪。真实网络检查使用独立诊断目录，不向测试人员的正式用户配置安装模型；既有模型推理与语音合成的历史记录继续保留。
 
 ## GitHub Actions
 
@@ -22,7 +24,7 @@
 
 ## 环境与命令
 
-需要 Windows、Node.js 22 或更新版本；浏览器检查使用 Microsoft Edge。1.4.2 正式版源码取自 `main`；通过克隆获取完整 EXE 时需安装 Git LFS 并执行 `git lfs pull`。先执行 `npm ci` 安装开发依赖。Windows 上需要 Python 的测试可使用已部署的 `voice-runtime/python`，或安装 Python；Windows Store 的占位命令不等于可运行的 Python。
+需要 Windows、Node.js 22 或更新版本；浏览器检查使用 Microsoft Edge。1.4.3 正式版源码取自 `main`；通过克隆获取完整 EXE 时需安装 Git LFS 并执行 `git lfs pull`。先执行 `npm ci` 安装开发依赖。Windows 上需要 Python 的测试可使用已部署的 `voice-runtime/python`，或安装 Python；Windows Store 的占位命令不等于可运行的 Python。
 
 ```powershell
 npm test
@@ -155,4 +157,4 @@ Windows 的原生窗口有最小尺寸限制；1% 人物仍按约 4.2×5.6 DIP �
 
 `verify-package.cjs` 从最终 EXE 提取应用内容，核对文件清单、源码与素材字节、54 条录音及其校验清单、代码许可证和版权说明。随后运行目录应用和便携程序的验收，检查启动、桌面交互、缩放、独立设置窗口及语音资源。具体执行项目和通过状态以脚本输出为准。
 
-验收会核对运行前后的原有桌宠进程，保留用户正在使用的实例。结果与 SHA256 写入 `artifacts/validation-v1.4.2/release-check.json`，校验文件生成在 `release/`。报告、真实环境日志与测试音频保留本地，不随发布包上传。
+验收会核对运行前后的原有桌宠进程，保留用户正在使用的实例。结果与 SHA256 写入 `artifacts/validation-v1.4.3/release-check.json`，校验文件生成在 `release/`。报告、真实环境日志与测试音频保留本地，不随发布包上传。

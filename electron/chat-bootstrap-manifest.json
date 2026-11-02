@@ -4,6 +4,7 @@
   "runtime": {
     "version": "b11669",
     "arch": "x64",
+    "bundled": true,
     "required": ["llama-server.exe", "llama-server-impl.dll", "llama-common.dll", "llama.dll", "ggml.dll", "ggml-base.dll", "ggml-cpu-x64.dll", "ggml-vulkan.dll", "libomp.dll", "mtmd.dll"],
     "file": "llama-b11669-bin-win-vulkan-x64.zip",
     "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11669/llama-b11669-bin-win-vulkan-x64.zip",
@@ -28,6 +29,10 @@
   "model": {
     "file": "Qwen3.8-9B-Q4_K_M.gguf",
     "url": "https://huggingface.co/empero-ai/Qwen3.8-9B-Distill-GGUF/resolve/760121cd70bb4c36b2b5ec58eb765e0df5987efe/Qwen3.8-9B-Q4_K_M.gguf",
+    "sources": [
+      "https://www.modelscope.cn/models/empero-ai/Qwen3.8-9B-Distill-GGUF/resolve/4f1ed1af3d70d07afa6b613e68b00a68dda20d3d/Qwen3.8-9B-Q4_K_M.gguf",
+      "https://huggingface.co/empero-ai/Qwen3.8-9B-Distill-GGUF/resolve/760121cd70bb4c36b2b5ec58eb765e0df5987efe/Qwen3.8-9B-Q4_K_M.gguf"
+    ],
     "bytes": 5780090176,
     "sha256": "df13d66021cef676f82be74053220fd75af6bf2a6a7fb77f5222ab9e50744a7a"
   }

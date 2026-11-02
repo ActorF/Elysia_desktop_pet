@@ -19,6 +19,9 @@ function fixture(t, options = {}) {
   const assetDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'elysia-llama-assets-test-'));
   const runtime = Buffer.from('test runtime archive'), model = Buffer.from('GGUFtest model bytes');
   const manifest = structuredClone(originalManifest);
+  // Keep legacy single-source fixtures independent of packaged build resources.
+  delete manifest.runtime.bundled;
+  if (!options.domesticSources) delete manifest.model.sources;
   for (const [key, bytes] of [['runtime', runtime], ['model', model]]) Object.assign(manifest[key], { bytes: bytes.length, sha256: hash(bytes) });
   const dependencyArchive = Buffer.from('test dependency archive');
   Object.assign(manifest.runtimeDependencies.archive, { bytes: dependencyArchive.length, sha256: hash(dependencyArchive) });
@@ -27,6 +30,10 @@ function fixture(t, options = {}) {
     Object.assign(item, { bytes: bytes.length, sha256: hash(bytes) }); return [item.file, bytes];
   }));
   fs.writeFileSync(path.join(assetDirectory, manifest.runtimeDependencies.archive.file), dependencyArchive);
+  if (options.bundledRuntime) {
+    manifest.runtime.bundled = true;
+    fs.writeFileSync(path.join(assetDirectory, manifest.runtime.file), options.bundledRuntime === 'corrupt' ? Buffer.alloc(runtime.length) : runtime);
+  }
   const calls = [], processes = [], notices = [];
   const f = { root, assetDirectory, manifest, runtime, model, dependencyFiles, calls, processes, notices, online: false };
   const spawnImpl = (file, args, spawnOptions) => {
@@ -58,7 +65,10 @@ function fixture(t, options = {}) {
     if (url === `${SETUP_BASE_URL}/v1/models`) return json({ data: [{ id: SETUP_MODEL }] });
     return new Response(url === manifest.runtime.url ? runtime : model);
   };
-  f.service = createModelSetup({ userData: root, platform: 'win32', arch: 'x64', manifest, assetDirectory,
+  const bundlePaths = options.packagedResources
+    ? { resourcesPath: assetDirectory, assetDirectory: undefined, runtimeAssetDirectory: undefined }
+    : { assetDirectory };
+  f.service = createModelSetup({ userData: root, platform: 'win32', arch: 'x64', manifest, ...bundlePaths,
     env: { SystemRoot: 'C:\\Windows' }, fetchImpl, spawnImpl, onChange: value => notices.push(value),
     startTimeoutMs: 100, pollIntervalMs: 1, ...options.service });
   t.after(() => { f.service.dispose(); fs.rmSync(root, { recursive: true, force: true }); fs.rmSync(assetDirectory, { recursive: true, force: true }); });
@@ -267,4 +277,87 @@ test('pinned Hugging Face model follows the official CDN redirect used by the li
     assert.equal(url, 'https://us.aws.cdn.hf.co/model-blob'); return new Response(item.model);
   } });
   f.service.installChatModel(); assert.equal((await settled(f.service)).phase, 'ready');
+});
+
+test('bundled llama.cpp and an existing model configure without external downloads', async t => {
+  const f = fixture(t, { bundledRuntime: true });
+  const models = path.join(f.root, 'chat-models'); fs.mkdirSync(models);
+  fs.writeFileSync(path.join(models, f.manifest.model.file), f.model);
+  f.service.installChatModel(); assert.equal((await settled(f.service)).phase, 'ready');
+  assert.equal(downloads(f).length, 0);
+  const extractor = f.processes.find(item => item.options.env?.ELYSIA_CHAT_ARCHIVE);
+  assert.equal(extractor.options.env.ELYSIA_CHAT_ARCHIVE, path.join(f.assetDirectory, f.manifest.runtime.file));
+  assert.deepEqual(fs.readdirSync(path.join(f.root, 'chat-downloads')), []);
+});
+
+test('packaged resourcesPath alone supplies both runtime and private dependencies without GitHub access', async t => {
+  const f = fixture(t, { bundledRuntime: true, packagedResources: true });
+  const models = path.join(f.root, 'chat-models'); fs.mkdirSync(models);
+  fs.writeFileSync(path.join(models, f.manifest.model.file), f.model);
+  f.service.installChatModel(); assert.equal((await settled(f.service)).phase, 'ready');
+  assert.equal(downloads(f).length, 0);
+  assert.equal(f.processes.find(item => item.options.env?.ELYSIA_CHAT_ARCHIVE).options.env.ELYSIA_CHAT_ARCHIVE,
+    path.join(f.assetDirectory, f.manifest.runtime.file));
+  assert.equal(f.processes.find(item => item.options.env?.ELYSIA_CHAT_DEPENDENCY_ARCHIVE).options.env.ELYSIA_CHAT_DEPENDENCY_ARCHIVE,
+    path.join(f.assetDirectory, f.manifest.runtimeDependencies.archive.file));
+});
+
+test('missing or damaged mandatory runtime bundle stops before any external download', async t => {
+  for (const corrupt of [false, true]) {
+    const f = fixture(t, { bundledRuntime: corrupt ? 'corrupt' : true });
+    if (!corrupt) fs.unlinkSync(path.join(f.assetDirectory, f.manifest.runtime.file));
+    f.service.installChatModel(); const state = await settled(f.service);
+    assert.equal(state.phase, 'error'); assert.match(state.error, /安装包中的聊天运行环境缺失或校验失败/);
+    assert.equal(downloads(f).length, 0); assert.equal(f.processes.length, 0);
+  }
+});
+
+test('ModelScope primary follows only its digest-specific CDN object', async t => {
+  const f = fixture(t, { domesticSources: true, bundledRuntime: true, fetch: async (url, request, item) => {
+    if (url.startsWith(SETUP_BASE_URL)) return readyResponse(url, item);
+    const digest = item.manifest.model.sha256;
+    const target = `https://cdn-lfs-cn-1.modelscope.cn/prod/lfs-objects/${digest.slice(0, 2)}/${digest.slice(2, 4)}/${digest.slice(4)}?signed=example`;
+    if (url === item.manifest.model.sources[0]) return new Response(null, { status: 302, headers: { location: target } });
+    assert.equal(url, target); return new Response(item.model);
+  } });
+  f.service.installChatModel(); assert.equal((await settled(f.service)).phase, 'ready');
+  assert.equal(downloads(f).length, 2);
+  assert.equal(downloads(f)[0].url, f.manifest.model.sources[0]);
+  assert.equal(downloads(f).some(item => item.url === f.manifest.model.url), false);
+});
+
+test('unavailable domestic source automatically falls back to the pinned original', async t => {
+  const f = fixture(t, { domesticSources: true, bundledRuntime: true, fetch: async (url, request, item) => {
+    if (url.startsWith(SETUP_BASE_URL)) return readyResponse(url, item);
+    if (url === item.manifest.model.sources[0]) return new Response(null, { status: 503 });
+    assert.equal(url, item.manifest.model.url); return new Response(item.model);
+  } });
+  f.service.installChatModel(); assert.equal((await settled(f.service)).phase, 'ready');
+  assert.deepEqual(downloads(f).map(item => item.url), f.manifest.model.sources);
+  assert.ok(f.notices.some(item => item.message.includes('切换聊天资源下载源')));
+});
+
+test('ModelScope redirect cannot switch to an unrelated CDN object or host', async t => {
+  for (const target of ['https://cdn-lfs-cn-1.modelscope.cn/prod/lfs-objects/aa/bb/unrelated', 'https://malicious.modelscope.cn/model']) {
+    const f = fixture(t, { domesticSources: true, bundledRuntime: true, fetch: async (url, request, item) => {
+      if (url.startsWith(SETUP_BASE_URL)) return readyResponse(url, item);
+      if (url === item.manifest.model.sources[0]) return new Response(null, { status: 302, headers: { location: target } });
+      assert.equal(url, item.manifest.model.url); return new Response(item.model);
+    } });
+    f.service.installChatModel(); assert.equal((await settled(f.service)).phase, 'ready');
+    assert.equal(downloads(f).some(item => item.url === target), false);
+  }
+});
+
+test('untrusted or mutable ModelScope manifest sources are rejected before networking', async t => {
+  for (const source of [
+    'https://www.modelscope.cn/models/empero-ai/Qwen3.8-9B-Distill-GGUF/resolve/master/Qwen3.8-9B-Q4_K_M.gguf',
+    'http://www.modelscope.cn/models/empero-ai/Qwen3.8-9B-Distill-GGUF/resolve/' + 'a'.repeat(40) + '/Qwen3.8-9B-Q4_K_M.gguf',
+    'https://unexpected.example/model.gguf',
+  ]) {
+    const manifest = structuredClone(originalManifest); manifest.model.sources = [source];
+    const f = fixture(t, { service: { manifest } });
+    f.service.installChatModel(); assert.equal((await settled(f.service)).phase, 'error');
+    assert.equal(f.calls.length, 0); assert.equal(f.processes.length, 0);
+  }
 });

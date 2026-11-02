@@ -180,9 +180,12 @@ function smoke(program, consoleRequired, flag, resultKey, extraEnvironment = {})
   const tools = ['7za.exe', 'LICENSE.txt', 'COPYING'].map(file => `tools/${file}`);
   const voiceManifest = JSON.parse(fs.readFileSync(path.join(root, 'electron/voice-bootstrap-manifest.json'), 'utf8'));
   const voiceArchive = voiceManifest.assets.fileName;
+  const chatManifest = JSON.parse(fs.readFileSync(path.join(root, 'electron/chat-bootstrap-manifest.json'), 'utf8'));
+  const chatArchive = chatManifest.runtime.file;
+  const chatLicenses = ['llama.cpp-LICENSE.txt', 'llama.cpp-NOTICE.txt'].map(file => `licenses/${file}`);
   // Building portable + NSIS together writes the same update metadata into the
   // common runtime. Both payloads must retain it and point at this repository.
-  const expectedResources = ['app.asar', 'app-update.yml', 'elevate.exe', voiceArchive, ...unpacked, ...tools, ...audioPacks.flatMap(pack => pack.resourceFiles)].sort();
+  const expectedResources = ['app.asar', 'app-update.yml', 'elevate.exe', voiceArchive, chatArchive, ...chatLicenses, ...unpacked, ...tools, ...audioPacks.flatMap(pack => pack.resourceFiles)].sort();
   const resourceFiles = filesWithin(directoryResources);
   assert.deepEqual(resourceFiles, expectedResources, 'Directory build has missing or unexpected resources');
   assert.deepEqual(filesWithin(portableResources), expectedResources, 'Portable resources differ from the directory allowlist');
@@ -197,6 +200,9 @@ function smoke(program, consoleRequired, flag, resultKey, extraEnvironment = {})
   for (const file of tools) assert.equal(resourceHashes[file], digest(fs.readFileSync(path.join(voiceBuildResources, file))), `Packaged extraction tool differs: ${file}`);
   assert.equal(resourceHashes['tools/7za.exe'], voiceManifest.extractor.sha256, 'Extraction tool differs from the pinned manifest');
   assert.equal(resourceHashes[voiceArchive], voiceManifest.assets.sha256, 'Bundled voice assets differ from the pinned manifest');
+  assert.equal(resourceHashes[chatArchive], chatManifest.runtime.sha256, 'Bundled llama.cpp runtime differs from the pinned manifest');
+  assert.equal(fs.statSync(path.join(portableResources, chatArchive)).size, chatManifest.runtime.bytes);
+  for (const file of chatLicenses) assert.equal(resourceHashes[file], digest(fs.readFileSync(path.join(root, file))), `Bundled runtime notice differs: ${file}`);
   assert.equal(fs.statSync(path.join(portableResources, voiceArchive)).size, voiceManifest.assets.bytes);
   const sourceVoiceArchive = path.join(voiceBuildResources, voiceArchive);
   assert.equal(fs.statSync(sourceVoiceArchive).size, voiceManifest.assets.bytes);

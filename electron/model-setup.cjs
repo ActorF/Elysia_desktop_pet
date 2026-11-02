@@ -2,11 +2,12 @@
 'use strict';
 const fs = require('node:fs');
 const path = require('node:path');
-const { createHash, randomUUID } = require('node:crypto');
+const { randomUUID } = require('node:crypto');
 const { spawn } = require('node:child_process');
 const manifestDefault = require('./chat-bootstrap-manifest.json');
 const { EXTRACT_SCRIPT } = require('./chat-runtime-extract.cjs');
 const { createRuntimeDependencies, validDependenciesManifest } = require('./chat-runtime-dependencies.cjs');
+const { downloadResource, verifyResource } = require('./resource-download.cjs');
 
 const SETUP_MODEL = 'elysia-chat';
 const SETUP_BASE_URL = 'http://127.0.0.1:18434';
@@ -19,6 +20,7 @@ const ERRORS = Object.freeze({
   archive: '聊天运行环境解压失败，请检查磁盘空间后重试。',
   storage: '无法保存聊天资源，请检查用户目录权限和磁盘空间。',
   conflict: '暂时无法替换聊天运行环境，请关闭正在使用该目录的程序后重试。',
+  'runtime-source': '安装包中的聊天运行环境缺失或校验失败，请重新下载完整安装包后重试。',
   'dependencies-source': '安装包中的聊天运行库资源缺失或校验失败，请重新下载完整安装包后重试。无需自行安装系统运行库。',
   dependencies: '聊天运行库准备失败，请退出桌宠后重试，并检查用户目录权限和磁盘空间。',
   port: '本地聊天端口 18434 已被其他程序占用，请关闭占用程序后重试。',
@@ -28,6 +30,17 @@ const failure = code => Object.assign(new Error(code), { setupCode: code });
 const cancelled = () => Object.assign(new Error('cancelled'), { name: 'AbortError' });
 const checkAbort = signal => { if (signal.aborted) throw cancelled(); };
 const ordinaryFile = file => { try { const s = fs.lstatSync(file); return s.isFile() && !s.isSymbolicLink(); } catch { return false; } };
+function sourceUrls(asset) { return asset.sources === undefined ? [asset.url] : asset.sources; }
+function validSource(raw, key) {
+  if (typeof raw !== 'string') return false;
+  const url = new URL(raw);
+  if (url.protocol !== 'https:' || url.username || url.password || url.port || url.search || url.hash) return false;
+  if (key === 'runtime') return url.hostname === 'github.com'
+    && /^\/ggml-org\/llama\.cpp\/releases\/download\/b\d+\/llama-[\w.-]+\.zip$/.test(url.pathname);
+  if (url.hostname === 'huggingface.co') return /^\/empero-ai\/Qwen3\.8-9B-Distill-GGUF\/resolve\/[a-f0-9]{40}\/Qwen3\.8-9B-Q4_K_M\.gguf$/.test(url.pathname);
+  return ['www.modelscope.cn', 'modelscope.cn'].includes(url.hostname)
+    && /^\/models\/empero-ai\/Qwen3\.8-9B-Distill-GGUF\/resolve\/[a-f0-9]{40}\/Qwen3\.8-9B-Q4_K_M\.gguf$/.test(url.pathname);
+}
 function validManifest(value) {
   return value?.version === 1 && value.backend === 'llama.cpp-v1' && value.runtime?.arch === 'x64'
     && validDependenciesManifest(value.runtimeDependencies)
@@ -37,16 +50,28 @@ function validManifest(value) {
       const a = value[key];
       return a && /^[a-zA-Z0-9._-]+$/.test(a.file) && !a.file.startsWith('.')
         && /^[a-f0-9]{64}$/.test(a.sha256) && Number.isSafeInteger(a.bytes) && a.bytes > 0 && a.bytes <= 16 * 1024 ** 3
-        && typeof a.url === 'string' && allowedDownload(new URL(a.url))
-        && (key === 'runtime' ? new URL(a.url).hostname === 'github.com'
-          : new URL(a.url).hostname === 'huggingface.co' && /\/resolve\/[a-f0-9]{40}\//.test(new URL(a.url).pathname));
+        && (a.bundled === undefined || typeof a.bundled === 'boolean')
+        && validSource(a.url, key)
+        && Array.isArray(sourceUrls(a)) && sourceUrls(a).length > 0 && sourceUrls(a).length <= 4
+        && new Set(sourceUrls(a)).size === sourceUrls(a).length
+        && sourceUrls(a).every(url => validSource(url, key));
     });
 }
-function allowedDownload(url) {
+function allowedDownload(url, source, asset) {
   if (url.protocol !== 'https:' || url.username || url.password || url.port) return false;
-  if (url.hostname === 'github.com') return /^\/ggml-org\/llama\.cpp\/releases\/download\/b\d+\/llama-[\w.-]+\.zip$/.test(url.pathname);
-  if (['release-assets.githubusercontent.com', 'objects.githubusercontent.com'].includes(url.hostname)) return /^\/github-production-release-asset(?:-2e65be)?\//.test(url.pathname);
-  return url.hostname === 'huggingface.co' || url.hostname === 'cdn-lfs.huggingface.co'
+  const original = new URL(source);
+  if (['www.modelscope.cn', 'modelscope.cn'].includes(original.hostname)) {
+    if (['www.modelscope.cn', 'modelscope.cn'].includes(url.hostname)) return url.pathname === original.pathname && !url.search && !url.hash;
+    const hash = asset.sha256;
+    return url.hostname === 'cdn-lfs-cn-1.modelscope.cn'
+      && url.pathname === `/prod/lfs-objects/${hash.slice(0, 2)}/${hash.slice(2, 4)}/${hash.slice(4)}`;
+  }
+  if (original.hostname === 'github.com') {
+    if (url.hostname === 'github.com') return url.pathname === original.pathname;
+    return ['release-assets.githubusercontent.com', 'objects.githubusercontent.com'].includes(url.hostname)
+      && /^\/github-production-release-asset(?:-2e65be)?\//.test(url.pathname);
+  }
+  return (url.hostname === 'huggingface.co' && url.pathname === original.pathname) || url.hostname === 'cdn-lfs.huggingface.co'
     || url.hostname === 'cdn-lfs-us-1.hf.co' || url.hostname === 'cdn-lfs-eu-1.hf.co'
     || url.hostname === 'cdn.hf.co' || url.hostname.endsWith('.cdn.hf.co')
     || url.hostname === 'cas-bridge.xethub.hf.co';
@@ -54,9 +79,10 @@ function allowedDownload(url) {
 
 function createModelSetup({ userData, onChange = () => {}, fetchImpl = globalThis.fetch, spawnImpl = spawn,
   platform = process.platform, arch = process.arch, env = process.env, manifest = manifestDefault,
-  resourcesPath = process.resourcesPath, assetDirectory,
+  resourcesPath = process.resourcesPath, assetDirectory, runtimeAssetDirectory,
   probeTimeoutMs = 1500, startTimeoutMs = 180000, pollIntervalMs = 500,
-  downloadTimeoutMs = 4 * 60 * 60 * 1000, extractionTimeoutMs = 5 * 60 * 1000 } = {}) {
+  downloadTimeoutMs = 4 * 60 * 60 * 1000, requestTimeoutMs = 15000, idleTimeoutMs = 30000,
+  extractionTimeoutMs = 5 * 60 * 1000 } = {}) {
   if (typeof userData !== 'string' || !path.isAbsolute(userData)) throw new TypeError('userData must be an absolute directory.');
   let manifestValid = false;
   try { manifestValid = validManifest(manifest); } catch {}
@@ -141,56 +167,30 @@ function createModelSetup({ userData, onChange = () => {}, fetchImpl = globalThi
     });
     return Buffer.concat(chunks).toString('utf8');
   }
-  async function verified(file, asset, signal) {
-    if (!ordinaryFile(file) || fs.statSync(file).size !== asset.bytes) return false;
-    const hash = createHash('sha256');
-    for await (const chunk of fs.createReadStream(file)) { checkAbort(signal); hash.update(chunk); }
-    checkAbort(signal); return hash.digest('hex') === asset.sha256;
-  }
+  const verified = verifyResource;
   async function download(asset, destination, signal) {
-    if (ordinaryFile(destination)) phase('verifying-installer', '正在校验已有聊天资源…');
-    if (await verified(destination, asset, signal)) return destination;
-    if (fs.existsSync(destination)) {
-      if (!ordinaryFile(destination)) throw failure('storage');
-      // Preserve imported/corrupt files while allowing Retry to obtain the
-      // digest-pinned replacement; never silently delete a user's old model.
-      await fs.promises.rename(destination, `${destination}.unverified-${randomUUID()}`);
+    const downloadPhase = asset === manifest.model ? 'pulling-model' : 'downloading-installer';
+    const message = asset === manifest.model ? '正在下载本地聊天模型，取消后可继续下载…' : '正在下载桌宠专用的聊天运行环境…';
+    return downloadResource({ asset, destination, sources: sourceUrls(asset), fetchImpl, signal,
+      isAllowedUrl: (url, source) => allowedDownload(url, source, asset),
+      requestTimeoutMs, idleTimeoutMs, downloadTimeoutMs,
+      onVerify: () => phase('verifying-installer', '正在校验聊天资源…'),
+      onSourceChange: () => phase(downloadPhase, '正在切换聊天资源下载源，已下载部分会继续使用…'),
+      onProgress: (completed, total) => update({ phase: downloadPhase, message, completedBytes: completed,
+        totalBytes: total, progress: completed / total }, true) });
+  }
+  async function bundledRuntime(signal) {
+    const directories = runtimeAssetDirectory ? [runtimeAssetDirectory] : assetDirectory ? [assetDirectory]
+      : [resourcesPath, path.join(__dirname, '..', 'build-resources', 'chat-bootstrap')].filter(Boolean);
+    for (const directory of [...new Set(directories)]) {
+      const candidate = path.join(directory, manifest.runtime.file);
+      if (!fs.existsSync(candidate)) continue;
+      phase('verifying-installer', '正在校验安装包内的聊天运行环境…');
+      if (await verified(candidate, manifest.runtime, signal)) return candidate;
+      throw failure('runtime-source');
     }
-    const partial = destination + '.part';
-    let completed = ordinaryFile(partial) ? fs.statSync(partial).size : 0;
-    if (fs.existsSync(partial) && !ordinaryFile(partial)) throw failure('storage');
-    if (completed > asset.bytes) { await fs.promises.rm(partial); completed = 0; }
-    if (completed < asset.bytes) {
-      const combined = AbortSignal.any([signal, AbortSignal.timeout(downloadTimeoutMs)]);
-      let url = new URL(asset.url), response;
-      for (let redirects = 0; redirects <= 8; redirects++) {
-        if (!allowedDownload(url)) throw failure('download');
-        response = await fetchImpl(url.href, { signal: combined, redirect: 'manual', headers: completed ? { Range: `bytes=${completed}-` } : {} });
-        if (![301, 302, 303, 307, 308].includes(response.status)) break;
-        const location = response.headers.get('location'); await response.body?.cancel();
-        if (!location || redirects === 8) throw failure('download');
-        url = new URL(location, url);
-      }
-      if (!response?.ok) { await response?.body?.cancel(); throw failure('download'); }
-      if (response.status === 206) {
-        if (response.headers.get('content-range') !== `bytes ${completed}-${asset.bytes - 1}/${asset.bytes}`) { await response.body?.cancel(); throw failure('download'); }
-      } else if (response.status === 200) completed = 0;
-      else { await response.body?.cancel(); throw failure('download'); }
-      const expected = Number(response.headers.get('content-length') || 0);
-      if (expected && expected !== asset.bytes - completed) { await response.body?.cancel(); throw failure('integrity'); }
-      const handle = await fs.promises.open(partial, completed ? 'a' : 'w', 0o600);
-      try {
-        await consume(response, combined, async chunk => {
-          if (completed + chunk.length > asset.bytes) throw failure('integrity');
-          await handle.writeFile(chunk); completed += chunk.length;
-          update({ completedBytes: completed, totalBytes: asset.bytes, progress: completed / asset.bytes }, true);
-        });
-      } finally { await handle.close(); }
-    }
-    if (completed !== asset.bytes) throw failure('download');
-    phase('verifying-installer', '正在校验下载内容…');
-    if (!await verified(partial, asset, signal)) { await fs.promises.rm(partial); throw failure('integrity'); }
-    checkAbort(signal); await fs.promises.rename(partial, destination); return destination;
+    if (manifest.runtime.bundled) throw failure('runtime-source');
+    return null;
   }
   function extract(archive, stage, signal) {
     return new Promise((resolve, reject) => {
@@ -229,9 +229,12 @@ function createModelSetup({ userData, onChange = () => {}, fetchImpl = globalThi
       }
       const cache = path.join(userData, 'chat-downloads');
       await fs.promises.mkdir(cache, { recursive: true });
-      const archive = path.join(cache, `${manifest.runtime.sha256.slice(0, 16)}-${manifest.runtime.file}`);
-      phase('downloading-installer', '正在下载桌宠专用的聊天运行环境…');
-      await download(manifest.runtime, archive, signal);
+      let archive = await bundledRuntime(signal);
+      if (!archive) {
+        archive = path.join(cache, `${manifest.runtime.sha256.slice(0, 16)}-${manifest.runtime.file}`);
+        phase('downloading-installer', '正在下载桌宠专用的聊天运行环境…');
+        await download(manifest.runtime, archive, signal);
+      }
       const stage = await fs.promises.mkdtemp(path.join(userData, 'chat-staging-'));
       try {
         phase('installing', '正在解压聊天运行环境…');

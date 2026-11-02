@@ -5,25 +5,25 @@
 <p align="center"><a href="README.md">简体中文</a> · <strong>English</strong></p>
 <p align="center"><a href="#download">Download</a> · <a href="#character-gallery">Gallery</a> · <a href="#usage">Usage</a> · <a href="#run-from-source">Run from source</a></p>
 
-A chibi Elysia companion for Windows, with a transparent full-body character, mouse-following eyes, and gentle motion. Mix expressions, cat mode, glasses, and four actions, with little clouds that respond to your typing. Includes local chat, optional read-aloud replies, automatic model setup, conversation history management, and body-region interactions. Version 1.4.2 switches to app-managed llama.cpp and fixes manual reading blocked by Windows busy-state detection.
+A chibi Elysia companion for Windows, with a transparent full-body character, mouse-following eyes, and gentle motion. Mix expressions, cat mode, glasses, and four actions, with little clouds that respond to your typing. Includes local chat, optional read-aloud replies, automatic model setup, conversation history management, and body-region interactions.
 
-**Current stable version: 1.4.2.** Includes fixes for manual speech reuse, long messages, and chat runtime dependencies. See the [1.4.2 release page](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.4.2) and [release notes](docs/releases/v1.4.2.md).
+**Current stable version: 1.4.3.** Chat models and the speech runtime download automatically from sources accessible in mainland China. See the [1.4.3 release page](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.4.3) and [release notes](docs/releases/v1.4.3.md).
 
 ## Download
 
 | Edition | Program | Features | Checksum |
 | --- | --- | --- | --- |
-| **1.4.2 Windows installer** | [Download installer](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.4.2/Elysia_desktop_pet-1.4.2-setup.exe) | Includes chat and optional read-aloud replies | [SHA256](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.4.2/Elysia_desktop_pet-1.4.2-setup.exe.sha256) |
-| **1.4.2 Windows portable** | [Download EXE](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.4.2/Elysia_desktop_pet-1.4.2.exe) | Same features; double-click to run | [SHA256](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.4.2/Elysia_desktop_pet-1.4.2.exe.sha256) |
+| **1.4.3 Windows installer** | [Download installer](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.4.3/Elysia_desktop_pet-1.4.3-setup.exe) | Includes chat and optional read-aloud replies | [SHA256](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.4.3/Elysia_desktop_pet-1.4.3-setup.exe.sha256) |
+| **1.4.3 Windows portable** | [Download EXE](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.4.3/Elysia_desktop_pet-1.4.3.exe) | Same features; double-click to run | [SHA256](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.4.3/Elysia_desktop_pet-1.4.3.exe.sha256) |
 | 1.3.0 Windows portable | [Download older EXE](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.3.0/Elysia_desktop_pet-1.3.0.exe) | **No chat or read-aloud replies**; daily and interaction recordings remain included | [SHA256](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.3.0/Elysia_desktop_pet-1.3.0.exe.sha256) |
 
 For **Windows x64**. Follow the installer or double-click the portable EXE; Git, Git LFS, and Node.js are not needed. Version 1.3.0 does not download chat or speech synthesis models.
 
 Quit the old version from its tray before installing or opening the new one. Position, size, outfits, username, chat history, and preferences are saved automatically in `%APPDATA%/Elysia Desktop Pet/` and retained when upgrading; no manual migration is needed.
 
-The app is unsigned. Wait for the complete download and check its SHA256; download the file again if the transfer was interrupted.
+The app is unsigned. Once the installer or portable EXE has finished downloading, use its SHA256 file to check integrity.
 
-[1.4.2 release page](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.4.2) · [1.3.0 release page](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.3.0) · [Run from source](#run-from-source)
+[1.4.3 release page](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.4.3) · [1.3.0 release page](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.3.0) · [Run from source](#run-from-source)
 
 ## Character gallery
 
@@ -119,7 +119,9 @@ Enable Always on top (`始终置顶`) to choose Taskbar in front (`任务栏在�
 
 ### Local chat and read-aloud
 
-First launch needs internet access to prepare llama.cpp, the default Qwen chat model, and speech resources; Ollama is not required. The chat model is about **5.8 GB**, and the speech runtime download is about **5.7 GB**, with additional space needed for extraction. **Settings → Chat** shows separate progress, cancellation, and retry controls. Prepared resources are reused, and the chat service starts and stops with the pet.
+First launch automatically downloads the default Qwen chat model and speech runtime, using ModelScope's mainland China source first and switching to a fallback if the connection fails. No download account, proxy, or manual model setup is needed. Both the installer and portable app include llama.cpp; Ollama is not required.
+
+The chat model is about **5.8 GB**, and the speech runtime download is about **5.7 GB**, with additional space needed for extraction. **Settings → Chat** shows separate progress, cancellation, and retry controls. Both downloads resume after cancellation or a network interruption when retried. Prepared resources are reused, and the chat service starts and stops with the pet.
 
 Choose **Open chat (打开聊天框)** from the tray. Enter sends a message; Shift + Enter adds a line. Set your preferred name in **Settings → Chat**, and use the controls below messages to copy text.
 
@@ -127,7 +129,7 @@ Automatic read-aloud is **off by default**. Choose **Read Aloud / 朗读** under
 
 Manual reading is not blocked by ordinary fullscreen or Windows busy-state detection. It still respects Do not disturb, mute, screen lock, and sleep, with specific failure messages. Automatic reading and daily greetings retain screen-state restrictions. Sending a new message, stopping, or closing chat cancels the current reading.
 
-The default model and chat history stay on your computer. **Settings → Chat history (聊天记录)** lets you view, continue, or delete conversations after confirmation. Advanced custom services must support OpenAI-compatible streaming chat; choosing a remote address sends conversations to that service. The persona is in [electron/chat-persona.md](electron/chat-persona.md); model and upgrade details are in the [1.4.2 release notes](docs/releases/v1.4.2.md).
+The default model and chat history stay on your computer. **Settings → Chat history (聊天记录)** lets you view, continue, or delete conversations after confirmation. Advanced custom services must support OpenAI-compatible streaming chat; choosing a remote address sends conversations to that service. The persona is in [electron/chat-persona.md](electron/chat-persona.md).
 
 ### Daily voices and speech bubbles
 
@@ -195,10 +197,11 @@ git clone --branch main https://github.com/ActorF/Elysia_desktop_pet.git
 cd Elysia_desktop_pet
 git lfs pull
 npm ci
+npm run prepare:chat
 npm start
 ```
 
-`npm test` runs unit tests. `npm run make:release` builds the installer and portable app; prepare the speech resources in `build-resources/voice-bootstrap/` first. Full testing, packaging, and GitHub Actions instructions are in the [verification guide](docs/verification.md), currently in Chinese.
+`npm test` runs unit tests. `npm run make:release` builds the installer and portable app; prepare the speech resources in `build-resources/voice-bootstrap/` first. The build prepares the bundled llama.cpp runtime automatically. See [model download maintenance](docs/model-downloads.md) and the [verification guide](docs/verification.md) for download sources, packaging, and GitHub Actions details, currently in Chinese.
 
 ## Project structure
 
