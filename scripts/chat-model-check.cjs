@@ -9,20 +9,23 @@ const service = createChatService({ directory });
 const replies = [];
 async function turn(text) {
   const started = Date.now();
+  const before = service.getState();
+  const offset = before.conversations.find(item => item.id === before.activeConversationId)?.messages.length || 0;
   const state = service.send(text);
   assert.equal(state.busy, true, state.error ?? 'Request did not start');
   while (service.getState().busy) await new Promise(resolve => setTimeout(resolve, 100));
   const final = service.getState();
   assert.equal(final.error, null); assert.equal(final.storageError, null);
-  const response = final.conversations.find(item => item.id === final.activeConversationId).messages.at(-1);
-  assert.equal(response.status, 'complete'); assert.ok(response.content.trim());
-  const result = { elapsedMs: Date.now() - started, response: response.content };
+  const responses = final.conversations.find(item => item.id === final.activeConversationId).messages.slice(offset).filter(message => message.role === 'assistant');
+  assert.ok(responses.length > 0);
+  for (const response of responses) { assert.equal(response.status, 'complete'); assert.ok(response.content.trim()); }
+  const result = { elapsedMs: Date.now() - started, response: responses.map(message => message.content).join('\n'), bubbles: responses.map(message => message.content) };
   replies.push(result); console.log(JSON.stringify(result));
 }
 async function main() {
   service.setSettings({ username: '测试旅人' });
-  await turn('你好呀，我今天想吃草莓蛋糕。请用一两句话、50字以内回应我。');
-  await turn('我刚才说想吃什么？请用一句话告诉我。');
+  await turn('你好呀，我今天想吃草莓蛋糕。');
+  await turn('我刚才说想吃什么？');
   assert.match(replies.at(-1).response, /草莓.*蛋糕/);
   const report = { passed: true, model: DEFAULT_CHAT_SETTINGS.model, localOnly: true, syntheticConversation: true, replies };
   fs.writeFileSync(path.join(directory, 'report.json'), JSON.stringify(report, null, 2));

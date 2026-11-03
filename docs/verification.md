@@ -1,16 +1,30 @@
 # 验证说明
 
-本文件说明 **1.4.3 正式版** 的研发检查与构建流程。安装版、便携版与 SHA256 对应 [GitHub Release v1.4.3](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.4.3)，源码和 `release/` 中的程序包同步保留在 `main` 分支。产品变化与下载入口见 [1.4.3 更新说明](releases/v1.4.3.md)。报告保存在本地忽略的 `artifacts/`，不写入 Release 正文。
+本文件说明 **1.4.4 正式版** 的研发检查与构建流程。安装版、便携版与 SHA256 对应 [GitHub Release v1.4.4](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.4.4)，源码和 `release/` 中的程序包同步保留在 `main` 分支。产品变化与下载入口见 [1.4.4 更新说明](releases/v1.4.4.md)。报告保存在本地忽略的 `artifacts/`，不写入 Release 正文。
 
-1.4.3 保留已有模型与语音资源的固定版本，新增国内下载来源、随包附带的 llama.cpp 和共用的续传下载器。已对预览包中的真实代码检查聊天及语音的匿名魔搭下载、取消和 `206` 续传，并核对两种封装的 72 项资源。来源、摘要及下载记录见[模型下载说明](model-downloads.md)；正式构建检查保存在 `artifacts/validation-v1.4.3/`。
+1.4.4 加入短消息聊天，沿用 1.4.3 的固定模型与语音资源、国内下载来源、随包附带的 llama.cpp 和共用续传下载器。此前已检查匿名魔搭下载、取消和 `206` 续传；来源、摘要及下载记录见[模型下载说明](model-downloads.md)。本次正式构建检查保存在 `artifacts/validation-v1.4.4/`。
 
-正式 1.4.3 构建已通过 484 项单元测试、9 次包内运行及安装版比对。检查核对源码字节、72 项资源、54 条原录音、聊天运行库摘要，以及桌面、语音、互动、聊天和便携程序重复启动；检查后没有遗留测试进程。结果分别见 `unit-tests.log`、`release-check.json` 和 `setup-check.json`。
+正式 1.4.4 构建通过 506 项单元测试、9 次包内运行和安装版比对，核对源码字节、72 项资源、54 条原录音、聊天运行库摘要，以及桌面、语音、互动、聊天和便携程序重复启动。最终结果分别保存在 `unit-tests-final.log`、`release-check.json` 和 `setup-check.json`，没有遗留检查进程。
+
+本次首轮语音下载模拟用例出现过一次未复现的 `error` 终态，原记录在 `unit-tests.log`；已补充该断言的 `phase/error/message` 诊断，没有修改业务行为或超时。独立语音测试及后续完整单元测试均通过，不能把这次失败归因于未经证实的网络、PowerShell 或 CPU 原因。
 
 `npm run make:release` 同时生成便携版与安装版；`npm run verify:release` 校验完整文件清单、源码字节、原录音、语音资源包摘要、更新配置及隐藏窗口行为，并验证重复启动不会删除现有实例的临时文件。`npm run verify:release -- --chat-only` 只运行聊天相关包内检查与重复启动检查，不能替代完整命令。`npm run verify:setup` 核对安装器中的程序和资源与已验证的便携版完全一致。所需语音构建资源保留在被忽略的 `build-resources/voice-bootstrap/`，不依赖旧样本或草稿目录。
 
 `npm run test:chat` 验证消息复制、单条朗读、左右历史布局、删除确认及自动配置进度；`npm run test:chat-native` 使用独立用户配置和模拟推理服务核对真实 IPC、流式回答、语音复用、勿扰拦截、关闭释放和删除记录的持久化。`npm run test:chat-runtime` 使用已准备资源验证真实 llama.cpp 生命周期、中文回复、模型驻留时的真实语音合成与再次启动；`npm run test:chat-tts` 单独测量语音冷启动、暖模型、缓存和进程清理，两者均生成音频但不播放。关闭自动朗读时普通聊天不启动声音模型，用户主动点击朗读可以单独播放。
 
 下载准备检查覆盖固定来源、SHA256、自动换源、取消与续传、错误范围、超时、损坏缓存和磁盘错误。聊天与语音各自就绪，聊天只有在模型加载并响应健康检查后才报告就绪。真实网络检查使用独立诊断目录，不向测试人员的正式用户配置安装模型；既有模型推理与语音合成的历史记录继续保留。
+
+## 短消息聊天检查
+
+1.4.4 使用精简人设和短句示例，引导每轮回复一到三条消息。默认本地 9B 请求附带 llama.cpp GBNF，约束换行与句末，不设置字符硬截止；硬卡字数曾在实机上产生“它因为贪玩跑进。”这样的悬空句，因此没有接入。语法接口依据固定 [llama.cpp b11669 服务文档](https://github.com/ggml-org/llama.cpp/blob/b11669/tools/server/README.md)，仅发送给默认本地服务和模型，自定义兼容服务继续使用普通请求。
+
+每条新回复保存独立消息 ID，同轮完成、取消或失败时统一状态；后续上下文合并本轮全部气泡，排除任何未完成的轮次。原有历史不拆分重写。自动朗读每轮只提交一次，各气泡保留独立复制与手动朗读入口。分句保护小数、版本、域名、缩写、引号和句尾表情，不删除生成的字词。
+
+本轮通过 506 项单元测试、25 项浏览器检查和隐藏 Electron 聊天检查，覆盖增量边界、停止后的迟到内容、重开窗口、保存和恢复、整轮上下文与朗读次数。`scripts/chat-model-check.cjs` 和 `scripts/chat-runtime-check.cjs` 同步收集整轮所有气泡，避免只记录最后一条。日志在 `artifacts/short-chat-tests/`，界面截图在 `artifacts/chat-window-check/`。
+
+使用已存在且 SHA256 匹配的 9B GGUF 原文件进行 20 轮最终实机试聊，未下载或复制模型；种子 42 和 7 的普通聊天、记忆、英文、短故事、小数、缩写与域名输入均正常结束并产生一到三条气泡。单次猫名回答仍额外臆测了猫所在的场景：格式约束不能保证语义事实正确，不能据此声称消除幻觉。原始回复和工程评价保存在 `artifacts/short-chat-tests/model-eval/`，临时服务已退出。
+
+已确认的便携预览 `1.4.4-preview.1` 是本次正式版的功能基线；研发阶段三次包内运行报告保留在 `artifacts/validation-v1.4.4-preview.1/`，预览 EXE 由正式版取代。
 
 ## GitHub Actions
 

@@ -17,6 +17,7 @@
 .chat-empty h2 { color: #77556e; font-size: 17px; line-height: 1.7; }
 .chat-empty p { font-size: 12px; line-height: 1.8; margin: 9px 0; }
 .chat-message { display: flex; flex-direction: column; align-items: flex-start; margin: 0 0 22px; }
+.chat-message[data-group-end=false] { margin-bottom: 7px; }
 .chat-message[data-role=user] { align-items: flex-end; }
 .chat-message-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 0 4px 6px; color: var(--muted); font-size: 10px; }
 .chat-message-name { font-size: 11px; font-weight: 600; color: #80617a; overflow-wrap: anywhere; }

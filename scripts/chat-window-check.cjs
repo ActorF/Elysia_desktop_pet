@@ -235,6 +235,131 @@ async function main() {
     assert.ok(await page.evaluate(() => window.__chatQA.calls.some(([method, value]) => method === 'windowControl' && value === 'close'))); check('window controls and settings use only their explicit bridge methods');
     await page.setViewportSize({ width: 420, height: 520 }); await layout(page); await capture(page, 'chat-compact');
     const stored = await page.evaluate(() => window.__chatQA.snapshot());
+    const grouped = await context.newPage(); grouped.on('pageerror', error => errors.push(error.message));
+    await grouped.goto(`${base}/renderer/chat.html`); await grouped.waitForSelector('html[data-chat-ready=true]');
+    const groupedInput = grouped.locator('#chat-input');
+    await groupedInput.fill('今天心情怎么样？'); await groupedInput.press('Enter');
+    const shortReplies = ['见到你就挺开心的呀。', '刚好想听听你的近况。', '今天有什么有趣的小事吗？'];
+    const publishShortReplies = async (contents, status = 'streaming') => grouped.evaluate(({ contents, status }) => {
+      const value = window.__chatQA.snapshot(), conversation = value.conversations.find(item => item.id === value.activeConversationId);
+      const first = conversation.messages[1];
+      conversation.messages = [conversation.messages[0], ...contents.map((content, index) => ({ ...first,
+        id: index === 0 ? first.id : `short-reply-${index + 1}`, content, status }))];
+      window.__chatQA.publish({ ...value, busy: status === 'streaming', error: null });
+    }, { contents, status });
+    await publishShortReplies([shortReplies[0]]);
+    await groupedInput.fill('我还有一件小事想说');
+    const selectedShortReply = await grouped.locator('.chat-message[data-role=assistant] .chat-message-body').first().evaluate(node => {
+      window.__shortSelectedNode = node;
+      const range = document.createRange(); range.selectNodeContents(node);
+      getSelection().removeAllRanges(); getSelection().addRange(range); return getSelection().toString();
+    });
+    await publishShortReplies([shortReplies[0], '刚好想']);
+    assert.equal(await grouped.locator('.chat-message[data-role=assistant]').count(), 2);
+    assert.equal(await grouped.locator('.chat-message[data-role=assistant] .chat-message-meta:visible').count(), 1);
+    assert.equal(await grouped.locator('.chat-message-note:visible').count(), 1);
+    assert.equal(await grouped.locator('.chat-message-note:visible').innerText(), '正在回答');
+    await publishShortReplies(shortReplies);
+    const groupedMessages = grouped.locator('.chat-message[data-role=assistant]');
+    assert.equal(await groupedMessages.count(), 3);
+    assert.deepEqual(await groupedMessages.locator('.chat-message-body').allTextContents(), shortReplies);
+    assert.equal(await grouped.locator('[data-message-action=read-aloud]:disabled').count(), 3);
+    assert.equal(await grouped.locator('.chat-message-note:visible').count(), 1);
+    assert.equal(await grouped.locator('.chat-message-note:visible').evaluate(node => node.parentElement.dataset.messageId), 'short-reply-3');
+    assert.equal(await grouped.evaluate(() => getSelection().toString()), selectedShortReply);
+    assert.equal(await grouped.evaluate(() => document.querySelector('.chat-message[data-role=assistant] .chat-message-body') === window.__shortSelectedNode), true);
+    assert.equal(await groupedInput.inputValue(), '我还有一件小事想说');
+    const groupedSpacing = await groupedMessages.evaluateAll(nodes => nodes.map(node => ({
+      margin: parseFloat(getComputedStyle(node).marginBottom), label: node.getAttribute('aria-label'),
+      continuation: node.dataset.groupContinuation, end: node.dataset.groupEnd,
+    })));
+    assert.deepEqual(groupedSpacing.map(item => item.continuation), ['false', 'true', 'true']);
+    assert.deepEqual(groupedSpacing.map(item => item.end), ['false', 'false', 'true']);
+    assert.ok(groupedSpacing[0].margin < groupedSpacing[2].margin && groupedSpacing[1].margin < groupedSpacing[2].margin);
+    assert.ok(groupedSpacing.every(item => item.label.startsWith('爱莉希雅，')), 'Every short bubble retains an accessible author/time label');
+    await grouped.evaluate(() => getSelection().removeAllRanges());
+    await capture(grouped, 'chat-short-bubbles-streaming');
+    check('one turn streams into separate compact bubbles, labels only its last bubble, and preserves selected text plus the next draft');
+    for (const [status, label] of [['cancelled', '已停止'], ['error', '回答未完成']]) {
+      await publishShortReplies(shortReplies, status);
+      assert.equal(await grouped.locator('.chat-message-note:visible').count(), 1);
+      assert.equal(await grouped.locator('.chat-message-note:visible').innerText(), label);
+      assert.equal(await grouped.locator('.chat-message-note:visible').evaluate(node => node.parentElement.dataset.messageId), 'short-reply-3');
+    }
+    await publishShortReplies(shortReplies, 'complete');
+    assert.equal(await grouped.locator('.chat-message-note:visible').count(), 0);
+    const shortState = await grouped.evaluate(() => window.__chatQA.snapshot());
+    const shortConversation = shortState.conversations.find(item => item.id === shortState.activeConversationId);
+    const replyIds = shortConversation.messages.filter(item => item.role === 'assistant').map(item => item.id);
+    assert.equal(new Set(replyIds).size, 3);
+    for (const [index, messageId] of replyIds.entries()) {
+      const bubble = grouped.locator(`[data-message-id="${messageId}"]`);
+      await bubble.locator('[data-message-action=copy]').click();
+      assert.equal(await grouped.evaluate(() => window.__chatQA.clipboard()), shortReplies[index]);
+      assert.deepEqual(await grouped.evaluate(() => window.__chatQA.calls.at(-1)), ['copyMessage', { conversationId: shortConversation.id, messageId }]);
+      await bubble.locator('[data-message-action=read-aloud]').click();
+      assert.deepEqual(await grouped.evaluate(() => window.__chatQA.calls.at(-1)), ['readAloud', { conversationId: shortConversation.id, messageId }]);
+      assert.equal(await grouped.evaluate(() => window.__chatQA.snapshot().speech.messageId), messageId);
+      assert.equal(shortConversation.messages.find(item => item.id === messageId).content, shortReplies[index]);
+    }
+    await grouped.locator('#chat-stop').click(); await grouped.mouse.move(0, 0);
+    await capture(grouped, 'chat-short-bubbles');
+    assert.equal(await groupedInput.inputValue(), '我还有一件小事想说');
+    await groupedInput.press('Enter');
+    assert.equal(await grouped.locator('.chat-message[data-role=user]').count(), 2);
+    assert.equal(await grouped.locator('.chat-message[data-role=assistant] .chat-message-meta:visible').count(), 2);
+    assert.equal(await grouped.locator('.chat-message[data-role=assistant]').last().getAttribute('data-group-continuation'), 'false');
+    assert.equal(await grouped.locator(`[data-message-id="${replyIds.at(-1)}"]`).getAttribute('data-group-end'), 'true');
+    await grouped.evaluate(() => window.__chatQA.finish('好呀，我听着呢。'));
+    const groupedHistoryState = await grouped.evaluate(() => window.__chatQA.snapshot());
+    await grouped.setViewportSize({ width: 420, height: 520 }); await layout(grouped); await capture(grouped, 'chat-short-bubbles-compact');
+    check('each completed bubble copies and reads its own message ID/content; terminal notes are not repeated and the next user starts a new reply group');
+    await grouped.evaluate(() => {
+      const value = window.__chatQA.snapshot(), conversation = value.conversations.find(item => item.id === value.activeConversationId);
+      const older = Array.from({ length: 12 }, (_, index) => [
+        { id: `older-user-${index}`, role: 'user', username: '旅行者', content: `先前的小事 ${index + 1}`, createdAt: conversation.createdAt, status: 'complete' },
+        { id: `older-reply-${index}`, role: 'assistant', content: '听起来是个不错的小发现。', createdAt: conversation.createdAt, status: 'complete' },
+      ]).flat();
+      conversation.messages.unshift(...older); window.__chatQA.publish(value);
+      document.querySelector('#chat-transcript').scrollTop = 120;
+      const node = document.querySelector('.chat-message-body'); window.__olderSelectedNode = node;
+      const range = document.createRange(); range.selectNodeContents(node); getSelection().removeAllRanges(); getSelection().addRange(range);
+    });
+    const olderView = await grouped.evaluate(() => ({ scroll: document.querySelector('#chat-transcript').scrollTop, selection: getSelection().toString() }));
+    await grouped.evaluate(() => {
+      const value = window.__chatQA.snapshot(), conversation = value.conversations.find(item => item.id === value.activeConversationId);
+      conversation.messages.at(-1).status = 'streaming';
+      conversation.messages.push({ ...conversation.messages.at(-1), id: 'offscreen-next-bubble', content: '我还在听呢。' });
+      window.__chatQA.publish({ ...value, busy: true });
+    });
+    assert.equal(await grouped.evaluate(() => getSelection().toString()), olderView.selection);
+    assert.equal(await grouped.evaluate(() => document.querySelector('.chat-message-body') === window.__olderSelectedNode), true);
+    assert.ok(Math.abs(await grouped.locator('#chat-transcript').evaluate(node => node.scrollTop) - olderView.scroll) <= 1);
+    check('appending another offscreen bubble preserves scroll position and an earlier text selection');
+    const groupedHistory = await context.newPage(); groupedHistory.on('pageerror', error => errors.push(error.message));
+    await groupedHistory.setViewportSize({ width: 600, height: 741 });
+    await groupedHistory.goto(`${base}/renderer/settings.html`); await groupedHistory.waitForSelector('html[data-chat-ready=true][data-ready=true]');
+    await groupedHistory.evaluate(value => window.__chatQA.publish(value), groupedHistoryState);
+    await groupedHistory.locator('[data-tab=history]').click();
+    const historyMessages = groupedHistoryState.conversations.find(item => item.id === groupedHistoryState.activeConversationId).messages;
+    assert.equal(await groupedHistory.locator('.history-message').count(), historyMessages.length);
+    assert.deepEqual(await groupedHistory.locator('.history-message').evaluateAll(nodes => nodes.map(node => node.dataset.messageId)), historyMessages.map(item => item.id));
+    assert.deepEqual(await groupedHistory.locator('.history-message-body').allTextContents(), historyMessages.map(item => item.content));
+    assert.equal(await groupedHistory.locator('.history-message[data-role=assistant] .history-message-meta:visible').count(), 2);
+    assert.match(await groupedHistory.locator('.chat-history-choice .hint').innerText(), new RegExp(`${historyMessages.length} 条消息`));
+    for (const [status, label] of [['streaming', '正在回答'], ['cancelled', '已停止'], ['error', '回答未完成']]) {
+      await groupedHistory.evaluate(({ ids, status }) => {
+        const value = window.__chatQA.snapshot(), conversation = value.conversations.find(item => item.id === value.activeConversationId);
+        for (const message of conversation.messages) if (ids.includes(message.id)) message.status = status;
+        window.__chatQA.publish({ ...value, busy: status === 'streaming' });
+      }, { ids: replyIds, status });
+      assert.equal(await groupedHistory.locator('.history-message > .hint:visible').count(), 1);
+      assert.equal(await groupedHistory.locator('.history-message > .hint:visible').innerText(), label);
+      assert.equal(await groupedHistory.locator('.history-message > .hint:visible').evaluate(node => node.parentElement.dataset.messageId), replyIds.at(-1));
+    }
+    await groupedHistory.evaluate(value => window.__chatQA.publish(value), groupedHistoryState);
+    await capture(groupedHistory, 'chat-history-short-bubbles');
+    check('history preserves every short message and its distinct ID while grouping author/time and terminal labels by reply turn');
     const settings = await context.newPage(); settings.on('pageerror', error => errors.push(error.message)); await settings.setViewportSize({ width: 600, height: 741 });
     await settings.goto(`${base}/renderer/settings.html`); await settings.waitForSelector('html[data-chat-ready=true][data-ready=true]');
     assert.equal(await settings.locator('#model-setup-card').count(), 0, 'Older hosts without setup bridge do not show an unusable setup card');

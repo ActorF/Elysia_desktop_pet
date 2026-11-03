@@ -165,9 +165,13 @@ async function main() {
   assert.equal(chat.send('请用一句简短中文和我打招呼，提到今天一起吃草莓蛋糕。不要描述动作。').busy, true);
   await until('Chinese reply', () => !chat.getState().busy);
   const chatState = chat.getState(); assert.equal(chatState.error, null); assert.equal(chatState.storageError, null);
-  const reply = chatState.conversations.find(item => item.id === chatState.activeConversationId).messages.at(-1);
-  assert.equal(reply.status, 'complete'); assert.match(reply.content, /[\u3400-\u9fff]/); assert.doesNotMatch(reply.content, /<think>/i);
-  report.replies.push({ request: 'synthetic greeting and strawberry cake', text: reply.content });
+  const firstMessages = chatState.conversations.find(item => item.id === chatState.activeConversationId).messages;
+  const replies = firstMessages.filter(message => message.role === 'assistant');
+  assert.ok(replies.length > 0);
+  assert.ok(replies.every(reply => reply.status === 'complete' && reply.content.trim()));
+  const replyText = replies.map(reply => reply.content).join('\n');
+  assert.match(replyText, /[\u3400-\u9fff]/); assert.doesNotMatch(replyText, /<think>/i);
+  report.replies.push({ request: 'synthetic greeting and strawberry cake', text: replyText, bubbles: replies.map(reply => reply.content) });
   report.timings.chatMs = Date.now() - chatStart; note({ replyComplete: true, durationMs: report.timings.chatMs });
 
   stage = 'long-message'; const longStart = Date.now();
@@ -181,9 +185,10 @@ async function main() {
   await until('Maximum-length Chinese message with full persona', () => !chat.getState().busy);
   const longState = chat.getState();
   assert.equal(longState.error, null); assert.equal(longState.storageError, null);
-  const longReply = longState.conversations.find(item => item.id === longState.activeConversationId).messages.at(-1);
-  assert.equal(longReply.status, 'complete'); assert.ok(longReply.content.trim());
-  report.maximumLengthMessage = { characters: longMessage.length, replyCharacters: longReply.content.length, passed: true };
+  const longReplies = longState.conversations.find(item => item.id === longState.activeConversationId).messages.slice(firstMessages.length).filter(message => message.role === 'assistant');
+  assert.ok(longReplies.length > 0);
+  assert.ok(longReplies.every(reply => reply.status === 'complete' && reply.content.trim()));
+  report.maximumLengthMessage = { characters: longMessage.length, replyCharacters: longReplies.reduce((sum, reply) => sum + reply.content.length, 0), bubbles: longReplies.length, passed: true };
   report.timings.longMessageMs = Date.now() - longStart;
   note({ maximumLengthMessage: report.maximumLengthMessage, durationMs: report.timings.longMessageMs });
 

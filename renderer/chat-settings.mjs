@@ -64,13 +64,22 @@ function renderHistory() {
       const meta = document.createElement('p'); meta.className = 'history-message-meta';
       const body = document.createElement('p'); body.className = 'history-message-body';
       const status = document.createElement('span'); status.className = 'hint';
+      meta.setAttribute('aria-hidden', 'true');
       article.append(meta, body, status); node = { article, meta, body, status }; historyMessageNodes.set(message.id, node);
     }
     node.article.dataset.role = message.role;
-    setText(node.meta, `${message.role === 'user' ? message.username || '你' : '爱莉希雅'} · ${date(message.createdAt)}`);
+    node.article.dataset.messageId = message.id;
+    const continuation = message.role === 'assistant' && current.messages[index - 1]?.role === 'assistant';
+    const groupEnd = message.role !== 'assistant' || current.messages[index + 1]?.role !== 'assistant';
+    const label = `${message.role === 'user' ? message.username || '你' : '爱莉希雅'} · ${date(message.createdAt)}`;
+    node.article.dataset.groupContinuation = String(continuation);
+    node.article.dataset.groupEnd = String(groupEnd);
+    node.article.setAttribute('aria-label', label);
+    node.meta.hidden = continuation;
+    setText(node.meta, label);
     setText(node.body, message.content || (message.status === 'streaming' ? '正在回答…' : '没有收到完整回答。'));
     const statuses = { streaming: '正在回答', error: '回答未完成', cancelled: '已停止' };
-    setText(node.status, statuses[message.status] || ''); node.status.hidden = !statuses[message.status];
+    setText(node.status, statuses[message.status] || ''); node.status.hidden = !statuses[message.status] || !groupEnd;
     // A stream in another conversation must not disturb selected history text.
     if (detail.children[index] !== node.article) detail.insertBefore(node.article, detail.children[index] || null);
   }

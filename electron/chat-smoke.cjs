@@ -68,10 +68,15 @@ async function checkChatRuntime({ chat, chatWindow, chatSpeech, chatSpeechTestHo
     const complete = await poll('finished model response', () => requestChat(reopened, 'getState'), value => !value.busy);
     assert.equal(complete.error, null);
     const messages = complete.conversations.find(item => item.id === selectedId).messages;
-    assert.equal(messages.length, 2); assert.equal(messages[0].username, '测试旅人');
-    assert.equal(messages[1].status, 'complete'); assert.match(messages[1].content, /一起聊聊吧/);
+    assert.equal(messages.length, 3); assert.equal(messages[0].username, '测试旅人');
+    assert.equal(messages[1].content, '你好，测试旅人。');
+    assert.match(messages[2].content, /一起聊聊吧/);
+    assert.ok(messages.slice(1).every(message => message.status === 'complete'));
+    assert.notEqual(messages[1].id, messages[2].id);
     await poll('rendered answer', () => reopened.webContents.executeJavaScript('document.body.textContent'), value => value.includes('<img src=x onerror=alert(1)>'));
     assert.equal(await reopened.webContents.executeJavaScript('document.querySelectorAll("img[src=x]").length'), 0);
+    assert.deepEqual(await reopened.webContents.executeJavaScript('Array.from(document.querySelectorAll(".chat-message[data-role=assistant]"), node => ({id: node.dataset.messageId, text: node.querySelector(".chat-message-body").textContent}))'),
+      messages.slice(1).map(message => ({ id: message.id, text: message.content })));
     assert.equal(requests.length, 1); assert.equal(requests[0].stream, true);
     assert.match(requests[0].messages[0].content, /测试旅人/);
     const restored = createChatService({ directory });
@@ -90,6 +95,8 @@ async function checkChatRuntime({ chat, chatWindow, chatSpeech, chatSpeechTestHo
     await requestChat(reopened, 'send', '用一句话回应。');
     await poll('silent WAV decoded and acknowledged', () => chatSpeechTestHooks.calls, calls => calls.length === 1 && calls[0].acknowledged);
     await poll('speech completed with warm worker', () => chatSpeech.getState(), value => value.status === 'ready');
+    assert.equal(chatSpeechTestHooks.calls[0].requests, 1, 'Multiple bubbles queue one automatic speech request');
+    assert.equal(requests[1].messages.at(-2).content, messages.slice(1).map(message => message.content).join('\n'), 'Next request includes every bubble from the previous turn');
     await requestChat(reopened, 'send', '这次会在朗读时关闭开关。');
     await poll('second speech started', () => chatSpeech.getState(), value => value.status === 'playing');
     assert.equal(chatSpeechTestHooks.calls.length, 1, 'The second fresh reply reuses the first worker');
@@ -126,7 +133,7 @@ async function checkChatRuntime({ chat, chatWindow, chatSpeech, chatSpeechTestHo
     assert.deepEqual(cleared.settings, originalSettings);
     const afterDeletion = createChatService({ directory });
     assert.deepEqual(afterDeletion.getState().conversations, []); afterDeletion.dispose();
-    return { isolatedProfile: true, ipc: true, settingsOpenedFromChat: true, settingsReopenedFromChat: true, streaming: true, closeAndReopenDuringReply: true, persistence: true, history: true, textOnlyRendering: true, petPreserved: true, hiddenThroughout: true,
+    return { isolatedProfile: true, ipc: true, settingsOpenedFromChat: true, settingsReopenedFromChat: true, streaming: true, shortReplyBubbles: true, completeTurnContext: true, oneSpeechRequestPerTurn: true, closeAndReopenDuringReply: true, persistence: true, history: true, textOnlyRendering: true, petPreserved: true, hiddenThroughout: true,
       silentAudioPlayback: true, disabledSpeechNeverStartsModel: true, speechOffCancelsWorker: true, speechWarmup: true, speechWorkerReused: true, manualSpeechWithoutAuto: true, manualSpeechHonorsDnd: true, closeReleasesSpeech: true, deleteHistory: true, clearHistoryPersisted: true };
   } finally {
     chat.cancel(); chatWindow.getWindow()?.close(); settingsWindow.getWindow()?.close();

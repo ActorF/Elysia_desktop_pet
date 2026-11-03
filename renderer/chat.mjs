@@ -87,18 +87,27 @@ function renderMessages() {
       const read = message.role === 'assistant' ? makeMessageAction('read-aloud', '朗读回复', ['M4 9h4l5-4v14l-5-4H4z', 'M16 8c2 2 2 6 0 8', 'M19 5c4 4 4 10 0 14']) : null;
       actions.append(copy.button); if (read) actions.append(read.button);
       meta.append(name, stamp); article.append(meta, body, note, actions);
-      node = { article, name, stamp, body, note, actions, copy, read, actionPending: false }; messageNodes.set(message.id, node);
+      meta.setAttribute('aria-hidden', 'true');
+      node = { article, meta, name, stamp, body, note, actions, copy, read, actionPending: false }; messageNodes.set(message.id, node);
       const created = node;
       copy.button.addEventListener('click', () => void messageAction(created, 'copy'));
       read?.button.addEventListener('click', () => void messageAction(created, 'read-aloud'));
     }
     node.message = message; node.conversationId = conversation.id; node.article.dataset.messageId = message.id;
     node.article.dataset.role = message.role;
-    setText(node.name, message.role === 'user' ? message.username || '你' : '爱莉希雅');
-    node.stamp.dateTime = message.createdAt || ''; setText(node.stamp, time(message.createdAt));
+    const continuation = message.role === 'assistant' && entries[index - 1]?.role === 'assistant';
+    const groupEnd = message.role !== 'assistant' || entries[index + 1]?.role !== 'assistant';
+    const author = message.role === 'user' ? message.username || '你' : '爱莉希雅';
+    const sentAt = time(message.createdAt);
+    node.article.dataset.groupContinuation = String(continuation);
+    node.article.dataset.groupEnd = String(groupEnd);
+    node.article.setAttribute('aria-label', [author, sentAt].filter(Boolean).join('，'));
+    node.meta.hidden = continuation;
+    setText(node.name, author);
+    node.stamp.dateTime = message.createdAt || ''; setText(node.stamp, sentAt);
     setText(node.body, message.content || (message.status === 'streaming' ? '正在想怎么回应你…' : '这次没有收到完整回答。'));
     const labels = { streaming: '正在回答', cancelled: '已停止', error: '回答未完成' };
-    setText(node.note, labels[message.status] || ''); node.note.hidden = !labels[message.status];
+    setText(node.note, labels[message.status] || ''); node.note.hidden = !labels[message.status] || !groupEnd;
     node.copy.button.disabled = !message.content?.trim() || node.actionPending;
     if (node.read) node.read.button.disabled = !message.content?.trim() || message.status === 'streaming' || snapshot.busy || node.actionPending || messageActionPending;
     // Never detach unchanged messages: doing so destroys a user's copy selection.

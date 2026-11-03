@@ -7,14 +7,14 @@
 
 A chibi Elysia companion for Windows, with a transparent full-body character, mouse-following eyes, and gentle motion. Mix expressions, cat mode, glasses, and four actions, with little clouds that respond to your typing. Includes local chat, optional read-aloud replies, automatic model setup, conversation history management, and body-region interactions.
 
-**Current stable version: 1.4.3.** Chat models and the speech runtime download automatically from sources accessible in mainland China. See the [1.4.3 release page](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.4.3) and [release notes](docs/releases/v1.4.3.md).
+**Current stable version: 1.4.4.** Chat replies now use short, individual sentence bubbles for more natural conversation. See the [1.4.4 release page](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.4.4) and [release notes](docs/releases/v1.4.4.md).
 
 ## Download
 
 | Edition | Program | Features | Checksum |
 | --- | --- | --- | --- |
-| **1.4.3 Windows installer** | [Download installer](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.4.3/Elysia_desktop_pet-1.4.3-setup.exe) | Includes chat and optional read-aloud replies | [SHA256](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.4.3/Elysia_desktop_pet-1.4.3-setup.exe.sha256) |
-| **1.4.3 Windows portable** | [Download EXE](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.4.3/Elysia_desktop_pet-1.4.3.exe) | Same features; double-click to run | [SHA256](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.4.3/Elysia_desktop_pet-1.4.3.exe.sha256) |
+| **1.4.4 Windows installer** | [Download installer](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.4.4/Elysia_desktop_pet-1.4.4-setup.exe) | Includes chat and optional read-aloud replies | [SHA256](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.4.4/Elysia_desktop_pet-1.4.4-setup.exe.sha256) |
+| **1.4.4 Windows portable** | [Download EXE](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.4.4/Elysia_desktop_pet-1.4.4.exe) | Same features; double-click to run | [SHA256](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.4.4/Elysia_desktop_pet-1.4.4.exe.sha256) |
 | 1.3.0 Windows portable | [Download older EXE](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.3.0/Elysia_desktop_pet-1.3.0.exe) | **No chat or read-aloud replies**; daily and interaction recordings remain included | [SHA256](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.3.0/Elysia_desktop_pet-1.3.0.exe.sha256) |
 
 For **Windows x64**. Follow the installer or double-click the portable EXE; Git, Git LFS, and Node.js are not needed. Version 1.3.0 does not download chat or speech synthesis models.
@@ -23,7 +23,7 @@ Quit the old version from its tray before installing or opening the new one. Pos
 
 The app is unsigned. Once the installer or portable EXE has finished downloading, use its SHA256 file to check integrity.
 
-[1.4.3 release page](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.4.3) · [1.3.0 release page](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.3.0) · [Run from source](#run-from-source)
+[1.4.4 release page](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.4.4) · [1.3.0 release page](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.3.0) · [Run from source](#run-from-source)
 
 ## Character gallery
 
@@ -123,9 +123,9 @@ First launch automatically downloads the default Qwen chat model and speech runt
 
 The chat model is about **5.8 GB**, and the speech runtime download is about **5.7 GB**, with additional space needed for extraction. **Settings → Chat** shows separate progress, cancellation, and retry controls. Both downloads resume after cancellation or a network interruption when retried. Prepared resources are reused, and the chat service starts and stops with the pet.
 
-Choose **Open chat (打开聊天框)** from the tray. Enter sends a message; Shift + Enter adds a line. Set your preferred name in **Settings → Chat**, and use the controls below messages to copy text.
+Choose **Open chat (打开聊天框)** from the tray. Enter sends a message; Shift + Enter adds a line. Set your preferred name in **Settings → Chat**. The default local chat answers with **1–3 short bubbles, one complete sentence each**, usually just one unless there is more to add. Consecutive replies are grouped closely together, and each message can be copied individually.
 
-Automatic read-aloud is **off by default**. Choose **Read Aloud / 朗读** under a reply to read only that message without changing the setting, or enable automatic reading in chat settings. The first speech model load may take a while; subsequent requests within a short interval reuse the loaded model.
+Automatic read-aloud is **off by default**. Choose **Read Aloud / 朗读** under a bubble to read only that message without changing the setting. When enabled in chat settings, automatic reading waits for the completed reply and reads all its bubbles together in order. The first speech model load may take a while; subsequent requests within a short interval reuse the loaded model.
 
 Manual reading is not blocked by ordinary fullscreen or Windows busy-state detection. It still respects Do not disturb, mute, screen lock, and sleep, with specific failure messages. Automatic reading and daily greetings retain screen-state restrictions. Sending a new message, stopping, or closing chat cancels the current reading.
 

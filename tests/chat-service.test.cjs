@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { createChatService, DEFAULT_CHAT_SETTINGS } = require('../electron/chat-service.cjs');
+const { SHORT_REPLY_GRAMMAR } = require('../electron/chat-reply.cjs');
 
 function fixture(t, options = {}) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'elysia-chat-test-'));
@@ -58,6 +59,8 @@ test('migration preserves custom servers and models and uses a single compatible
     { baseUrl: 'http://localhost:11434', model: 'my-custom-model' },
     { baseUrl: 'https://example.test', model: 'tobestyledintro/qwen3.8-9b-distill:latest' },
     { baseUrl: 'http://localhost:11434/proxy', model: 'tobestyledintro/qwen3.8-9b-distill:latest' },
+    { baseUrl: DEFAULT_CHAT_SETTINGS.baseUrl, model: 'custom:model' },
+    { baseUrl: 'http://localhost:18434', model: DEFAULT_CHAT_SETTINGS.model },
   ]) {
     const f = fixture(t), original = f.create(); original.setSettings(settings); original.dispose();
     const before = fs.readFileSync(f.file), calls = [];
@@ -67,6 +70,9 @@ test('migration preserves custom servers and models and uses a single compatible
     restarted.send('检查连接'); await settled(restarted);
     assert.deepEqual(calls.map(item => item.url), [`${settings.baseUrl}${settings.baseUrl.endsWith('/v1') ? '' : '/v1'}/chat/completions`]);
     assert.equal(calls[0].payload.chat_template_kwargs, undefined);
+    assert.equal(calls[0].payload.grammar, undefined);
+    assert.equal(calls[0].payload.max_tokens, 256);
+    assert.equal(calls[0].payload.temperature, undefined); assert.equal(calls[0].payload.top_p, undefined);
     assert.equal(calls[0].payload.options, undefined); assert.match(restarted.getState().error, /无法连接到本地聊天服务/);
   }
 });
@@ -128,11 +134,13 @@ test('streaming joins split UTF-8/SSE, persists replies and sends role prompt pl
   assert.equal(calls[0].options.redirect, 'error');
   assert.equal(calls[0].body.model, 'elysia-chat');
   assert.deepEqual(calls[0].body.chat_template_kwargs, { enable_thinking: false });
-  assert.equal(calls[0].body.max_tokens, 1024); assert.equal(calls[0].body.stream, true);
+  assert.equal(calls[0].body.max_tokens, 256); assert.equal(calls[0].body.stream, true);
+  assert.equal(calls[0].body.temperature, 0.7); assert.equal(calls[0].body.top_p, 0.8);
+  assert.equal(calls[0].body.grammar, SHORT_REPLY_GRAMMAR);
   assert.equal(calls[0].body.think, undefined); assert.equal(calls[0].body.options, undefined);
-  assert.match(calls[0].body.messages[0].content, /Elysia 运行时人格合同/);
+  assert.ok(calls[0].body.messages[0].content.startsWith(fs.readFileSync(path.join(__dirname, '../electron/chat-persona.md'), 'utf8').trim()));
   assert.match(calls[0].body.messages[0].content, /USER_PROFILE_JSON\n\{"user_name":"小星"\}/);
-  assert.match(calls[0].body.messages[0].content, /应用可以按用户设置朗读完成的回答/);
+  assert.match(calls[0].body.messages[0].content, /应用可按设置朗读完成的回答/);
   service.send('你记得我吗？'); await settled(service);
   assert.deepEqual(calls[1].body.messages.slice(1).map(item => [item.role, item.content]), [
     ['user', '你好'], ['assistant', '你好，<img src=x onerror=alert(1)>'], ['user', '你记得我吗？'],
@@ -443,4 +451,120 @@ test('completion callback excludes failed, empty, truncated, cancelled and timed
   const timedOut = f.create({ fetchImpl: async () => new Promise(() => {}), requestTimeoutMs: 10, onReplyCompleted: reply => calls.push(reply) });
   timedOut.send('超时'); await settled(timedOut);
   assert.deepEqual(calls, []);
+});
+
+test('streamed sentences keep stable message IDs, per-message access and one whole-turn completion', async t => {
+  const f = fixture(t), completions = [];
+  let stream;
+  const service = f.create({ fetchImpl: async () => new Response(new ReadableStream({ start(controller) { stream = controller; } })),
+    onReplyCompleted: value => completions.push(value) });
+  service.send('陪我聊聊');
+  const initialId = latest(service).messages[1].id;
+  async function append(content, expected, reason = null) {
+    const deadline = Date.now() + 2000;
+    while (!stream && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 5));
+    // Network packets may divide a Chinese character or emoji's UTF-8 bytes.
+    for (const byte of new TextEncoder().encode(event(content, reason))) stream.enqueue(Uint8Array.of(byte));
+    while (JSON.stringify(latest(service).messages.slice(1).map(message => message.content)) !== JSON.stringify(expected)
+      && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 5));
+    assert.deepEqual(latest(service).messages.slice(1).map(message => message.content), expected);
+  }
+  await append('第一句。', ['第一句。']);
+  await append('🌸\n第二句', ['第一句。🌸', '第二句']);
+  const secondId = latest(service).messages[2].id;
+  await append('！“第三句', ['第一句。🌸', '第二句！', '“第三句']);
+  const thirdId = latest(service).messages[3].id;
+  assert.deepEqual(latest(service).messages.slice(1).map(message => message.status), ['streaming', 'streaming', 'streaming']);
+  assert.deepEqual(completions, []);
+  await append('。”', ['第一句。🌸', '第二句！', '“第三句。”'], 'stop');
+  await settled(service);
+  const conversation = latest(service), replies = conversation.messages.slice(1);
+  assert.deepEqual(replies.map(message => message.id), [initialId, secondId, thirdId]);
+  assert.ok(replies.every(message => message.status === 'complete'));
+  assert.deepEqual(completions, [{ conversationId: conversation.id, messageId: initialId, text: replies.map(message => message.content).join('\n') }]);
+  for (const message of replies) {
+    const reference = { conversationId: conversation.id, messageId: message.id };
+    assert.deepEqual(service.getMessage(reference), message);
+    assert.deepEqual(f.create().getMessage(reference), message);
+  }
+  assert.deepEqual(f.create().getState().conversations, service.getState().conversations);
+});
+
+test('cancelling marks every streamed bubble incomplete and late packets cannot alter a new turn', async t => {
+  const f = fixture(t), requests = [], completions = [];
+  let resolveLate, reads = 0;
+  const service = f.create({ fetchImpl: async (_url, options) => {
+    requests.push(JSON.parse(options.body));
+    if (requests.length > 1) return complete('新的回答。');
+    return { ok: true, body: { getReader: () => ({
+      read: () => reads++ === 0 ? Promise.resolve({ done: false, value: new TextEncoder().encode(event('第一句。第二句还没')) })
+        : new Promise(resolve => { resolveLate = resolve; }),
+      cancel: async () => {},
+    }) } };
+  }, onReplyCompleted: value => completions.push(value) });
+  service.send('取消的提问');
+  const deadline = Date.now() + 2000;
+  while (!resolveLate && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 5));
+  assert.equal(typeof resolveLate, 'function');
+  const before = latest(service).messages.slice(1);
+  service.cancel();
+  assert.deepEqual(latest(service).messages.slice(1).map(message => message.status), ['cancelled', 'cancelled']);
+  service.send('新问题'); await settled(service);
+  resolveLate({ done: false, value: new TextEncoder().encode(event('完成了。又多一条。', 'stop')) });
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.deepEqual(latest(service).messages.slice(1, 3).map(({ status, ...message }) => message), before.map(({ status, ...message }) => message));
+  assert.deepEqual(requests[1].messages.slice(1), [{ role: 'user', content: '新问题' }]);
+  assert.deepEqual(latest(service).messages.map(message => message.content), ['取消的提问', '第一句。', '第二句还没', '新问题', '新的回答。']);
+  assert.equal(completions.length, 1); assert.equal(completions[0].text, '新的回答。');
+});
+
+test('history joins every complete bubble in its turn and restart preserves legacy messages unchanged', async t => {
+  const f = fixture(t), requests = [];
+  const service = f.create({ fetchImpl: async (_url, options) => { requests.push(JSON.parse(options.body)); return complete('第一句。第二句！\n第三句'); } });
+  service.send('第一问'); await settled(service);
+  const before = latest(service).messages;
+  service.send('第二问'); await settled(service);
+  assert.deepEqual(requests[1].messages.slice(1), [
+    { role: 'user', content: '第一问' }, { role: 'assistant', content: '第一句。\n第二句！\n第三句' }, { role: 'user', content: '第二问' },
+  ]);
+  assert.deepEqual(latest(f.create()).messages.slice(0, 4), before);
+  service.dispose();
+  const saved = JSON.parse(fs.readFileSync(f.file, 'utf8'));
+  const messages = saved.conversations[0].messages;
+  messages[1].content = '旧版一个气泡里有两句。这里仍然不拆。';
+  messages[2].status = 'error';
+  messages[3].status = 'complete';
+  fs.writeFileSync(f.file, JSON.stringify(saved));
+  const restarted = f.create({ fetchImpl: async (_url, options) => { requests.push(JSON.parse(options.body)); return complete('新回答'); } });
+  assert.deepEqual(latest(restarted).messages, messages, 'Loading must not split or rewrite legacy history');
+  restarted.send('第三问'); await settled(restarted);
+  assert.deepEqual(requests.at(-1).messages.slice(1), [
+    { role: 'user', content: '第二问' }, { role: 'assistant', content: '第一句。\n第二句！\n第三句' }, { role: 'user', content: '第三问' },
+  ], 'An incomplete bubble excludes its entire earlier turn, even when siblings are complete');
+});
+
+test('length and broken-stream failures retain all received bubbles as incomplete without speaking', async t => {
+  for (const response of [() => complete('一。二。三。四。未说完', { finish_reason: 'length' }), () => new Response(event('一。二。三。四。未说完'))]) {
+    const f = fixture(t), completions = [];
+    const service = f.create({ fetchImpl: async () => response(), onReplyCompleted: value => completions.push(value) });
+    service.send('问题'); await settled(service);
+    const replies = latest(service).messages.slice(1);
+    assert.deepEqual(replies.map(message => message.content), ['一。', '二。', '三。', '四。', '未说完']);
+    assert.ok(replies.every(message => message.status === 'error'));
+    assert.deepEqual(completions, []);
+    assert.deepEqual(latest(f.create()).messages.slice(1), replies);
+  }
+});
+
+test('restart cancels all persisted streaming bubbles and excludes that whole turn from context', async t => {
+  const f = fixture(t), service = f.create({ fetchImpl: async () => complete('一。二。') });
+  service.send('旧问题'); await settled(service); service.dispose();
+  const saved = JSON.parse(fs.readFileSync(f.file, 'utf8'));
+  for (const message of saved.conversations[0].messages.slice(1)) message.status = 'streaming';
+  fs.writeFileSync(f.file, JSON.stringify(saved));
+  let payload;
+  const restarted = f.create({ fetchImpl: async (_url, options) => { payload = JSON.parse(options.body); return complete('恢复了'); } });
+  assert.deepEqual(latest(restarted).messages.slice(1).map(message => message.status), ['cancelled', 'cancelled']);
+  restarted.send('恢复后的问题'); await settled(restarted);
+  assert.deepEqual(payload.messages.slice(1), [{ role: 'user', content: '恢复后的问题' }]);
 });

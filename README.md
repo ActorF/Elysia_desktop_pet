@@ -6,14 +6,14 @@
 
 透明全身立绘、鼠标目光跟随、轻柔摆动。表情、猫猫形态、眼镜和四种动作可以自由搭配，输入字符时还有小云朵回应。支持本地聊天、可选回复朗读、模型自动配置、聊天记录管理与身体部位互动。
 
-**当前正式版本：1.4.3。** 聊天模型与语音环境支持国内源自动下载。查看 [1.4.3 发布页](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.4.3) 与[更新说明](docs/releases/v1.4.3.md)。
+**当前正式版本：1.4.4。** 聊天回复改为简短的逐句气泡，交流更自然。查看 [1.4.4 发布页](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.4.4) 与[更新说明](docs/releases/v1.4.4.md)。
 
 ## 下载程序
 
 | 版本 | 程序 | 功能 | 校验文件 |
 | --- | --- | --- | --- |
-| **1.4.3 Windows 安装版** | [下载安装器](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.4.3/Elysia_desktop_pet-1.4.3-setup.exe) | 含聊天与可选回复朗读 | [SHA256](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.4.3/Elysia_desktop_pet-1.4.3-setup.exe.sha256) |
-| **1.4.3 Windows 便携版** | [下载 EXE](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.4.3/Elysia_desktop_pet-1.4.3.exe) | 相同功能，双击即可运行 | [SHA256](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.4.3/Elysia_desktop_pet-1.4.3.exe.sha256) |
+| **1.4.4 Windows 安装版** | [下载安装器](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.4.4/Elysia_desktop_pet-1.4.4-setup.exe) | 含聊天与可选回复朗读 | [SHA256](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.4.4/Elysia_desktop_pet-1.4.4-setup.exe.sha256) |
+| **1.4.4 Windows 便携版** | [下载 EXE](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.4.4/Elysia_desktop_pet-1.4.4.exe) | 相同功能，双击即可运行 | [SHA256](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.4.4/Elysia_desktop_pet-1.4.4.exe.sha256) |
 | 1.3.0 Windows 便携版 | [下载旧版 EXE](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.3.0/Elysia_desktop_pet-1.3.0.exe) | **不含聊天及回复朗读**，保留日常与点击互动录音 | [SHA256](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.3.0/Elysia_desktop_pet-1.3.0.exe.sha256) |
 
 适用于 **Windows x64**。安装版按提示完成安装；便携版双击即可运行，无需 Git、Git LFS 或 Node.js。1.3.0 无需下载聊天或语音合成模型。
@@ -22,7 +22,7 @@
 
 程序未进行数字签名。安装器或便携 EXE 下载完成后，可用对应 SHA256 核对文件完整性。
 
-[1.4.3 发布页](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.4.3) · [1.3.0 发布页](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.3.0) · [源码运行](#源码运行)
+[1.4.4 发布页](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.4.4) · [1.3.0 发布页](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.3.0) · [源码运行](#源码运行)
 
 ## 角色展示
 
@@ -119,9 +119,9 @@
 
 聊天模型约 **5.8 GB**，语音运行环境下载约 **5.7 GB**，还需预留解压空间。在 **设置 → 聊天** 查看两者各自的进度，可取消或重试；两者均支持断点续传，中断后重试会继续使用已下载部分。准备完成后复用已保存资源，聊天服务随桌宠启动和退出。
 
-从托盘选择 **打开聊天框**，Enter 发送、Shift + Enter 换行。可在 **设置 → 聊天** 修改称呼你的名字，消息下方可复制文字。
+从托盘选择 **打开聊天框**，Enter 发送、Shift + Enter 换行。可在 **设置 → 聊天** 修改称呼你的名字。默认本地聊天每轮回复 **1–3 个简短气泡，每个气泡一句完整的话**，通常先用一句回应，需要时再补充。连续回复紧凑排列，每条消息都可单独复制。
 
-自动朗读**默认关闭**。点击回复的 **Read Aloud／朗读** 只读这一条，不改变自动朗读设置；也可在聊天设置中开启自动朗读。首次加载语音模型可能较慢，短时间内的后续朗读会复用已加载模型。
+自动朗读**默认关闭**。点击气泡下的 **Read Aloud／朗读** 只读这一条，不改变自动朗读设置；在聊天设置中开启自动朗读后，会在本轮回复完成时按顺序连贯读完全部气泡。首次加载语音模型可能较慢，短时间内的后续朗读会复用已加载模型。
 
 手动朗读不会被普通全屏或 Windows 忙碌状态误拦截，仍遵守勿扰、静音、锁屏和休眠限制；失败提示会说明具体原因。自动朗读与日常问候保留屏幕状态限制。发送新消息、停止或关闭聊天可中止当前朗读。
 

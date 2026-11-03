@@ -266,7 +266,8 @@ test('a pinned ModelScope runtime follows only its digest-addressed CDN and depl
       return new Response(f.runtime);
     },
   });
-  f.service.install(); assert.equal((await settled(f.service)).phase, 'ready');
+  f.service.install(); const state = await settled(f.service);
+  assert.equal(state.phase, 'ready', JSON.stringify({ phase: state.phase, error: state.error, message: state.message }));
   assert.equal(visited.length, 3);
   assert.equal(visited[1], modelScopeRuntime);
   assert.equal(visited[2], `${modelScopeCdn(f.manifest.runtime.sha256)}?signed=fixture`);
