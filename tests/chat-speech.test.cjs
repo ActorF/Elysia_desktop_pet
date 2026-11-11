@@ -48,6 +48,22 @@ async function waitFor(predicate) {
   assert.ok(predicate(), 'controller should settle promptly');
 }
 
+test('resource repair releases the owned voice worker and blocks new speech until setup completes', t => {
+  let setupBusy = false;
+  const voice = { settings: { volume: 1, dnd: false }, environment: { monitorReady: true } };
+  const f = fixture(t, { getBlockReason: manual => getChatSpeechBlockReason(voice, { manual, setupBusy }) });
+  assert.equal(f.controller.start('修复前', { manual: true }), true);
+  assert.equal(f.children.length, 1);
+  setupBusy = true; f.controller.refreshPermission();
+  assert.equal(f.children[0].killCount, 1);
+  assert.equal(f.controller.start('修复期间', { manual: true }), false);
+  assert.match(f.controller.getState().error, /语音环境正在配置/);
+  assert.equal(f.children.length, 1);
+  setupBusy = false;
+  assert.equal(f.controller.start('修复后', { manual: true }), true);
+  assert.equal(f.children.length, 2);
+});
+
 test('default-off, closed-window and denied-speech paths never even probe model files or spawn a worker', t => {
   const defaultOff = fixture(t, { isEnabled: undefined });
   assert.deepEqual(defaultOff.controller.getState(), { status: 'idle', error: null, messageId: null, emotion: null, cached: false });

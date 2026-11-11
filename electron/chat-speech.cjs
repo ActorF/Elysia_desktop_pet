@@ -6,7 +6,8 @@ const { spawn } = require('node:child_process');
 const { randomUUID } = require('node:crypto');
 const EMOTIONS = new Set(['neutral', 'happy', 'sad', 'caring', 'moved', 'playful', 'affectionate', 'teasing', 'serious', 'surprised']);
 
-function getChatSpeechBlockReason(voice, { manual = false } = {}) {
+function getChatSpeechBlockReason(voice, { manual = false, setupBusy = false } = {}) {
+  if (setupBusy) return '本地语音环境正在配置，完成后即可朗读。';
   if (!voice?.settings || !voice.environment) return '语音状态尚未就绪，请稍后重试。';
   const { settings, environment } = voice;
   if (environment.locked) return '锁屏期间暂停朗读，请解锁后重试。';

@@ -9,6 +9,7 @@ const { createHash } = require('node:crypto');
 const { EventEmitter } = require('node:events');
 const { PassThrough } = require('node:stream');
 const { createVoiceSetup } = require('../electron/voice-setup.cjs');
+const { createSetupDiagnostic } = require('../electron/setup-diagnostics.cjs');
 const hash = content => createHash('sha256').update(content).digest('hex');
 const write = (root, name, data = 'fixture') => { const file = path.join(root, name); fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, data); };
 const runtimeName = 'GPT-SoVITS-v2-240821';
@@ -72,12 +73,41 @@ test('construction and inspection do not download, create user state or launch i
   assert.equal(f.service.getProjectRoot(), path.join(f.userData, 'voice-runtime'));
 });
 
+test('local preview refuses voice installation even when complete offline archives are available', async t => {
+  const f = fixture(t, { allowDownloads: false, fetchImpl: () => assert.fail('preview must not fetch') });
+  write(f.offline, 'assets.zip', f.assets); write(f.offline, 'runtime.7z', f.runtime);
+  const before = f.service.getState();
+  const result = f.service.install();
+  assert.equal(result.ok, false); assert.equal(result.code, 'downloads-disabled'); assert.match(result.error, /不会下载或安装/);
+  assert.deepEqual(result.state, before); assert.deepEqual(f.service.getState(), before);
+  assert.equal(f.calls.length, 0); assert.equal(fs.existsSync(f.userData), false);
+  assert.equal(result.diagnostic.code, createSetupDiagnostic('voice', 'preview-disabled').code);
+  const state = await f.service.inspect();
+  assert.equal(state.phase, 'needs-install'); assert.match(state.error, /文字聊天仍可使用/);
+  assert.equal(f.calls.length, 0); assert.equal(fs.existsSync(f.userData), false);
+});
+
+test('local preview recognizes an existing voice environment without replacing files or launching Python', async t => {
+  const f = fixture(t, { allowDownloads: false, fetchImpl: () => assert.fail('preview must not fetch') });
+  const project = f.service.getProjectRoot();
+  const required = [...assetsFiles, `models/cache/${runtimeName}/runtime/python.exe`, ...anchors];
+  for (const relative of required) write(project, relative);
+  const marker = JSON.stringify({ version: 1, assets: f.manifest.assets.sha256, runtime: f.manifest.runtime.sha256, required });
+  write(project, 'voice-setup-complete.json', marker);
+  const state = await f.service.inspect();
+  assert.equal(state.phase, 'ready'); assert.equal(state.ready, true); assert.equal(state.error, null);
+  assert.equal(f.service.install().code, 'downloads-disabled');
+  assert.equal(f.calls.length, 0); assert.equal(fs.readFileSync(path.join(project, 'voice-setup-complete.json'), 'utf8'), marker);
+  assert.deepEqual(fs.readdirSync(f.userData), ['voice-runtime']);
+});
+
 test('verified offline archives deploy runtime then overlays and validate before ready', async t => {
   const f = fixture(t, { fetchImpl: () => assert.fail('offline cache should be reused') });
   write(f.offline, 'assets.zip', f.assets); write(f.offline, 'runtime.7z', f.runtime);
   f.service.install(); assert.equal(f.service.install().ok, false);
   assert.equal((await settled(f.service)).phase, 'ready');
   assert.equal(f.service.getState().ready, true);
+  assert.equal(f.service.getState().diagnostic, null);
   const extracts = f.calls.filter(call => call.args[0] === 'x');
   assert.ok(extracts[0].args.at(-1).endsWith('runtime.7z'));
   assert.ok(extracts[1].args.at(-1).endsWith('assets.zip'));
@@ -145,6 +175,7 @@ test('archive traversal, drive paths, Windows aliases, duplicates and links are 
       process.nextTick(() => { child.stdout.write('----------\n' + record + '\n'); child.stdout.end(); child.emit('close', 0); }); return child;
     } });
     f.service.install(); assert.equal((await settled(f.service)).phase, 'error');
+    assert.equal(f.service.getState().diagnostic.code, createSetupDiagnostic('voice', 'archive-unsafe').code);
     assert.equal(fs.existsSync(f.service.getProjectRoot()), false);
     assert.ok(!fs.readdirSync(f.userData).some(name => name.startsWith('voice-staging-')));
   }
@@ -171,6 +202,7 @@ test('cancel retains a partial and retry resumes it while preserving unrelated u
   await waitFor(() => f.service.getState().completedBytes === 4);
   assert.equal(f.service.cancel().ok, true);
   assert.equal((await settled(f.service)).phase, 'cancelled'); assert.equal(signal.aborted, true); assert.equal(cancelled, true);
+  assert.equal(f.service.getState().diagnostic, null, 'explicit cancellation is not a failure');
   assert.equal(fs.readFileSync(path.join(f.userData, 'keep.txt'), 'utf8'), 'keep');
   const partial = path.join(f.userData, 'voice-downloads', `${f.manifest.assets.sha256.slice(0, 16)}-assets.zip.part`);
   assert.deepEqual(fs.readFileSync(partial), f.assets.subarray(0, 4));
@@ -371,4 +403,140 @@ test('an unknown existing voice directory is preserved; a corrupt extractor neve
   const corrupt = fixture(t); write(corrupt.resources, 'tools/7za.exe', 'different');
   corrupt.service.install(); const state = await settled(corrupt.service);
   assert.equal(state.phase, 'error'); assert.match(state.error, /解压工具/); assert.equal(corrupt.calls.length, 0);
+});
+
+test('inspection and retry explain an existing unmarked directory without erasing or downloading', async t => {
+  const f = fixture(t, { fetchImpl: () => assert.fail('existing directory must not download') });
+  write(f.service.getProjectRoot(), 'keep.txt', 'user-file');
+  const first = await f.service.inspect();
+  assert.equal(first.phase, 'error'); assert.equal(first.installation.code, 'missing-marker');
+  assert.equal(first.installation.recognized, false); assert.match(first.error, /标记|记录/);
+  assert.equal(first.diagnostic.code, createSetupDiagnostic('voice', 'installation-missing-marker').code);
+  f.service.install(); const retried = await settled(f.service);
+  assert.equal(retried.error, first.error); assert.equal(retried.installation.code, first.installation.code);
+  const inspected = await f.service.inspect();
+  assert.equal(inspected.error, first.error); assert.equal(inspected.phase, 'error');
+  assert.deepEqual(fs.readdirSync(f.service.getProjectRoot()), ['keep.txt']);
+  assert.equal(fs.readFileSync(path.join(f.service.getProjectRoot(), 'keep.txt'), 'utf8'), 'user-file');
+  assert.equal(f.calls.length, 0);
+});
+
+test('incompatible voice installation reports its actual and expected marker versions without modifying it', async t => {
+  const f = fixture(t, { fetchImpl: () => assert.fail('existing directory must not download') });
+  const root = f.service.getProjectRoot(), marker = JSON.stringify({ version: 2 });
+  write(root, 'voice-setup-complete.json', marker); write(root, 'keep.txt', 'existing user resource');
+  const inspected = await f.service.inspect();
+  assert.equal(inspected.diagnostic.code, createSetupDiagnostic('voice', 'installation-version-mismatch').code);
+  assert.equal(inspected.diagnostic.details.actualVersion, 2);
+  assert.equal(inspected.diagnostic.details.expectedVersion, f.manifest.version);
+  f.service.install(); const retried = await settled(f.service);
+  assert.deepEqual(retried.diagnostic, inspected.diagnostic);
+  assert.equal(fs.readFileSync(path.join(root, 'voice-setup-complete.json'), 'utf8'), marker);
+  assert.equal(fs.readFileSync(path.join(root, 'keep.txt'), 'utf8'), 'existing user resource');
+  assert.equal(f.calls.length, 0);
+});
+
+test('a recognized installation missing one file reports its name and recovers after that file is restored', async t => {
+  const f = fixture(t, { fetchImpl: () => assert.fail('offline files must be reused') });
+  write(f.offline, 'assets.zip', f.assets); write(f.offline, 'runtime.7z', f.runtime);
+  f.service.install(); assert.equal((await settled(f.service)).ready, true);
+  const root = f.service.getProjectRoot(), markerPath = path.join(root, 'voice-setup-complete.json');
+  const marker = fs.readFileSync(markerPath, 'utf8'), count = f.calls.length;
+  fs.unlinkSync(path.join(root, anchors[0]));
+  const broken = await f.service.inspect();
+  assert.equal(broken.phase, 'error'); assert.equal(broken.installation.recognized, true);
+  assert.equal(broken.installation.code, 'missing-files'); assert.deepEqual(broken.installation.missingFiles, [anchors[0]]);
+  assert.equal(broken.diagnostic.code, createSetupDiagnostic('voice', 'installation-missing-files').code);
+  assert.deepEqual(broken.diagnostic.details.missingFiles, [anchors[0]]);
+  assert.match(broken.error, /anchor0/); assert.doesNotMatch(broken.error, /另一套/);
+  f.service.install(); const retry = await settled(f.service);
+  assert.equal(retry.error, broken.error); assert.equal(f.calls.length, count);
+  assert.equal(fs.readFileSync(markerPath, 'utf8'), marker, 'never manufacture a completion marker for an incomplete installation');
+  write(root, anchors[0]); const restored = await f.service.inspect();
+  assert.equal(restored.ready, true); assert.equal(restored.error, null); assert.equal(restored.installation.code, 'ready');
+  assert.equal(restored.diagnostic, null);
+  f.service.install(); assert.equal((await settled(f.service)).ready, true); assert.equal(f.calls.length, count);
+});
+
+test('missing and corrupt extractors have different diagnostics without launching a process', async t => {
+  for (const [corrupt, kind] of [[false, 'extractor-missing'], [true, 'extractor-integrity']]) {
+    const f = fixture(t, { fetchImpl: () => assert.fail('tool verification must precede downloads') });
+    const executable = path.join(f.resources, 'tools/7za.exe');
+    if (corrupt) fs.writeFileSync(executable, 'broken'); else fs.unlinkSync(executable);
+    f.service.install(); const state = await settled(f.service);
+    assert.equal(state.phase, 'error'); assert.equal(state.diagnostic.code, createSetupDiagnostic('voice', kind).code);
+    assert.equal(state.diagnostic.stage, 'verify'); assert.equal(f.calls.length, 0);
+  }
+});
+
+test('extractor and Python validation launch, exit and timeout failures keep their own stage and metadata', async t => {
+  for (const stage of ['extract', 'validate']) for (const outcome of ['launch', 'exit', 'timeout']) {
+    await t.test(`${stage}: ${outcome}`, async t => {
+      let f;
+      f = fixture(t, { extractionTimeoutMs: 20, spawnImpl: (file, args, options) => {
+        const intercept = stage === 'validate' ? args[0] === '-I' : args[0] === 'l';
+        if (!intercept) return f.spawnImpl(file, args, options);
+        if (outcome === 'launch') throw Object.assign(new Error('private C:\\Users\\Secret\\file token=secret'), { code: 'ENOENT' });
+        const child = new EventEmitter(); child.stdout = new PassThrough();
+        child.kill = () => { child.killed = true; process.nextTick(() => child.emit('close', 1)); };
+        if (outcome === 'exit') process.nextTick(() => child.emit('close', 2));
+        return child;
+      } });
+      write(f.offline, 'assets.zip', f.assets); write(f.offline, 'runtime.7z', f.runtime);
+      f.service.install(); const state = await settled(f.service);
+      const kind = `${stage === 'validate' ? 'validation' : outcome === 'launch' ? 'extractor' : 'extraction'}-${outcome}`;
+      assert.equal(state.diagnostic.code, createSetupDiagnostic('voice', kind).code);
+      assert.equal(state.diagnostic.stage, stage);
+      if (outcome === 'launch') assert.equal(state.diagnostic.details.systemCode, 'ENOENT');
+      if (outcome === 'exit') assert.equal(state.diagnostic.details.exitCode, 2);
+      assert.doesNotMatch(JSON.stringify(state.diagnostic), /Secret|token=|C:\\\\Users/);
+      assert.equal(fs.existsSync(f.service.getProjectRoot()), false);
+      assert.ok(!fs.readdirSync(f.userData).some(name => name.startsWith('voice-staging-')));
+      const rechecked = await f.service.inspect();
+      assert.equal(rechecked.phase, 'error'); assert.deepEqual(rechecked.diagnostic, state.diagnostic);
+      assert.match(rechecked.message, /上次/);
+    });
+  }
+});
+
+test('malformed validation output is distinct from unsafe archive contents', async t => {
+  for (const output of ['not json', 'null', '{"required":["../../escape"]}']) {
+    let f;
+    f = fixture(t, { spawnImpl: (file, args, options) => {
+      if (args[0] !== '-I') return f.spawnImpl(file, args, options);
+      const child = new EventEmitter(); child.stdout = new PassThrough(); child.kill = () => {};
+      process.nextTick(() => { child.stdout.end(output); child.emit('close', 0); }); return child;
+    } });
+    f.service.install(); const state = await settled(f.service);
+    assert.equal(state.diagnostic.code, createSetupDiagnostic('voice', 'validation-output').code);
+    assert.equal(state.diagnostic.stage, 'validate'); assert.equal(fs.existsSync(f.service.getProjectRoot()), false);
+  }
+});
+
+test('typed HTTP download failures survive the voice wrapper and reinspection without signed URL leakage', async t => {
+  const f = fixture(t, { fetchImpl: async () => new Response('not exposed', { status: 403 }) });
+  f.service.install(); const state = await settled(f.service);
+  assert.equal(state.phase, 'error'); assert.equal(state.diagnostic.code, createSetupDiagnostic('voice', 'network-http', { httpStatus: 403 }).code);
+  assert.equal(state.diagnostic.details.httpStatus, 403); assert.equal(state.diagnostic.stage, 'download');
+  assert.doesNotMatch(JSON.stringify(state.diagnostic), /not exposed|https?:\/\//);
+  const inspected = await f.service.inspect(); assert.deepEqual(inspected.diagnostic, state.diagnostic);
+  assert.equal(inspected.error, state.error); assert.equal(f.calls.length, 0);
+});
+
+test('filesystem errors keep disk, permission, busy and path categories rather than becoming download failures', async t => {
+  for (const [systemCode, kind] of [['ENOSPC', 'storage-space'], ['EACCES', 'storage-permission'], ['EBUSY', 'storage-busy'], ['ENAMETOOLONG', 'storage-path']]) {
+    const f = fixture(t, { fetchImpl: () => assert.fail('a failed destination must never download') });
+    const original = fs.promises.mkdir;
+    fs.promises.mkdir = async (directory, options) => {
+      if (directory === f.userData) throw Object.assign(new Error('private absolute path and token'), { code: systemCode });
+      return original(directory, options);
+    };
+    try {
+      f.service.install(); const state = await settled(f.service);
+      assert.equal(state.diagnostic.code, createSetupDiagnostic('voice', kind).code);
+      assert.equal(state.diagnostic.stage, 'storage'); assert.equal(state.diagnostic.details.systemCode, systemCode);
+      assert.equal(f.calls.length, 0); assert.equal(fs.existsSync(f.userData), false);
+      assert.doesNotMatch(JSON.stringify(state.diagnostic), /private absolute path|token/);
+    } finally { fs.promises.mkdir = original; }
+  }
 });

@@ -7,14 +7,14 @@
 
 A chibi Elysia companion for Windows, with a transparent full-body character, mouse-following eyes, and gentle motion. Mix expressions, cat mode, glasses, and four actions, with little clouds that respond to your typing. Includes local chat, optional read-aloud replies, automatic model setup, conversation history management, and body-region interactions.
 
-**Current stable version: 1.4.4.** Chat replies now use short, individual sentence bubbles for more natural conversation. See the [1.4.4 release page](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.4.4) and [release notes](docs/releases/v1.4.4.md).
+**Current stable version: 1.4.5.** Adds a transparent quick input window with a customizable shortcut, clearer resource errors, and voice environment repair. See the [1.4.5 release page](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.4.5) and [release notes](docs/releases/v1.4.5.md).
 
 ## Download
 
 | Edition | Program | Features | Checksum |
 | --- | --- | --- | --- |
-| **1.4.4 Windows installer** | [Download installer](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.4.4/Elysia_desktop_pet-1.4.4-setup.exe) | Includes chat and optional read-aloud replies | [SHA256](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.4.4/Elysia_desktop_pet-1.4.4-setup.exe.sha256) |
-| **1.4.4 Windows portable** | [Download EXE](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.4.4/Elysia_desktop_pet-1.4.4.exe) | Same features; double-click to run | [SHA256](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.4.4/Elysia_desktop_pet-1.4.4.exe.sha256) |
+| **1.4.5 Windows installer** | [Download installer](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.4.5/Elysia_desktop_pet-1.4.5-setup.exe) | Includes chat and optional read-aloud replies | [SHA256](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.4.5/Elysia_desktop_pet-1.4.5-setup.exe.sha256) |
+| **1.4.5 Windows portable** | [Download EXE](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.4.5/Elysia_desktop_pet-1.4.5.exe) | Same features; double-click to run | [SHA256](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.4.5/Elysia_desktop_pet-1.4.5.exe.sha256) |
 | 1.3.0 Windows portable | [Download older EXE](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.3.0/Elysia_desktop_pet-1.3.0.exe) | **No chat or read-aloud replies**; daily and interaction recordings remain included | [SHA256](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.3.0/Elysia_desktop_pet-1.3.0.exe.sha256) |
 
 For **Windows x64**. Follow the installer or double-click the portable EXE; Git, Git LFS, and Node.js are not needed. Version 1.3.0 does not download chat or speech synthesis models.
@@ -23,7 +23,7 @@ Quit the old version from its tray before installing or opening the new one. Pos
 
 The app is unsigned. Once the installer or portable EXE has finished downloading, use its SHA256 file to check integrity.
 
-[1.4.4 release page](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.4.4) · [1.3.0 release page](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.3.0) · [Run from source](#run-from-source)
+[1.4.5 release page](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.4.5) · [1.3.0 release page](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.3.0) · [Run from source](#run-from-source)
 
 ## Character gallery
 
@@ -104,7 +104,7 @@ Click a screenshot to view it at full size. The app currently uses Chinese label
 - **Desktop (`桌面`):** change character size, always-on-top behavior, taskbar order, click-through, and shortcuts. Enter a size percentage starting at 1%, with no fixed upper size limit.
 - **Interaction (`互动`):** toggle click responses and cursor trails independently, and choose the trail style and duration.
 - **Voice (`语音`):** control automatic greetings, Do not disturb, volume, and birthday month/day, and view playback status.
-- **Chat (`聊天`):** change your username, toggle automatic read-aloud, and check independent model and speech setup progress. Advanced options support a compatible chat service or speech environment.
+- **Chat (`聊天`):** change your username, toggle automatic read-aloud, edit the quick input shortcut, and view model and speech setup progress, error details, and repair controls. Advanced options support a compatible chat service or speech environment.
 - **Chat history (`聊天记录`):** select a conversation in the left list and read its messages on the right. Continue chatting, delete one conversation, or clear history after confirmation.
 
 | Animation parameter | Range | Default |
@@ -130,6 +130,24 @@ Automatic read-aloud is **off by default**. Choose **Read Aloud / 朗读** under
 Manual reading is not blocked by ordinary fullscreen or Windows busy-state detection. It still respects Do not disturb, mute, screen lock, and sleep, with specific failure messages. Automatic reading and daily greetings retain screen-state restrictions. Sending a new message, stopping, or closing chat cancels the current reading.
 
 The default model and chat history stay on your computer. **Settings → Chat history (聊天记录)** lets you view, continue, or delete conversations after confirmation. Advanced custom services must support OpenAI-compatible streaming chat; choosing a remote address sends conversations to that service. The persona is in [electron/chat-persona.md](electron/chat-persona.md).
+
+### Quick input
+
+Press **`Ctrl + Alt + E`** to open a transparent input box centered near the bottom of the current display, about one-third of the screen width. Enter sends a message; Shift + Enter adds a line. Elysia replies sentence by sentence in bubbles beside her, without automatically opening the chat window or conversation history.
+
+The input box stays open after sending so you can draft your next message. Press **Esc**, use the same shortcut again, or choose **Hide (`收起`)** to tuck it away. Unsent drafts are retained.
+
+In **Settings → Chat → Quick input (`快捷输入`)**, choose **Change shortcut (`更换快捷键`)**, press your new key combination, and choose **Save shortcut (`保存快捷键`)**. You can also restore the default or open the input box from Settings. Esc cancels shortcut editing.
+
+Quick input uses your existing chat model, speech environment, and automatic read-aloud setting. When reading is enabled, the input box shows speech loading, synthesis, playback, or the reason reading is blocked. Stop ends the current reply or reading.
+
+### Resource setup and repair
+
+**Settings → Chat** shows separate chat and speech resource states. A setup failure includes its cause, error code, stage, and suggested action. Expand **View details (`查看问题详情`)** for relevant server responses, missing files, or disk space information. **Copy error information (`复制错误信息`)** copies the app version and current diagnosis for the developer, without chat content, credentials, or download links.
+
+If an existing voice directory has a missing installation record, mismatched resource version, or missing files after an upgrade, choose **Repair voice environment (`修复语音环境`)**. The app first reuses downloaded archives that pass integrity checks, prepares a complete environment separately, and switches over after checking it. The old directory is retained as a backup. Complete cached archives avoid another download, and available space is checked before downloading and extracting.
+
+Original resources are preserved if repair fails or is cancelled. If the app exits during the directory switch, the next setup or repair action recovers the unfinished operation. **Recheck (`重新检测`)** only inspects the current state. It keeps the last failure reason while the same problem remains and clears it once recovery is confirmed.
 
 ### Daily voices and speech bubbles
 

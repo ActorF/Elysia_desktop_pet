@@ -6,14 +6,14 @@
 
 透明全身立绘、鼠标目光跟随、轻柔摆动。表情、猫猫形态、眼镜和四种动作可以自由搭配，输入字符时还有小云朵回应。支持本地聊天、可选回复朗读、模型自动配置、聊天记录管理与身体部位互动。
 
-**当前正式版本：1.4.4。** 聊天回复改为简短的逐句气泡，交流更自然。查看 [1.4.4 发布页](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.4.4) 与[更新说明](docs/releases/v1.4.4.md)。
+**当前正式版本：1.4.5。** 新增可自定义快捷键的透明快捷输入框，完善资源错误提示与语音环境修复。查看 [1.4.5 发布页](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.4.5) 与[更新说明](docs/releases/v1.4.5.md)。
 
 ## 下载程序
 
 | 版本 | 程序 | 功能 | 校验文件 |
 | --- | --- | --- | --- |
-| **1.4.4 Windows 安装版** | [下载安装器](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.4.4/Elysia_desktop_pet-1.4.4-setup.exe) | 含聊天与可选回复朗读 | [SHA256](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.4.4/Elysia_desktop_pet-1.4.4-setup.exe.sha256) |
-| **1.4.4 Windows 便携版** | [下载 EXE](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.4.4/Elysia_desktop_pet-1.4.4.exe) | 相同功能，双击即可运行 | [SHA256](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.4.4/Elysia_desktop_pet-1.4.4.exe.sha256) |
+| **1.4.5 Windows 安装版** | [下载安装器](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.4.5/Elysia_desktop_pet-1.4.5-setup.exe) | 含聊天与可选回复朗读 | [SHA256](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.4.5/Elysia_desktop_pet-1.4.5-setup.exe.sha256) |
+| **1.4.5 Windows 便携版** | [下载 EXE](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.4.5/Elysia_desktop_pet-1.4.5.exe) | 相同功能，双击即可运行 | [SHA256](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.4.5/Elysia_desktop_pet-1.4.5.exe.sha256) |
 | 1.3.0 Windows 便携版 | [下载旧版 EXE](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.3.0/Elysia_desktop_pet-1.3.0.exe) | **不含聊天及回复朗读**，保留日常与点击互动录音 | [SHA256](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.3.0/Elysia_desktop_pet-1.3.0.exe.sha256) |
 
 适用于 **Windows x64**。安装版按提示完成安装；便携版双击即可运行，无需 Git、Git LFS 或 Node.js。1.3.0 无需下载聊天或语音合成模型。
@@ -22,7 +22,7 @@
 
 程序未进行数字签名。安装器或便携 EXE 下载完成后，可用对应 SHA256 核对文件完整性。
 
-[1.4.4 发布页](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.4.4) · [1.3.0 发布页](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.3.0) · [源码运行](#源码运行)
+[1.4.5 发布页](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.4.5) · [1.3.0 发布页](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.3.0) · [源码运行](#源码运行)
 
 ## 角色展示
 
@@ -100,7 +100,7 @@
 - **桌面：** 调整人物大小、置顶、任务栏前后顺序、鼠标穿透和快捷键。大小支持直接输入百分比，从 1% 起，没有固定的放大上限。
 - **互动：** 分别开关点击互动和鼠标流光，选择流光样式与轨迹保留时间。
 - **语音：** 控制自动问候、勿扰、音量与生日月日，查看当前播放状态。
-- **聊天：** 修改用户名，开关自动朗读，查看聊天模型和语音环境各自的配置进度；高级选项可指定兼容聊天接口及语音环境。
+- **聊天：** 修改用户名，开关自动朗读，编辑快捷输入的快捷键，查看聊天模型与语音环境的配置进度、错误详情和修复入口；高级选项可指定兼容聊天接口及语音环境。
 - **聊天记录：** 左侧选择会话，右侧查看消息，可继续聊天、删除单段或清空记录，删除前会确认。
 
 | 动画参数 | 范围 | 默认值 |
@@ -126,6 +126,24 @@
 手动朗读不会被普通全屏或 Windows 忙碌状态误拦截，仍遵守勿扰、静音、锁屏和休眠限制；失败提示会说明具体原因。自动朗读与日常问候保留屏幕状态限制。发送新消息、停止或关闭聊天可中止当前朗读。
 
 默认模型与聊天记录都在本机。**设置 → 聊天记录** 可查看、继续或删除对话，删除前会确认。高级自定义服务需支持 OpenAI 兼容的流式聊天接口；选择远程地址后，对话会发送到该服务。人设文本位于 [electron/chat-persona.md](electron/chat-persona.md)。
+
+### 快捷输入
+
+按 **`Ctrl + Alt + E`**，即可在当前屏幕底部居中打开透明输入框，宽度约为屏幕的三分之一。Enter 发送，Shift + Enter 换行；爱莉希雅会在身旁的气泡中逐句回答，不会自动打开聊天窗口或聊天记录。
+
+发送后输入框保持显示，可以继续写下一句。按 **Esc**、再次按同一快捷键，或点击 **收起** 隐藏输入框，未发送的草稿会保留。
+
+在 **设置 → 聊天 → 快捷输入** 点击 **更换快捷键**，按下新组合键，再点击 **保存快捷键**；也可恢复默认或直接打开输入框。编辑时按 Esc 取消本次更换。
+
+快捷输入沿用已有聊天模型、语音环境和“朗读聊天回复”设置。开启自动朗读后，输入框会显示语音加载、生成、播放或受阻原因；点击停止可中止当前回答或朗读。
+
+### 资源配置与修复
+
+在 **设置 → 聊天** 查看聊天与语音资源各自的状态。配置失败时会显示具体原因、错误编号、发生阶段和处理建议；展开 **查看问题详情** 可看到相应的服务器响应、缺失文件或磁盘空间信息。点击 **复制错误信息** 可将程序版本与当前诊断粘贴给开发者，报告不包含聊天内容、账号凭据或下载链接。
+
+如果升级后发现已有语音目录缺少安装记录、资源版本不符或文件缺失，可点击 **修复语音环境**。程序优先复用通过校验的已下载资源包，在独立目录中准备完整环境，确认通过后再切换；旧目录会保留为备份。已有完整资源包时无需重新下载，下载和解压前也会检查可用空间。
+
+修复失败或取消后保留原有资源。若程序在目录切换时退出，下次配置或修复会恢复上次未完成的操作。**重新检测** 用于查看当前状态，不会重建目录；相同问题仍存在时会保留上次失败原因，确认恢复后再清除错误。
 
 ### 日常语音与台词气泡
 

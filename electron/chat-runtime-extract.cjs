@@ -4,12 +4,15 @@
 // Validate every entry before creating files, including Windows path aliases.
 const EXTRACT_SCRIPT = String.raw`
 $ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+try {
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $root = [IO.Path]::GetFullPath($env:ELYSIA_CHAT_STAGE).TrimEnd('\') + '\'
 if (-not [IO.Directory]::Exists($root)) { throw 'stage' }
 $archive = [IO.Compression.ZipFile]::OpenRead($env:ELYSIA_CHAT_ARCHIVE)
 try {
-  if ($archive.Entries.Count -lt 1 -or $archive.Entries.Count -gt 20000) { throw 'entries' }
+  if ($archive.Entries.Count -lt 1) { throw 'layout' }
+  if ($archive.Entries.Count -gt 20000) { throw 'entries' }
   $names = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
   [long]$total = 0
   foreach ($entry in $archive.Entries) {
@@ -35,5 +38,20 @@ try {
     }
   }
 } finally { $archive.Dispose() }
+} catch {
+  if ($_.Exception.Message -in @('path','link','size','entries')) { exit 70 }
+  if ($_.Exception.Message -in @('stage','layout')) { exit 71 }
+  $failure = $_.Exception
+  for ($depth=0; $null -ne $failure -and $depth -lt 6; $depth++) {
+    $nativeCode = $failure.HResult -band 65535
+    if ($nativeCode -in @(39,112)) { exit 72 }
+    if ($nativeCode -eq 5 -or $failure -is [UnauthorizedAccessException]) { exit 73 }
+    if ($nativeCode -in @(32,33)) { exit 74 }
+    if ($nativeCode -in @(3,123,206)) { exit 75 }
+    if ($failure -is [IO.InvalidDataException]) { exit 71 }
+    $failure = $failure.InnerException
+  }
+  exit 79
+}
 `;
 module.exports = { EXTRACT_SCRIPT };

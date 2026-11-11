@@ -22,7 +22,7 @@ test('settings preload exposes only its narrow independent-window bridge', () =>
   });
   assert.equal(name, 'elysiaSettings');
   assert.equal(Object.isFrozen(bridge), true);
-  assert.deepEqual(Object.keys(bridge).sort(), ['action', 'cancelModelSetup', 'cancelVoiceSetup', 'clearChatHistory', 'deleteChatConversation', 'getChatState', 'getModelSetup', 'getState', 'getVoiceSetup', 'getVoiceState', 'getWindowState', 'inspectModelSetup', 'inspectVoiceSetup', 'installChatModel', 'installVoiceSetup', 'onChatState', 'onModelSetup', 'onState', 'onVoiceSetup', 'onVoiceState', 'onWindowState', 'openChat', 'recover', 'resize', 'selectChatConversation', 'setChatSettings', 'setSettings', 'setVoiceSettings', 'stopVoice', 'windowControl']);
+  assert.deepEqual(Object.keys(bridge).sort(), ['action', 'cancelModelSetup', 'cancelVoiceSetup', 'clearChatHistory', 'copySetupDiagnostic', 'deleteChatConversation', 'getChatState', 'getModelSetup', 'getQuickChatSettings', 'getState', 'getVoiceSetup', 'getVoiceState', 'getWindowState', 'inspectModelSetup', 'inspectVoiceSetup', 'installChatModel', 'installVoiceSetup', 'onChatState', 'onModelSetup', 'onQuickChatSettings', 'onState', 'onVoiceSetup', 'onVoiceState', 'onWindowState', 'openChat', 'openQuickChat', 'recover', 'repairVoiceSetup', 'resize', 'selectChatConversation', 'setChatSettings', 'setQuickChatCapture', 'setQuickChatSettings', 'setSettings', 'setVoiceSettings', 'stopVoice', 'windowControl']);
   for (const forbidden of ['invoke', 'send', 'dragStart', 'setHitRegion', 'setAppearance', 'quit', 'playVoice', 'simulateVoice', 'deleteFile', 'installExecutable', 'downloadFile', 'copyMessage']) assert.equal(bridge[forbidden], undefined);
   bridge.getState();
   bridge.getWindowState();
@@ -106,9 +106,15 @@ test('settings preload exposes only its narrow independent-window bridge', () =>
   bridge.getVoiceSetup('ignored');
   bridge.inspectVoiceSetup('ignored');
   bridge.installVoiceSetup('https://untrusted.example/voice.zip');
+  bridge.repairVoiceSetup('C:\\private-directory', { archive: 'https://untrusted.example/voice.zip', deleteExisting: true });
   bridge.cancelVoiceSetup('ignored');
-  assert.deepEqual(calls.slice(-4), [
-    ['settings:voice-setup-get'], ['settings:voice-setup-inspect'], ['settings:voice-setup-install'], ['settings:voice-setup-cancel'],
+  assert.deepEqual(calls.slice(-5), [
+    ['settings:voice-setup-get'], ['settings:voice-setup-inspect'], ['settings:voice-setup-install'], ['settings:voice-setup-repair'], ['settings:voice-setup-cancel'],
+  ]);
+  bridge.copySetupDiagnostic('chat', 'renderer text must not be forwarded');
+  bridge.copySetupDiagnostic('voice', { token: 'renderer secret', path: 'C:\\private' });
+  assert.deepEqual(calls.slice(-2), [
+    ['settings:setup-diagnostic-copy', 'chat'], ['settings:setup-diagnostic-copy', 'voice'],
   ]);
   const voiceSetupState = { phase: 'downloading', busy: true, ready: false, progress: .6 };
   const stopVoiceSetup = bridge.onVoiceSetup((...args) => { received = args; });
@@ -116,5 +122,21 @@ test('settings preload exposes only its narrow independent-window bridge', () =>
   assert.deepEqual(received, [voiceSetupState]); stopVoiceSetup(); stopVoiceSetup();
   assert.equal(listeners.has('settings:voice-setup-state'), false);
   assert.equal(typeof bridge.onVoiceSetup(null), 'function');
+  bridge.getQuickChatSettings('ignored');
+  bridge.setQuickChatSettings({ enabled: true, accelerator: 'Control+Alt+E' }, 'ignored');
+  bridge.setQuickChatCapture(true, 'ignored');
+  bridge.setQuickChatCapture(false);
+  bridge.openQuickChat('ignored');
+  assert.deepEqual(calls.slice(-5), [
+    ['settings:quick-chat-get'], ['settings:quick-chat-set', { enabled: true, accelerator: 'Control+Alt+E' }],
+    ['settings:quick-chat-capture', true], ['settings:quick-chat-capture', false], ['settings:quick-chat-open'],
+  ]);
+  const quickChatSettings = { enabled: true, accelerator: 'Control+Alt+E', active: true, error: null };
+  const stopQuickChatSettings = bridge.onQuickChatSettings((...args) => { received = args; });
+  listeners.get('settings:quick-chat-state')({ sender: 'private metadata' }, quickChatSettings);
+  assert.deepEqual(received, [quickChatSettings]);
+  stopQuickChatSettings(); stopQuickChatSettings();
+  assert.equal(listeners.has('settings:quick-chat-state'), false);
+  assert.equal(typeof bridge.onQuickChatSettings(null), 'function');
   assert.equal(listeners.size, 0);
 });

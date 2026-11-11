@@ -1,5 +1,5 @@
 // Local synthesized WAV segments stay in memory and are released after playback or cancellation.
-const bridge = window.elysiaChat;
+const bridge = window.elysiaChat ?? window.elysiaQuickChat;
 let current = null;
 function clear() {
   if (!current) return;

@@ -8,6 +8,8 @@ const manifestDefault = require('./chat-bootstrap-manifest.json');
 const { EXTRACT_SCRIPT } = require('./chat-runtime-extract.cjs');
 const { createRuntimeDependencies, validDependenciesManifest } = require('./chat-runtime-dependencies.cjs');
 const { downloadResource, verifyResource } = require('./resource-download.cjs');
+const { createSetupDiagnostic, classifySetupFailure } = require('./setup-diagnostics.cjs');
+const { createRuntimeRepair } = require('./voice-repair.cjs');
 
 const SETUP_MODEL = 'elysia-chat';
 const SETUP_BASE_URL = 'http://127.0.0.1:18434';
@@ -25,8 +27,15 @@ const ERRORS = Object.freeze({
   dependencies: '聊天运行库准备失败，请退出桌宠后重试，并检查用户目录权限和磁盘空间。',
   port: '本地聊天端口 18434 已被其他程序占用，请关闭占用程序后重试。',
   start: '本地聊天服务未能启动，请检查可用内存和显卡驱动后重试。',
+  'downloads-disabled': '本地测试模式只使用已有聊天资源，不会下载或安装。',
+  'preview-resources': '已有聊天资源不完整，暂时无法启动；本地测试模式不会下载或安装资源。',
 });
-const failure = code => Object.assign(new Error(code), { setupCode: code });
+const FAILURE_KINDS = Object.freeze({ unsupported: 'platform-unsupported', manifest: 'manifest-invalid', download: 'network-unknown',
+  integrity: 'integrity-hash', archive: 'extraction-exit', storage: 'storage-io', conflict: 'storage-busy',
+  'runtime-source': 'runtime-source-missing', 'dependencies-source': 'dependencies-source-missing', dependencies: 'dependencies-invalid',
+  port: 'server-port-busy', start: 'server-launch', 'downloads-disabled': 'preview-disabled' });
+const failure = (code, diagnosticKind = FAILURE_KINDS[code] || 'unknown', details = {}, cause) =>
+  Object.assign(new Error(code, cause ? { cause } : undefined), { setupCode: code, diagnosticKind, ...details });
 const cancelled = () => Object.assign(new Error('cancelled'), { name: 'AbortError' });
 const checkAbort = signal => { if (signal.aborted) throw cancelled(); };
 const ordinaryFile = file => { try { const s = fs.lstatSync(file); return s.isFile() && !s.isSymbolicLink(); } catch { return false; } };
@@ -77,13 +86,14 @@ function allowedDownload(url, source, asset) {
     || url.hostname === 'cas-bridge.xethub.hf.co';
 }
 
-function createModelSetup({ userData, onChange = () => {}, fetchImpl = globalThis.fetch, spawnImpl = spawn,
+function createModelSetup({ userData, onChange = () => {}, fetchImpl = globalThis.fetch, spawnImpl = spawn, allowDownloads = true,
   platform = process.platform, arch = process.arch, env = process.env, manifest = manifestDefault,
   resourcesPath = process.resourcesPath, assetDirectory, runtimeAssetDirectory,
   probeTimeoutMs = 1500, startTimeoutMs = 180000, pollIntervalMs = 500,
   downloadTimeoutMs = 4 * 60 * 60 * 1000, requestTimeoutMs = 15000, idleTimeoutMs = 30000,
   extractionTimeoutMs = 5 * 60 * 1000 } = {}) {
   if (typeof userData !== 'string' || !path.isAbsolute(userData)) throw new TypeError('userData must be an absolute directory.');
+  if (typeof allowDownloads !== 'boolean') throw new TypeError('allowDownloads must be a boolean.');
   let manifestValid = false;
   try { manifestValid = validManifest(manifest); } catch {}
   const runtimeDependencies = createRuntimeDependencies({ manifest: manifest?.runtimeDependencies,
@@ -98,7 +108,7 @@ function createModelSetup({ userData, onChange = () => {}, fetchImpl = globalThi
   let state = { phase: 'idle', busy: false, canCancel: false, backend: 'llama.cpp',
     runtimeReady: false, serverReady: false, modelReady: false, model: SETUP_MODEL, baseUrl: SETUP_BASE_URL,
     expectedModelBytes: manifestValid ? manifest.model.bytes : 0, completedBytes: 0, totalBytes: 0,
-    progress: null, error: null, message: '准备桌宠专用的本地聊天环境。' };
+    progress: null, error: null, diagnostic: null, allowDownloads, message: '准备桌宠专用的本地聊天环境。' };
   const getState = () => structuredClone(state);
   function update(patch, throttle = false) {
     Object.assign(state, patch);
@@ -106,7 +116,7 @@ function createModelSetup({ userData, onChange = () => {}, fetchImpl = globalThi
     lastNotice = Date.now(); onChange(getState());
   }
   function phase(value, message) {
-    update({ phase: value, message, busy: true, canCancel: true, error: null, completedBytes: 0, totalBytes: 0, progress: null });
+    update({ phase: value, message, busy: true, canCancel: true, error: null, diagnostic: null, completedBytes: 0, totalBytes: 0, progress: null });
   }
   function markerMatches(file, asset, payload) {
     try {
@@ -116,8 +126,9 @@ function createModelSetup({ userData, onChange = () => {}, fetchImpl = globalThi
         && (!payload || value.modifiedAt === fs.statSync(payload).mtimeMs);
     } catch { return false; }
   }
-  function runtimeInstalled() {
-    return manifestValid && manifest.runtime.required.every(file => ordinaryFile(path.join(runtimeRoot, file))) && markerMatches(runtimeMarker, manifest.runtime);
+  function runtimeInstalled(directory = runtimeRoot) {
+    return manifestValid && manifest.runtime.required.every(file => ordinaryFile(path.join(directory, file)))
+      && markerMatches(path.join(directory, 'elysia-runtime.json'), manifest.runtime);
   }
   function resources() {
     const runtimeReady = runtimeInstalled() && runtimeDependencies.ready(runtimeRoot);
@@ -125,6 +136,56 @@ function createModelSetup({ userData, onChange = () => {}, fetchImpl = globalThi
     try { modelReady = manifestValid && ordinaryFile(modelPath) && fs.statSync(modelPath).size === manifest.model.bytes && markerMatches(modelMarker, manifest.model, modelPath); } catch {}
     return { runtimeReady, modelReady };
   }
+  function resourceProblem(available = resources()) {
+    if (!manifestValid) return { kind: 'manifest-invalid' };
+    const check = file => {
+      try { const stat = fs.lstatSync(file); return stat.isFile() && !stat.isSymbolicLink() ? stat : false; }
+      catch (error) { if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return null; throw error; }
+    };
+    const markerProblem = (file, asset, prefix, payload) => {
+      const stat = check(file);
+      if (stat === null) return `${prefix}-marker-missing`;
+      if (!stat || stat.size > 4096) return `${prefix}-marker-invalid`;
+      let value;
+      try { value = JSON.parse(fs.readFileSync(file, 'utf8')); }
+      catch (error) { if (error instanceof SyntaxError) return `${prefix}-marker-invalid`; throw error; }
+      if (!value || typeof value !== 'object' || !Number.isSafeInteger(value.bytes) || value.bytes <= 0
+        || typeof value.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(value.sha256)) return `${prefix}-marker-invalid`;
+      if (value.bytes !== asset.bytes || value.sha256 !== asset.sha256) return `${prefix}-resource-mismatch`;
+      if (payload && value.modifiedAt !== fs.statSync(payload).mtimeMs) return `${prefix}-invalid`;
+      return null;
+    };
+    if (!runtimeInstalled()) {
+      let directory;
+      try { directory = fs.lstatSync(runtimeRoot); }
+      catch (error) { if (error.code !== 'ENOENT') throw error; }
+      if (directory && (!directory.isDirectory() || directory.isSymbolicLink())) return { kind: 'runtime-invalid' };
+      const absent = manifest.runtime.required.filter(file => check(path.join(runtimeRoot, file)) === null);
+      if (absent.length) return { kind: 'runtime-missing', missingFiles: absent, missingCount: absent.length };
+      if (manifest.runtime.required.some(file => !check(path.join(runtimeRoot, file)))) return { kind: 'runtime-invalid' };
+      return { kind: markerProblem(runtimeMarker, manifest.runtime, 'runtime') || 'runtime-invalid' };
+    }
+    if (!available.runtimeReady) return runtimeDependencies.inspect(runtimeRoot);
+    if (!available.modelReady) {
+      const file = check(modelPath);
+      if (file === null) return { kind: 'model-missing', missingFiles: [manifest.model.file], missingCount: 1 };
+      if (!file || file.size !== manifest.model.bytes) return { kind: 'model-invalid' };
+      return { kind: markerProblem(modelMarker, manifest.model, 'model', modelPath) || 'model-invalid' };
+    }
+    return null;
+  }
+  const diagnosticFor = (error, stage) => {
+    const chain = [], seen = new Set();
+    for (let current = error; current && typeof current === 'object' && chain.length < 6 && !seen.has(current); current = current.cause) {
+      seen.add(current); chain.push(current);
+    }
+    return createSetupDiagnostic('chat', classifySetupFailure(error, FAILURE_KINDS[error?.setupCode] || 'unknown'),
+      { stage, httpStatus: chain.find(item => Number.isInteger(item.httpStatus))?.httpStatus,
+        systemCode: chain.find(item => typeof item.code === 'string' && /^(?:E[A-Z0-9_]{1,35}|UND_ERR_[A-Z_]{1,35})$/.test(item.code))?.code,
+        exitCode: chain.find(item => Number.isInteger(item.exitCode))?.exitCode });
+  };
+  const stageForPhase = () => ({ checking: 'inspection', 'downloading-installer': 'download', 'pulling-model': 'download',
+    'verifying-installer': 'verify', installing: 'extract', starting: 'start' })[state.phase] || 'inspection';
   async function probe(signal) {
     const combined = AbortSignal.any([signal, AbortSignal.timeout(probeTimeoutMs)]);
     let response;
@@ -169,6 +230,7 @@ function createModelSetup({ userData, onChange = () => {}, fetchImpl = globalThi
   }
   const verified = verifyResource;
   async function download(asset, destination, signal) {
+    if (!allowDownloads) throw failure('downloads-disabled');
     const downloadPhase = asset === manifest.model ? 'pulling-model' : 'downloading-installer';
     const message = asset === manifest.model ? '正在下载本地聊天模型，取消后可继续下载…' : '正在下载桌宠专用的聊天运行环境…';
     return downloadResource({ asset, destination, sources: sourceUrls(asset), fetchImpl, signal,
@@ -184,10 +246,11 @@ function createModelSetup({ userData, onChange = () => {}, fetchImpl = globalThi
       : [resourcesPath, path.join(__dirname, '..', 'build-resources', 'chat-bootstrap')].filter(Boolean);
     for (const directory of [...new Set(directories)]) {
       const candidate = path.join(directory, manifest.runtime.file);
-      if (!fs.existsSync(candidate)) continue;
+      try { await fs.promises.lstat(candidate); }
+      catch (error) { if (error.code === 'ENOENT' || error.code === 'ENOTDIR') continue; throw error; }
       phase('verifying-installer', '正在校验安装包内的聊天运行环境…');
       if (await verified(candidate, manifest.runtime, signal)) return candidate;
-      throw failure('runtime-source');
+      throw failure('runtime-source', 'runtime-source-integrity');
     }
     if (manifest.runtime.bundled) throw failure('runtime-source');
     return null;
@@ -200,33 +263,43 @@ function createModelSetup({ userData, onChange = () => {}, fetchImpl = globalThi
       try {
         child = spawnImpl(executable, ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(EXTRACT_SCRIPT, 'utf16le').toString('base64')],
           { windowsHide: true, shell: false, stdio: 'ignore', env: { ...env, ELYSIA_CHAT_ARCHIVE: archive, ELYSIA_CHAT_STAGE: stage } });
-      } catch { reject(failure('archive')); return; }
+      } catch (error) { reject(failure('archive', classifySetupFailure(error, 'extraction-launch'), {}, error)); return; }
       const finish = error => {
         if (finished) return; finished = true;
         clearTimeout(timer); signal.removeEventListener('abort', abort);
         error ? reject(error) : resolve();
       };
       const abort = () => { failureReason = cancelled(); child.kill(); };
-      const timer = setTimeout(() => { failureReason = failure('archive'); child.kill(); }, extractionTimeoutMs);
+      const timer = setTimeout(() => { failureReason = failure('archive', 'extraction-timeout'); child.kill(); }, extractionTimeoutMs);
       signal.addEventListener('abort', abort, { once: true });
-      child.once('error', () => finish(failureReason || failure('archive')));
+      child.once('error', error => finish(failureReason || failure('archive', classifySetupFailure(error, 'extraction-launch'), {}, error)));
       // Wait until file handles close before the caller removes the staging tree.
-      child.once('exit', code => finish(failureReason || (code === 0 ? null : failure('archive'))));
+      child.once('exit', code => finish(failureReason || (code === 0 ? null : failure('archive',
+        ({ 70: 'archive-unsafe', 71: 'archive-layout', 72: 'storage-space', 73: 'storage-permission', 74: 'storage-busy', 75: 'storage-path' })[code] || 'extraction-exit', { exitCode: code }))));
       if (signal.aborted) abort();
     });
   }
+  async function runtimeDirectory() {
+    let stat;
+    try { stat = await fs.promises.lstat(runtimeRoot); }
+    catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+    if (!stat.isDirectory() || stat.isSymbolicLink()) throw failure('conflict');
+    return stat;
+  }
+  const sameDirectory = (left, right) => Boolean(left) === Boolean(right) && (!left
+    || left.dev === right.dev && left.ino === right.ino && left.birthtimeMs === right.birthtimeMs);
   async function prepare(signal) {
     if (!manifestValid) throw failure('manifest');
+    const repair = createRuntimeRepair({ kind: 'chat', userData, verifyInstallation: directory => {
+      checkAbort(signal);
+      return runtimeInstalled(directory) && runtimeDependencies.ready(directory);
+    } });
+    // Only explicit configuration may finish a journal left by an interrupted
+    // replacement. Inspection and local-preview startup remain read-only.
+    await repair.recover(); checkAbort(signal);
     let available = resources();
     if (!runtimeInstalled()) {
-      if (fs.existsSync(runtimeRoot)) {
-        const existing = await fs.promises.lstat(runtimeRoot);
-        if (!existing.isDirectory() || existing.isSymbolicLink()) throw failure('conflict');
-        // Keep incomplete or old runtime files recoverable. The destination is
-        // a sibling inside this same app-owned userData directory.
-        const quarantine = path.join(userData, `chat-runtime.unverified-${randomUUID()}`);
-        try { await fs.promises.rename(runtimeRoot, quarantine); } catch { throw failure('conflict'); }
-      }
+      const previous = await runtimeDirectory();
       const cache = path.join(userData, 'chat-downloads');
       await fs.promises.mkdir(cache, { recursive: true });
       let archive = await bundledRuntime(signal);
@@ -236,29 +309,39 @@ function createModelSetup({ userData, onChange = () => {}, fetchImpl = globalThi
         await download(manifest.runtime, archive, signal);
       }
       const stage = await fs.promises.mkdtemp(path.join(userData, 'chat-staging-'));
+      let preserveStage = false;
       try {
         phase('installing', '正在解压聊天运行环境…');
         await extract(archive, stage, signal); checkAbort(signal);
-        if (!manifest.runtime.required.every(file => ordinaryFile(path.join(stage, file)))) throw failure('archive');
+        if (!manifest.runtime.required.every(file => ordinaryFile(path.join(stage, file)))) throw failure('archive', 'archive-layout');
+        await prepareRuntimeDependencies(signal, stage); checkAbort(signal);
         await fs.promises.writeFile(path.join(stage, 'elysia-runtime.json'), JSON.stringify({ bytes: manifest.runtime.bytes, sha256: manifest.runtime.sha256 }), { flag: 'wx' });
-        await fs.promises.rename(stage, runtimeRoot);
-      } finally { await fs.promises.rm(stage, { recursive: true, force: true }).catch(() => {}); }
+        if (!runtimeInstalled(stage) || !runtimeDependencies.ready(stage)) throw failure('archive', 'archive-layout');
+        if (!sameDirectory(await runtimeDirectory(), previous)) throw failure('conflict');
+        checkAbort(signal);
+        await repair.commit(stage, { allowReplace: Boolean(previous) });
+      } catch (error) { preserveStage = error.preserveStage === true; throw error; }
+      finally { if (!preserveStage) await fs.promises.rm(stage, { recursive: true, force: true }).catch(() => {}); }
     }
     await prepareRuntimeDependencies(signal);
     if (!available.modelReady) {
       await fs.promises.mkdir(modelRoot, { recursive: true });
-      phase('pulling-model', '正在下载本地聊天模型，取消后可继续下载…');
+      if (ordinaryFile(modelPath)) phase('verifying-installer', '正在校验已有聊天模型，完整文件会直接复用…');
+      else phase('pulling-model', '正在下载本地聊天模型，取消后可继续下载…');
       await download(manifest.model, modelPath, signal);
       checkAbort(signal);
       const temp = modelMarker + `.${randomUUID()}.tmp`;
-      await fs.promises.writeFile(temp, JSON.stringify({ bytes: manifest.model.bytes, sha256: manifest.model.sha256, modifiedAt: fs.statSync(modelPath).mtimeMs }));
-      await fs.promises.rename(temp, modelMarker);
+      try {
+        await fs.promises.writeFile(temp, JSON.stringify({ bytes: manifest.model.bytes, sha256: manifest.model.sha256, modifiedAt: fs.statSync(modelPath).mtimeMs }), { flag: 'wx' });
+        checkAbort(signal);
+        await fs.promises.rename(temp, modelMarker);
+      } finally { await fs.promises.rm(temp, { force: true }).catch(() => {}); }
     }
   }
-  async function prepareRuntimeDependencies(signal) {
-    if (!runtimeDependencies.ready(runtimeRoot)) {
+  async function prepareRuntimeDependencies(signal, directory = runtimeRoot) {
+    if (!runtimeDependencies.ready(directory)) {
       phase('installing', '正在准备桌宠专用的聊天运行库…');
-      await runtimeDependencies.prepare(runtimeRoot, signal);
+      await runtimeDependencies.prepare(directory, signal);
     }
   }
   function stopServer() {
@@ -311,32 +394,39 @@ function createModelSetup({ userData, onChange = () => {}, fetchImpl = globalThi
       try { child = spawnImpl(powershell, ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', hostScript],
         { cwd: runtimeRoot, windowsHide: true, shell: false, stdio: ['ignore', 'ignore', 'ignore'],
           env: { ...env, ELYSIA_CHAT_SERVER: serverPath, ELYSIA_CHAT_ARGS: JSON.stringify(args), ELYSIA_CHAT_PARENT_PID: String(process.pid) } }); }
-      catch { throw failure('start'); }
-      const owner = { child, exited: false }; server = owner;
-      const ended = () => {
+      catch (error) { throw failure('start', classifySetupFailure(error, 'server-launch'), {}, error); }
+      const owner = { child, exited: false, failure: null }; server = owner;
+      const ended = error => {
+        if (owner.exited) return;
         owner.exited = true;
+        owner.failure = error;
         if (server !== owner) return; server = null;
-        if (!active) update({ phase: 'error', serverReady: false, busy: false, canCancel: false, error: ERRORS.start, message: ERRORS.start });
+        if (!active) update({ phase: 'error', serverReady: false, busy: false, canCancel: false, error: ERRORS.start, message: ERRORS.start,
+          diagnostic: diagnosticFor(error, 'start') });
       };
-      child.once('error', ended); child.once('exit', ended);
+      child.once('error', error => ended(failure('start', classifySetupFailure(error, 'server-launch'), {}, error)));
+      child.once('exit', code => ended(failure('start', 'server-exit', { exitCode: code })));
     }
     const owner = server, deadline = Date.now() + startTimeoutMs;
     while (Date.now() < deadline) {
       checkAbort(signal);
-      if (!owner || owner.exited || server !== owner) throw failure('start');
-      if (await probe(signal) === 'ready') {
+      if (!owner || owner.exited || server !== owner) throw owner?.failure || failure('start', 'server-exit');
+      const status = await probe(signal);
+      if (status === 'ready') {
         checkAbort(signal);
-        if (owner.exited || server !== owner) throw failure('start');
+        if (owner.exited || server !== owner) throw owner.failure || failure('start', 'server-exit');
         return;
       }
+      if (status === 'occupied') throw failure('start', 'server-protocol');
       await waitTick(signal);
     }
-    throw failure('start');
+    throw failure('start', 'server-timeout');
   }
   function terminalError(error, signal) {
+    const diagnostic = signal.aborted ? null : diagnosticFor(error, stageForPhase());
+    const message = signal.aborted ? '已取消配置，重试时可继续下载。' : ERRORS[error.setupCode] || diagnostic.summary;
     return { phase: signal.aborted ? 'cancelled' : 'error', busy: false, canCancel: false, serverReady: false,
-      error: signal.aborted ? null : ERRORS[error.setupCode] || ERRORS.download,
-      message: signal.aborted ? '已取消配置，重试时可继续下载。' : ERRORS[error.setupCode] || ERRORS.download,
+      error: signal.aborted ? null : message, diagnostic, message,
       ...resources() };
   }
   async function run(operation, install) {
@@ -345,16 +435,19 @@ function createModelSetup({ userData, onChange = () => {}, fetchImpl = globalThi
       if (platform !== 'win32' || arch !== 'x64') throw failure('unsupported');
       if (!manifestValid) throw failure('manifest');
       if (install) await prepare(signal);
-      else if (runtimeInstalled()) await prepareRuntimeDependencies(signal);
+      else if (allowDownloads && runtimeInstalled()) await prepareRuntimeDependencies(signal);
       const available = resources();
       if (!available.runtimeReady || !available.modelReady) {
+        const problem = resourceProblem(available);
+        const diagnostic = createSetupDiagnostic('chat', problem?.kind || 'resources-unavailable', { ...problem, stage: 'inspection' });
         result = { phase: available.runtimeReady ? 'needs-model' : 'needs-install', ...available,
-          serverReady: false, busy: false, canCancel: false, error: null, message: '本地聊天资源尚未准备好，可在设置中继续配置。' };
+          serverReady: false, busy: false, canCancel: false, diagnostic, error: allowDownloads ? diagnostic.summary : ERRORS['preview-resources'],
+          message: allowDownloads ? diagnostic.summary : ERRORS['preview-resources'] };
       } else {
         phase('starting', '正在启动本地聊天服务，首次加载模型需要一些时间…');
         await startServer(signal); checkAbort(signal);
         result = { phase: 'ready', ...available, serverReady: true, busy: false, canCancel: false,
-          progress: 1, error: null, message: '本地聊天模型已就绪，可以开始聊天。' };
+          progress: 1, error: null, diagnostic: null, message: '本地聊天模型已就绪，可以开始聊天。' };
       }
     } catch (error) {
       stopServer(); result = terminalError(error, signal);
@@ -365,6 +458,9 @@ function createModelSetup({ userData, onChange = () => {}, fetchImpl = globalThi
   }
   function begin(kind) {
     if (disposed) return { ok: false, error: '配置服务已关闭。' };
+    if (kind === 'install' && !allowDownloads) {
+      return { ok: false, code: 'downloads-disabled', error: ERRORS['downloads-disabled'], diagnostic: createSetupDiagnostic('chat', 'preview-disabled', { stage: 'inspection' }), state: getState() };
+    }
     if (active) {
       if (kind === 'start') {
         if (active.kind === 'inspect') startAfterInspection = true;
@@ -378,13 +474,30 @@ function createModelSetup({ userData, onChange = () => {}, fetchImpl = globalThi
   }
   async function inspect() {
     if (disposed || active) return getState();
+    const previousFailure = state.diagnostic;
     const operation = { controller: new AbortController(), kind: 'inspect' }; active = operation;
     phase('checking', '正在检测本地聊天环境…');
     try {
+      if (platform !== 'win32' || arch !== 'x64') throw failure('unsupported');
+      if (!manifestValid) throw failure('manifest');
       const available = resources(), status = await probe(operation.controller.signal);
-      const ready = !!server && status === 'ready';
-      update({ ...available, serverReady: ready, phase: ready ? 'ready' : !available.runtimeReady ? 'needs-install' : !available.modelReady ? 'needs-model' : 'idle',
-        busy: false, canCancel: false, error: null, message: ready ? '本地聊天模型已就绪。' : '本地聊天服务尚未启动。' });
+      const ready = !!server && status === 'ready' && available.runtimeReady && available.modelReady;
+      const missingPreviewResources = !allowDownloads && (!available.runtimeReady || !available.modelReady);
+      const problem = resourceProblem(available);
+      let diagnostic = ready ? null : !server && status !== 'offline' ? createSetupDiagnostic('chat', 'server-port-busy', { stage: 'start' })
+        : server && status === 'occupied' ? createSetupDiagnostic('chat', 'server-protocol', { stage: 'start' })
+          : problem ? createSetupDiagnostic('chat', problem.kind, { ...problem, stage: 'inspection' }) : null;
+      // Inspection checks files and a running owned server; it cannot prove a
+      // failed download, extraction or stopped-server launch has been repaired.
+      if (!ready && previousFailure && status === 'offline') {
+        const previousStage = previousFailure.stage;
+        if (['download', 'verify', 'extract', 'validate', 'storage', 'start'].includes(previousStage)
+          && previousFailure.code !== createSetupDiagnostic('chat', 'server-port-busy', { stage: 'start' }).code) diagnostic = previousFailure;
+      }
+      const error = missingPreviewResources ? ERRORS['preview-resources'] : diagnostic?.summary || null;
+      update({ ...available, serverReady: ready, phase: ready ? 'ready' : !available.runtimeReady ? 'needs-install' : !available.modelReady ? 'needs-model' : diagnostic ? 'error' : 'idle',
+        busy: false, canCancel: false, diagnostic, error,
+        message: ready ? '本地聊天模型已就绪。' : error || '本地聊天服务尚未启动。' });
     } catch (error) { update(terminalError(error, operation.controller.signal)); }
     finally {
       if (active === operation) active = null;

@@ -6,10 +6,11 @@ const { createHash, randomUUID } = require('node:crypto');
 const { spawn } = require('node:child_process');
 const { StringDecoder } = require('node:string_decoder');
 const { downloadResource } = require('./resource-download.cjs');
+const { REQUIRED, inspectVoiceInstallation } = require('./voice-installation.cjs');
+const { createVoiceRepair } = require('./voice-repair.cjs');
+const { createSetupDiagnostic, classifySetupFailure } = require('./setup-diagnostics.cjs');
 
 const RUNTIME_NAME = 'GPT-SoVITS-v2-240821';
-const REQUIRED = ['config/settings.py', 'python/python.exe', 'python/python314.zip', 'voice/managed_gpt_sovits.py',
-  'scripts/gpt_sovits_worker.py', 'workspace/settings/voice-profiles.json', `models/cache/${RUNTIME_NAME}/runtime/python.exe`];
 const MESSAGES = Object.freeze({
   manifest: '语音资源清单尚未准备好，请使用包含完整配置资源的安装包。',
   unavailable: '安装包中缺少语音资源，请重新下载完整安装包后重试。文字聊天仍可使用。',
@@ -18,9 +19,15 @@ const MESSAGES = Object.freeze({
   extractor: '安装包中的解压工具缺失或校验失败，请重新下载安装包。',
   archive: '语音压缩包目录或文件结构不符合预期，未部署该资源。',
   storage: '语音资源部署失败，请检查用户目录权限和剩余磁盘空间后重试。',
-  conflict: '语音目录中存在另一套未识别的文件，已保留原文件；请检查安装状态后重试。',
+  conflict: '语音目录在配置过程中发生变化，本次配置已停止；已保留原文件，请重新检测安装状态。',
+  'downloads-disabled': '本地测试模式只使用已有语音资源，不会下载或安装。',
+  'preview-resources': '已有语音环境不完整；本地测试模式不会下载或安装资源，文字聊天仍可使用。',
+  unknown: '语音配置发生了未能识别的错误，现有资源已保留；请提供错误编号以便进一步检查。',
 });
-const failure = code => Object.assign(new Error(code), { voiceSetupCode: code });
+const FAILURE_KINDS = { manifest: 'manifest-invalid', unavailable: 'resources-unavailable', download: 'network-unknown',
+  integrity: 'integrity-unknown', extractor: 'extractor-launch', archive: 'archive-layout', storage: 'storage-io', conflict: 'installation-conflict' };
+const failure = (code, diagnosticKind = FAILURE_KINDS[code] || 'unknown', cause, details = {}) =>
+  Object.assign(new Error(code, cause ? { cause } : undefined), { voiceSetupCode: code, diagnosticKind, ...details });
 const aborted = signal => { if (signal.aborted) throw Object.assign(new Error('cancelled'), { name: 'AbortError' }); };
 const digestPattern = /^[0-9a-f]{64}$/i;
 
@@ -71,27 +78,32 @@ function validManifest(value) {
 }
 
 function safeEntry(name) {
-  if (!name || /[\u0000-\u001f\u007f:]/.test(name) || /^[\\/]/.test(name)) return false;
+  if (typeof name !== 'string' || !name || name.length > 240 || /[\u0000-\u001f\u007f:?*<>"|#]/.test(name) || /^[\\/]/.test(name)) return false;
   const parts = name.replace(/\\/g, '/').split('/');
   return parts.every(part => part && !['.', '..'].includes(part) && !/[. ]$/.test(part)
     && !/^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(part));
 }
 
 /** Create a lazy installer. No model or interpreter is launched during setup. */
-function createVoiceSetup({ userData, onChange = () => {}, resourcesPath = process.resourcesPath,
+function createVoiceSetup({ userData, onChange = () => {}, resourcesPath = process.resourcesPath, allowDownloads = true,
   assetDirectory, fetchImpl = globalThis.fetch, spawnImpl = spawn, env = process.env,
+  statfsImpl = fs.promises.statfs, beforeRepair = () => {},
   manifest: suppliedManifest, manifestPath = path.join(__dirname, 'voice-bootstrap-manifest.json'),
   downloadTimeoutMs = 4 * 60 * 60 * 1000, requestTimeoutMs = 15000, idleTimeoutMs = 30000,
   extractionTimeoutMs = 45 * 60 * 1000 } = {}) {
   if (typeof userData !== 'string' || !path.isAbsolute(userData)) throw new TypeError('userData must be absolute.');
+  if (typeof allowDownloads !== 'boolean') throw new TypeError('allowDownloads must be a boolean.');
   const projectRoot = path.join(userData, 'voice-runtime');
   let manifest;
   try { manifest = suppliedManifest || JSON.parse(fs.readFileSync(manifestPath, 'utf8')); } catch {}
   if (!validManifest(manifest)) manifest = null;
-  let active = null, disposed = false, lastNotice = 0;
+  let active = null, disposed = false, lastNotice = 0, repairFailure = null;
   const state = { phase: 'idle', busy: false, canCancel: false, ready: false,
     completedBytes: 0, totalBytes: 0, progress: null, error: null,
-    expectedBytes: manifest ? manifest.assets.bytes + manifest.runtime.bytes : 0, message: '准备独立的本地语音环境。' };
+    expectedBytes: manifest ? manifest.assets.bytes + manifest.runtime.bytes : 0, message: '准备独立的本地语音环境。',
+    allowDownloads, installation: null, diagnostic: null, repairAvailable: false, backupPreserved: false };
+  const repairTransaction = createVoiceRepair({ userData,
+    verifyInstallation: directory => inspectVoiceInstallation(directory, manifest).ready });
   const getState = () => structuredClone(state);
   const getProjectRoot = () => projectRoot;
   function update(patch, throttle = false) {
@@ -100,26 +112,63 @@ function createVoiceSetup({ userData, onChange = () => {}, resourcesPath = proce
     lastNotice = Date.now(); onChange(getState());
   }
   function phase(name, message) { update({ phase: name, message, busy: true, canCancel: true,
-    completedBytes: 0, totalBytes: 0, progress: null, error: null }); }
+    completedBytes: 0, totalBytes: 0, progress: null, error: null, diagnostic: null }); }
   function ordinaryFile(file) {
-    try { const stat = fs.lstatSync(file); return stat.isFile() && !stat.isSymbolicLink(); } catch { return false; }
+    try { const stat = fs.lstatSync(file); return stat.isFile() && !stat.isSymbolicLink(); }
+    catch (error) { if (['ENOENT', 'ENOTDIR'].includes(error.code)) return false; throw error; }
   }
-  function ready() {
-    if (!manifest || !REQUIRED.every(relative => ordinaryFile(path.join(projectRoot, relative)))) return false;
-    try {
-      const marker = path.join(projectRoot, 'voice-setup-complete.json');
-      if (fs.statSync(marker).size > 65536) return false;
-      const value = JSON.parse(fs.readFileSync(marker, 'utf8'));
-      return value.version === 1 && value.assets === manifest.assets.sha256 && value.runtime === manifest.runtime.sha256
-        && Array.isArray(value.required) && value.required.length >= REQUIRED.length && value.required.length <= 200
-        && value.required.every(relative => typeof relative === 'string' && safeEntry(relative) && ordinaryFile(path.join(projectRoot, relative)));
-    } catch { return false; }
+  const installation = () => inspectVoiceInstallation(projectRoot, manifest);
+  function canRepair(current) {
+    if (!allowDownloads || !manifest || !current.exists || current.ready) return false;
+    try { const stat = fs.lstatSync(projectRoot); return stat.isDirectory() && !stat.isSymbolicLink(); }
+    catch { return false; }
   }
+  const installationDiagnostic = current => createSetupDiagnostic('voice', `installation-${current.code}`, {
+    stage: 'inspection', missingFiles: current.missingFiles, missingCount: current.missingCount,
+    actualVersion: current.actualVersion, expectedVersion: current.expectedVersion,
+  });
+  const phaseStage = value => ({ checking: 'inspection', verifying: 'verify', downloading: 'download', extracting: 'extract', validating: 'validate', finishing: 'storage' })[value] || 'inspection';
+  function errorDiagnostic(error, fallback = 'unknown') {
+    const context = { phase: state.phase, stage: error.diagnosticStage || phaseStage(state.phase) };
+    // Only typed, safe metadata reaches the diagnostic builder. Raw messages,
+    // paths, URLs and child stdout can contain personal or signed data.
+    let source = error;
+    for (let depth = 0; source && depth < 4; depth++, source = source.cause) {
+      for (const key of ['httpStatus', 'exitCode', 'requiredBytes', 'availableBytes']) if (context[key] === undefined && Number.isSafeInteger(source[key])) context[key] = source[key];
+      if (context.missingFiles === undefined && Array.isArray(source.missingFiles)) context.missingFiles = source.missingFiles;
+      if (context.missingCount === undefined && Number.isSafeInteger(source.missingCount)) context.missingCount = source.missingCount;
+      if (!context.systemCode && typeof source.code === 'string' && /^[A-Z][A-Z0-9_]{1,63}$/.test(source.code)) context.systemCode = source.code;
+    }
+    return createSetupDiagnostic('voice', classifySetupFailure(error, fallback), context);
+  }
+  const incompleteMessage = current => current.recognized
+    ? '已找到本地语音环境，但部分文件未通过完整性检查。'
+    : '已找到语音目录，需要先确认现有安装状态。';
   async function inspect() {
     if (active || disposed) return getState();
-    const installed = ready();
-    update({ phase: installed ? 'ready' : manifest ? 'needs-install' : 'error', ready: installed,
-      error: manifest ? null : MESSAGES.manifest, message: installed ? '本地语音环境已就绪。' : manifest ? '首次配置将自动准备语音环境。' : MESSAGES.manifest });
+    const current = installation(), existingProblem = current.exists && !current.ready;
+    if (repairFailure && !current.ready && state.phase === 'error' && state.diagnostic
+      && JSON.stringify(current) === repairFailure) {
+      update({ installation: current, repairAvailable: canRepair(current),
+        message: '现有环境尚未恢复，下方保留上次修复失败的原因。' });
+      return getState();
+    }
+    repairFailure = null;
+    // Inspection never downloads or launches Python, so it cannot prove that a
+    // previous network/extraction failure has been fixed. Keep that last result
+    // until a retry or a complete existing installation supplies new evidence.
+    if (manifest && !current.ready && !existingProblem && state.phase === 'error' && state.diagnostic) {
+      update({ installation: current, ready: false, repairAvailable: canRepair(current), message: '尚未检测到完整语音环境，下方保留上次配置失败的原因。' });
+      return getState();
+    }
+    update({ phase: current.ready ? 'ready' : existingProblem || !manifest ? 'error' : 'needs-install', ready: current.ready,
+      installation: current, repairAvailable: canRepair(current),
+      diagnostic: !manifest ? createSetupDiagnostic('voice', 'manifest-invalid', { stage: 'inspection' })
+        : existingProblem ? installationDiagnostic(current) : !current.ready && !allowDownloads
+          ? createSetupDiagnostic('voice', 'preview-resources', { stage: 'inspection' }) : null,
+      error: !manifest ? MESSAGES.manifest : existingProblem ? current.message : !current.ready && !allowDownloads ? MESSAGES['preview-resources'] : null,
+      message: current.ready ? '本地语音环境已就绪。' : !manifest ? MESSAGES.manifest : existingProblem ? incompleteMessage(current)
+        : !allowDownloads ? MESSAGES['preview-resources'] : '首次配置将自动准备语音环境。' });
     return getState();
   }
   async function digest(file, signal) {
@@ -135,8 +184,20 @@ function createVoiceSetup({ userData, onChange = () => {}, resourcesPath = proce
     return (await digest(file, signal)).toLowerCase() === item.sha256.toLowerCase();
   }
   async function ensureDirectory(directory) {
-    await fs.promises.mkdir(directory, { recursive: true });
-    if (fs.lstatSync(directory).isSymbolicLink()) throw failure('storage');
+    await storeFile(() => fs.promises.mkdir(directory, { recursive: true }));
+    if (fs.lstatSync(directory).isSymbolicLink()) throw failure('storage', 'storage-path');
+  }
+  async function storeFile(operation) {
+    try { return await operation(); }
+    catch (error) { throw failure('storage', classifySetupFailure(error, 'storage-io'), error, { diagnosticStage: 'storage' }); }
+  }
+  async function ensureSpace(bytes) {
+    const requiredBytes = Math.ceil(bytes) + 64 * 1024 ** 2;
+    const disk = await storeFile(() => statfsImpl(userData));
+    const availableBytes = Math.floor(Number(disk.bsize) * Number(disk.bavail));
+    if (!Number.isSafeInteger(availableBytes) || availableBytes < 0) throw failure('storage', 'storage-io');
+    if (availableBytes < requiredBytes) throw failure('storage', 'storage-space', undefined,
+      { requiredBytes, availableBytes, diagnosticStage: 'storage' });
   }
   async function verifiedArchive(item, kind, signal) {
     phase('verifying', `正在检查${kind}资源…`);
@@ -152,6 +213,9 @@ function createVoiceSetup({ userData, onChange = () => {}, resourcesPath = proce
     aborted(signal);
     const sources = item.sources || (item.url ? [item.url] : []);
     if (!sources.length) throw failure('unavailable');
+    let partialBytes = 0;
+    if (ordinaryFile(cached + '.part')) partialBytes = Math.min(fs.statSync(cached + '.part').size, item.bytes);
+    await ensureSpace(item.bytes - partialBytes);
     phase('downloading', `正在下载${kind}，完成后会自动配置…`);
     update({ totalBytes: item.bytes });
     try {
@@ -167,30 +231,39 @@ function createVoiceSetup({ userData, onChange = () => {}, resourcesPath = proce
     } catch (error) {
       aborted(signal);
       if (error.name === 'AbortError') throw error;
-      throw failure(['download', 'integrity', 'storage'].includes(error.setupCode) ? error.setupCode : 'storage');
+      const legacyCode = ['download', 'integrity', 'storage'].includes(error.setupCode) ? error.setupCode : 'unknown';
+      throw failure(legacyCode, classifySetupFailure(error, FAILURE_KINDS[legacyCode] || 'unknown'), error);
     }
   }
-  function runExtractor(executable, args, signal) {
+  function runExtractor(executable, args, signal, kind = 'extract') {
     return new Promise((resolve, reject) => {
       aborted(signal);
+      const validating = kind === 'validate';
+      const detail = (suffix, cause, exitCode) => failure(validating || suffix !== 'launch' ? 'archive' : 'extractor',
+        `${validating ? 'validation' : suffix === 'launch' ? 'extractor' : 'extraction'}-${suffix}`, cause,
+        { diagnosticStage: kind, ...(Number.isInteger(exitCode) ? { exitCode } : {}) });
       let child;
       try { child = spawnImpl(executable, args, { windowsHide: true, shell: false, stdio: ['ignore', 'pipe', 'ignore'] }); }
-      catch { reject(failure('extractor')); return; }
+      catch (error) { reject(detail('launch', error)); return; }
       const operation = active; operation.child = child;
       const decoder = new StringDecoder('utf8');
-      let output = '', failed = false, finished = false;
+      let output = '', failed = false, finished = false, timedOut = false, outputTooLarge = false;
       const stop = () => { failed = true; child.kill(); };
-      const timer = setTimeout(stop, extractionTimeoutMs);
+      const timer = setTimeout(() => { timedOut = true; stop(); }, extractionTimeoutMs);
       signal.addEventListener('abort', stop, { once: true });
       child.stdout?.on('data', chunk => {
-        if (output.length + chunk.length > 64 * 1024 * 1024) { stop(); return; }
+        if (output.length + chunk.length > 64 * 1024 * 1024) { outputTooLarge = true; stop(); return; }
         output += decoder.write(chunk);
       });
       const finish = (error, code) => {
         if (finished) return;
         finished = true; clearTimeout(timer); signal.removeEventListener('abort', stop);
         operation.child = null;
-        if (error || failed || code !== 0) reject(failure('archive')); else resolve(output + decoder.end());
+        if (error) reject(detail('launch', error));
+        else if (timedOut) reject(detail('timeout'));
+        else if (outputTooLarge) reject(detail('output'));
+        else if (failed || code !== 0) reject(detail('exit', undefined, code));
+        else resolve(output + decoder.end());
       };
       child.once('error', error => finish(error)); child.once('close', code => finish(null, code));
     });
@@ -207,25 +280,26 @@ function createVoiceSetup({ userData, onChange = () => {}, resourcesPath = proce
       const entries = record.split(/\r?\n/).map(line => line.match(/^([^=]+?) = (.*)$/)).filter(Boolean);
       const fields = Object.fromEntries(entries.map(match => [match[1], match[2]]));
       if (!safeEntry(fields.Path) || fields['Symbolic Link'] || fields['Hard Link'] || /^l/.test(fields.Mode || '')
-        || /L|(?:^|\s)l[rwx-]{9}/.test(fields.Attributes || '')) throw failure('archive');
+        || /L|(?:^|\s)l[rwx-]{9}/.test(fields.Attributes || '')) throw failure('archive', 'archive-unsafe');
       const key = fields.Path.replace(/\\/g, '/').toLowerCase();
-      if (paths.has(key)) throw failure('archive');
+      if (paths.has(key)) throw failure('archive', 'archive-unsafe');
       paths.add(key);
       const size = Number(fields.Size || 0);
       if (!Number.isSafeInteger(size) || size < 0) throw failure('archive');
       uncompressed += size;
-      if (uncompressed > 40 * 1024 ** 3) throw failure('archive');
+      if (uncompressed > 40 * 1024 ** 3) throw failure('archive', 'archive-unsafe');
     }
+    await ensureSpace(uncompressed);
     await ensureDirectory(destination);
     await runExtractor(executable, ['x', '-y', '-aoa', '-sccUTF-8', `-o${destination}`, archive], signal);
     await rejectLinks(destination, signal);
   }
   async function rejectLinks(directory, signal) {
     aborted(signal);
-    if (fs.lstatSync(directory).isSymbolicLink()) throw failure('archive');
+    if (fs.lstatSync(directory).isSymbolicLink()) throw failure('archive', 'archive-unsafe');
     for (const entry of await fs.promises.readdir(directory, { withFileTypes: true })) {
       const file = path.join(directory, entry.name), stat = await fs.promises.lstat(file);
-      if (stat.isSymbolicLink()) throw failure('archive');
+      if (stat.isSymbolicLink()) throw failure('archive', 'archive-unsafe');
       if (stat.isDirectory()) await rejectLinks(file, signal);
       else if (!stat.isFile()) throw failure('archive');
     }
@@ -238,15 +312,37 @@ function createVoiceSetup({ userData, onChange = () => {}, resourcesPath = proce
     if (!relative || path.isAbsolute(relative) || relative.includes(path.sep) || !/^voice-staging-[0-9a-f-]{36}$/.test(relative)) return;
     await fs.promises.rm(actual, { recursive: true, force: true });
   }
-  async function deploy(operation) {
+  async function deploy(operation, repairing = false) {
     const signal = operation.controller.signal; let stage, terminal;
     try {
       if (!manifest) throw failure('manifest');
-      if (ready()) { terminal = { phase: 'ready', ready: true, progress: 1, message: '本地语音环境已就绪。' }; return; }
+      aborted(signal);
+      update({ canCancel: false, message: '正在检查上次配置是否需要恢复…' });
+      const recovered = await repairTransaction.recover();
+      if (recovered.stagingDirectory) await removeStage(recovered.stagingDirectory).catch(() => {});
+      aborted(signal);
+      const current = installation(); update({ installation: current, repairAvailable: canRepair(current) });
+      if (current.ready) { terminal = { phase: 'ready', ready: true, progress: 1, error: null, diagnostic: null,
+        backupPreserved: Boolean(recovered.backupDirectory),
+        message: recovered.committed ? '已完成上次中断的语音配置，可以继续朗读。' : '本地语音环境已就绪。' }; return; }
+      if (current.exists && (!repairing || !canRepair(current))) {
+        terminal = { phase: 'error', ready: false, error: current.message, diagnostic: installationDiagnostic(current), message: incompleteMessage(current) };
+        return;
+      }
+      update({ canCancel: true });
+      if (repairing) await beforeRepair();
       await ensureDirectory(userData);
-      if (fs.existsSync(projectRoot)) throw failure('conflict');
+      if (!repairing && fs.existsSync(projectRoot)) throw failure('conflict');
       const executable = resourcesPath && path.join(resourcesPath, manifest.extractor.relativePath);
-      if (!executable || !ordinaryFile(executable) || (await digest(executable, signal)).toLowerCase() !== manifest.extractor.sha256.toLowerCase()) throw failure('extractor');
+      if (!executable) throw failure('extractor', 'extractor-missing', undefined, { diagnosticStage: 'verify' });
+      let executableStat;
+      try { executableStat = fs.lstatSync(executable); }
+      catch (error) {
+        if (['ENOENT', 'ENOTDIR'].includes(error.code)) throw failure('extractor', 'extractor-missing', error, { diagnosticStage: 'verify' });
+        throw error;
+      }
+      if (!executableStat.isFile() || executableStat.isSymbolicLink()) throw failure('extractor', 'extractor-missing', undefined, { diagnosticStage: 'verify' });
+      if ((await digest(executable, signal)).toLowerCase() !== manifest.extractor.sha256.toLowerCase()) throw failure('extractor', 'extractor-integrity', undefined, { diagnosticStage: 'verify' });
       const assets = await verifiedArchive(manifest.assets, '语音模型及配置', signal);
       const runtime = await verifiedArchive(manifest.runtime, '语音运行环境', signal);
       stage = path.join(userData, `voice-staging-${randomUUID()}`);
@@ -260,11 +356,12 @@ function createVoiceSetup({ userData, onChange = () => {}, resourcesPath = proce
         if (!ordinaryFile(path.join(runtimeSource, 'runtime', 'python.exe'))) throw failure('archive');
       }
       const cache = path.join(project, 'models', 'cache'); await ensureDirectory(cache);
-      await fs.promises.rename(runtimeSource, path.join(cache, RUNTIME_NAME));
+      await storeFile(() => fs.promises.rename(runtimeSource, path.join(cache, RUNTIME_NAME)));
       // The small asset archive also carries pronunciation-data overlays absent
       // from the original upstream runtime. Apply it only after runtime placement.
       await unpack(executable, assets, project, signal);
-      if (!REQUIRED.every(relative => ordinaryFile(path.join(project, relative)))) throw failure('archive');
+      const missingFiles = REQUIRED.filter(relative => !ordinaryFile(path.join(project, relative)));
+      if (missingFiles.length) throw failure('archive', 'archive-layout', undefined, { missingFiles, missingCount: missingFiles.length });
       phase('validating', '正在验证语音环境和模型文件，不会启动声音模型…');
       const program = [
         'import hashlib,json,sys',
@@ -289,36 +386,51 @@ function createVoiceSetup({ userData, onChange = () => {}, resourcesPath = proce
         '  required.append(str(file.relative_to(root)).replace("\\\\","/"))',
         'print(json.dumps({"required":required}))',
       ].join('\n');
-      const validation = JSON.parse(await runExtractor(path.join(project, 'python', 'python.exe'), ['-I', '-B', '-c', program, project], signal));
-      if (!Array.isArray(validation.required) || validation.required.length < 20 || validation.required.length > 150
-        || !validation.required.every(relative => typeof relative === 'string' && safeEntry(relative) && ordinaryFile(path.join(project, relative)))) throw failure('archive');
-      await fs.promises.writeFile(path.join(project, 'voice-setup-complete.json'), JSON.stringify({ version: 1,
+      const output = await runExtractor(path.join(project, 'python', 'python.exe'), ['-I', '-B', '-c', program, project], signal, 'validate');
+      let validation;
+      try { validation = JSON.parse(output); }
+      catch (error) { throw failure('archive', 'validation-output', error, { diagnosticStage: 'validate' }); }
+      if (!validation || typeof validation !== 'object' || !Array.isArray(validation.required) || validation.required.length < 20 || validation.required.length > 150
+        || !validation.required.every(relative => typeof relative === 'string' && safeEntry(relative) && ordinaryFile(path.join(project, relative)))) throw failure('archive', 'validation-output');
+      await storeFile(() => fs.promises.writeFile(path.join(project, 'voice-setup-complete.json'), JSON.stringify({ version: 1,
         assets: manifest.assets.sha256, runtime: manifest.runtime.sha256,
-        required: [...new Set([...REQUIRED, ...validation.required])] }), { flag: 'wx', mode: 0o600 });
+        required: [...new Set([...REQUIRED, ...validation.required])] }), { flag: 'wx', mode: 0o600 }));
       aborted(signal);
-      await fs.promises.rename(project, projectRoot);
-      terminal = { phase: 'ready', ready: true, progress: 1, error: null, message: '本地语音环境已就绪，可以朗读聊天回答。' };
+      update({ phase: 'finishing', message: '正在切换已验证的语音环境…', busy: true, canCancel: false,
+        completedBytes: 0, totalBytes: 0, progress: null });
+      const committed = await repairTransaction.commit(project, { allowReplace: repairing });
+      terminal = { phase: 'ready', ready: true, progress: 1, error: null, diagnostic: null,
+        backupPreserved: Boolean(committed?.backupDirectory),
+        message: committed?.backupDirectory ? '语音环境已修复，原目录已保留为备份。' : '本地语音环境已就绪，可以朗读聊天回答。' };
     } catch (error) {
+      operation.preserveStage = error.preserveStage === true;
       const cancelled = signal.aborted;
       terminal = { phase: cancelled ? 'cancelled' : 'error', ready: false,
-        error: cancelled ? null : MESSAGES[error.voiceSetupCode] || MESSAGES.storage,
-        message: cancelled ? '已取消语音配置，重试时会继续下载并复用已校验的文件。' : MESSAGES[error.voiceSetupCode] || MESSAGES.storage };
+        diagnostic: cancelled ? null : errorDiagnostic(error),
+        error: cancelled ? null : MESSAGES[error.voiceSetupCode] || MESSAGES.unknown,
+        message: cancelled ? '已取消语音配置，重试时会继续下载并复用已校验的文件。' : MESSAGES[error.voiceSetupCode] || MESSAGES.unknown };
     } finally {
-      if (!operation.child) await removeStage(stage).catch(() => {});
+      if (!operation.child && !operation.preserveStage) await removeStage(stage).catch(() => {});
       if (active === operation) active = null;
-      update({ ...terminal, busy: false, canCancel: false });
+      const current = installation();
+      repairFailure = repairing && terminal?.phase === 'error' ? JSON.stringify(current) : null;
+      update({ ...terminal, installation: current, repairAvailable: canRepair(current), busy: false, canCancel: false });
     }
   }
-  function install() {
+  function begin(repairing) {
     if (disposed) return { ok: false, error: '语音配置服务已关闭。' };
+    if (!allowDownloads) return { ok: false, code: 'downloads-disabled', error: MESSAGES['downloads-disabled'],
+      diagnostic: createSetupDiagnostic('voice', 'preview-disabled', { stage: 'inspection' }), state: getState() };
     if (active) return { ok: false, error: '语音配置正在进行。' };
+    repairFailure = null;
     const operation = { controller: new AbortController(), child: null }; active = operation;
-    phase('checking', '正在检查本地语音环境…'); void deploy(operation);
+    phase('checking', repairing ? '正在检查可复用的语音资源，原环境会保留…' : '正在检查本地语音环境…'); void deploy(operation, repairing);
     return { ok: true, state: getState() };
   }
-  function cancel() { if (!active) return { ok: false, state: getState() }; active.controller.abort(); return { ok: true, state: getState() }; }
+  const install = () => begin(false), repair = () => begin(true);
+  function cancel() { if (!active || !state.canCancel) return { ok: false, state: getState() }; active.controller.abort(); return { ok: true, state: getState() }; }
   function dispose() { disposed = true; active?.controller.abort(); }
-  return { getState, inspect, install, cancel, dispose, getProjectRoot };
+  return { getState, inspect, install, repair, cancel, dispose, getProjectRoot };
 }
 
 module.exports = { createVoiceSetup };

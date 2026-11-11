@@ -71,6 +71,9 @@ jobs:
       - name: Check click interactions
         if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
         run: npm run test:interactions
+      - name: Check quick chat UI
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
+        run: npm run test:quick-chat
       - name: Upload browser reports and screenshots
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -79,6 +82,7 @@ jobs:
           path: |
             artifacts/settings-window-check/
             artifacts/chat-window-check/
+            artifacts/quick-chat-ui/
             artifacts/validation-v*/interaction-browser/
           if-no-files-found: ignore
           retention-days: 7

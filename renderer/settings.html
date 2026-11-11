@@ -155,6 +155,18 @@
       <div class="section-heading"><h2>和爱莉希雅聊一聊</h2><button id="settings-open-chat" class="text-button" type="button" disabled>打开聊天框</button></div>
       <p class="section-hint">从右下角托盘也能打开输入框。她会记住当前对话的上下文。</p>
       <p id="chat-settings-error" class="voice-error" role="alert" hidden></p>
+      <section id="quick-chat-settings" class="card quick-chat-settings" aria-label="快捷输入设置" hidden>
+        <label class="toggle-row"><span class="toggle-copy"><span class="toggle-title">快捷输入</span><span class="toggle-description">用快捷键打开或收起屏幕底部的透明输入框。</span></span><span class="switch"><input id="quick-chat-enabled" type="checkbox" aria-label="启用快捷输入键" disabled><i aria-hidden="true"></i></span></label>
+        <p class="quick-chat-usage hint">发送后输入框保持显示。按 Esc 或再次按快捷键收起；回复会在爱莉希雅身旁逐句显示。</p>
+        <div class="quick-shortcut-row">
+          <div class="quick-shortcut-current"><span id="quick-shortcut-label">打开 / 收起</span><kbd id="quick-chat-key" class="quick-shortcut-key" aria-labelledby="quick-shortcut-label">Ctrl + Alt + E</kbd></div>
+          <button id="quick-chat-record" class="secondary-button quick-shortcut-edit" type="button" aria-describedby="quick-chat-key quick-chat-help" aria-pressed="false" disabled><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m12.7 3.3 4 4M3 17l4.5-1 9-9a2.8 2.8 0 0 0-4-4l-9 9L3 17Z" /></svg><span id="quick-chat-record-label">更换快捷键</span></button>
+        </div>
+        <p id="quick-chat-help" class="hint">点击「更换快捷键」→ 按下新组合键 → 点击「保存快捷键」。</p>
+        <div class="quick-shortcut-actions"><button id="quick-chat-save" class="secondary-button" type="button" disabled>保存快捷键</button><button id="quick-chat-reset" class="text-button" type="button" disabled>恢复默认</button><button id="quick-chat-open" class="text-button" type="button" disabled>打开输入框</button></div>
+        <p id="quick-chat-settings-status" class="hint" role="status" aria-live="polite">正在读取…</p>
+        <p id="quick-chat-settings-error" class="voice-error" role="alert" hidden></p>
+      </section>
       <form id="chat-settings-form" class="card chat-settings-form">
         <label for="chat-username">怎么称呼你</label>
         <input id="chat-username" name="username" type="text" maxlength="50" placeholder="你" autocomplete="off" required disabled>
@@ -201,6 +213,7 @@
   <script type="module" src="./settings.mjs"></script>
   <script type="module" src="./voice-settings.mjs"></script>
   <script type="module" src="./chat-settings.mjs"></script>
+  <script type="module" src="./quick-chat-settings.mjs"></script>
   <script type="module" src="./model-setup.mjs"></script>
 </body>
 </html>

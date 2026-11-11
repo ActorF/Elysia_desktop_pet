@@ -96,14 +96,14 @@ test('archive digest mismatch fails before spawning a helper or changing runtime
   const f = fixture(t); fs.writeFileSync(f.archivePath, Buffer.alloc(f.manifest.archive.bytes));
   const dependencies = createRuntimeDependencies({ manifest: f.manifest, assetDirectory: f.assets,
     spawnImpl: () => { assert.fail('Unverified archive must not be extracted'); } });
-  await assert.rejects(dependencies.prepare(f.directory, new AbortController().signal), { setupCode: 'dependencies-source' });
+  await assert.rejects(dependencies.prepare(f.directory, new AbortController().signal), { setupCode: 'dependencies-source', diagnosticKind: 'dependencies-source-integrity' });
   assert.deepEqual(fs.readdirSync(f.directory), []);
 });
 
 test('individual member digest mismatch rejects the complete extracted set', { skip: process.platform !== 'win32' }, async t => {
   const f = fixture(t, { badMember: true });
   const dependencies = createRuntimeDependencies({ manifest: f.manifest, assetDirectory: f.assets });
-  await assert.rejects(dependencies.prepare(f.directory, new AbortController().signal), { setupCode: 'dependencies' });
+  await assert.rejects(dependencies.prepare(f.directory, new AbortController().signal), { setupCode: 'dependencies', diagnosticKind: 'dependencies-invalid' });
   assert.deepEqual(fs.readdirSync(f.directory), []);
   assert.equal(fs.readdirSync(f.root).some(file => file.startsWith('chat-dependencies-staging-')), false);
 });
@@ -119,4 +119,43 @@ test('cancelled extraction waits for its child and removes only its staging dire
   await assert.rejects(dependencies.prepare(f.directory, controller.signal), { name: 'AbortError' });
   assert.ok(child); assert.equal(fs.existsSync(stage), false); assert.deepEqual(fs.readdirSync(f.directory), []);
   assert.equal(fs.existsSync(f.archivePath), true);
+});
+
+test('dependency inspection separates absent libraries from changed libraries without changing files', t => {
+  const f = fixture(t), dependencies = createRuntimeDependencies({ manifest: f.manifest, assetDirectory: f.assets });
+  const missing = dependencies.inspect(f.directory);
+  assert.equal(missing.kind, 'dependencies-missing'); assert.equal(missing.missingCount, f.manifest.files.length);
+  assert.deepEqual(fs.readdirSync(f.directory), []);
+  for (const [name, bytes] of f.files) fs.writeFileSync(path.join(f.directory, name), bytes);
+  assert.deepEqual(dependencies.inspect(f.directory), { kind: null });
+  const target = path.join(f.directory, f.manifest.files[0].file); fs.writeFileSync(target, 'changed bytes');
+  assert.equal(dependencies.inspect(f.directory).kind, 'dependencies-invalid');
+  assert.equal(fs.readFileSync(target, 'utf8'), 'changed bytes');
+});
+
+test('dependency helpers preserve launch, timeout, unsafe archive and storage failure categories', async t => {
+  const scenarios = [
+    { code: 70, kind: 'archive-unsafe' }, { code: 71, kind: 'archive-layout' },
+    { code: 72, kind: 'storage-space' }, { code: 73, kind: 'storage-permission' },
+    { code: 74, kind: 'storage-busy' }, { code: 75, kind: 'storage-path' },
+    { code: 79, kind: 'extraction-exit' }, { timeout: true, kind: 'extraction-timeout' },
+    { launch: true, kind: 'extraction-launch' },
+  ];
+  for (const scenario of scenarios) {
+    const f = fixture(t), dependencies = createRuntimeDependencies({ manifest: f.manifest, assetDirectory: f.assets,
+      extractionTimeoutMs: 3, spawnImpl: () => {
+        if (scenario.launch) throw new Error('private launcher details');
+        const child = new EventEmitter();
+        child.kill = () => { process.nextTick(() => child.emit('exit', 1)); return true; };
+        if (!scenario.timeout) process.nextTick(() => child.emit('exit', scenario.code));
+        return child;
+      } });
+    await assert.rejects(dependencies.prepare(f.directory, new AbortController().signal), error => {
+      assert.equal(error.diagnosticKind, scenario.kind);
+      if (scenario.code) assert.equal(error.exitCode, scenario.code);
+      return true;
+    });
+    assert.deepEqual(fs.readdirSync(f.directory), []);
+    assert.equal(fs.readdirSync(f.root).some(name => name.startsWith('chat-dependencies-staging-')), false);
+  }
 });

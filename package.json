@@ -1,7 +1,7 @@
 {
   "name": "elysia_desktop_pet",
   "productName": "爱莉希雅桌宠",
-  "version": "1.4.4",
+  "version": "1.4.5",
   "private": true,
   "description": "独立爱莉希雅桌面伙伴",
   "author": "ActorF",
@@ -9,6 +9,7 @@
   "main": "electron/main.cjs",
   "scripts": {
     "start": "node scripts/launch.cjs",
+    "start:preview": "node scripts/launch.cjs --local-preview --show-quick-chat",
     "test": "node --test tests/*.test.cjs tests/*.test.mjs",
     "package": "npm run prepare:chat && electron-builder --dir",
     "make:portable": "node scripts/package-release.cjs --portable",
@@ -26,6 +27,8 @@
     "test:interaction-settings": "node scripts/launch.cjs --interaction-smoke-test",
     "test:chat": "node scripts/chat-window-check.cjs",
     "test:chat-native": "node scripts/launch.cjs --chat-smoke-test",
+    "test:quick-chat": "node scripts/check-quick-chat-ui.mjs",
+    "test:quick-chat-native": "node scripts/launch.cjs --quick-chat-smoke-test",
     "test:chat-model": "node scripts/chat-model-check.cjs",
     "test:chat-runtime": "node scripts/chat-runtime-check.cjs",
     "test:chat-tts": "node scripts/chat-tts-check.cjs",

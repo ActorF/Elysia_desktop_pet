@@ -27,7 +27,11 @@ const {createChatSpeech,getChatSpeechBlockReason}=require('./chat-speech.cjs');
 const {createModelSetup}=require('./model-setup.cjs');
 const {registerModelSetupIpc}=require('./model-setup-ipc.cjs');
 const {createVoiceSetup}=require('./voice-setup.cjs');
-const {createFirstRunSetup}=require('./first-run-setup.cjs');
+const {createFirstRunSetup,managedChatEndpoint}=require('./first-run-setup.cjs');
+const {createQuickChatWindow}=require('./quick-chat-window.cjs');
+const {createQuickChatShortcut}=require('./quick-chat-shortcut.cjs');
+const {createQuickChatController,ensureQuickChatReady}=require('./quick-chat-controller.cjs');
+const {registerQuickChatIpc}=require('./quick-chat-ipc.cjs');
 
 const root = path.resolve(__dirname, '..');
 const rendererUrl = pathToFileURL(path.join(root, 'renderer', 'index.html')).href;
@@ -35,19 +39,23 @@ const smokeNativeHotkeys = process.argv.includes('--smoke-native-hotkeys');
 const isVoiceSmoke = process.argv.includes('--voice-smoke-test');
 const isInteractionSmoke = process.argv.includes('--interaction-smoke-test');
 const isChatSmoke = process.argv.includes('--chat-smoke-test');
+const isQuickChatSmoke = process.argv.includes('--quick-chat-smoke-test');
+const isLocalPreview = process.argv.includes('--local-preview');
 const isPortableRelaunchSmoke = process.argv.includes('--portable-relaunch-smoke-test');
-const isSmokeTest = process.argv.includes('--smoke-test') || smokeNativeHotkeys || isVoiceSmoke || isInteractionSmoke || isChatSmoke || isPortableRelaunchSmoke;
+const isSmokeTest = process.argv.includes('--smoke-test') || smokeNativeHotkeys || isVoiceSmoke || isInteractionSmoke || isChatSmoke || isQuickChatSmoke || isPortableRelaunchSmoke;
 const portableRelaunchInstances = [];
 if (isSmokeTest) app.commandLine.appendSwitch('mute-audio');
+if (isLocalPreview) { process.env.HF_HUB_OFFLINE = '1'; process.env.TRANSFORMERS_OFFLINE = '1'; }
 const voiceTestHooks = isSmokeTest ? {} : undefined;
 // Keep production preferences across upgrades; smoke tests use an isolated profile.
 app.setName('爱莉希雅桌宠');
 app.setAppUserModelId('io.actorf.elysia.standalonepet');
 if (!isSmokeTest) migrateSampleProfile(app.getPath('appData'));
 app.setPath('userData', isSmokeTest
-  ? path.join(app.getPath('temp'), isPortableRelaunchSmoke ? 'elysia-pet-portable-relaunch-smoke' : isChatSmoke ? 'elysia-pet-chat-smoke' : isVoiceSmoke ? 'elysia-pet-voice-smoke' : isInteractionSmoke ? 'elysia-pet-interaction-smoke' : 'elysia-pet-host-smoke')
+  ? path.join(app.getPath('temp'), isQuickChatSmoke ? 'elysia-pet-quick-chat-smoke' : isPortableRelaunchSmoke ? 'elysia-pet-portable-relaunch-smoke' : isChatSmoke ? 'elysia-pet-chat-smoke' : isVoiceSmoke ? 'elysia-pet-voice-smoke' : isInteractionSmoke ? 'elysia-pet-interaction-smoke' : 'elysia-pet-host-smoke')
   : path.join(app.getPath('appData'), 'Elysia Desktop Pet'));
 let voices, cursorTrail, chat, chatWindow, chatSpeech, chatSpeechTestHooks, modelSetup, voiceSetup, firstRunSetup;
+let quickChat, quickChatWindow, quickChatShortcut, quickChatIpc, speechTarget = 'chat';
 let lastChatSettings = null;
 let pet, tray, settingsWindow, settingsFile, pointerTimer, saveTimer, desktopPointer, dragLifecycle, topmost, windowShape, legacyProcess, typingListener;
 let preferences = { ...DEFAULT_SETTINGS };
@@ -69,6 +77,7 @@ function publishChat() {
   if (!chat) return;
   const snapshot = chatState();
   chatWindow?.publish(snapshot);
+  quickChat?.changed();
   const panel = settingsWindow?.getWindow();
   if (panel && !panel.webContents.isDestroyed()) panel.webContents.send('settings:chat-state', snapshot);
 }
@@ -269,11 +278,15 @@ function configureAlternateHotkeys() {
   hotkeys.alternate.active = alternateBindings.length > 0;
 }
 
+function requestQuit() {
+  quickChat?.interrupt(); chat?.cancel(); chatSpeech?.release();
+  return voices ? voices.requestQuit() : app.quit();
+}
 function buildMenu() {
   return Menu.buildFromTemplate(trayTemplate({
     openSettings:()=>settingsWindow.open().catch(error=>console.error('Could not open settings:',error)),
     openChat:()=>chatWindow.open().catch(error=>console.error('Could not open chat:',error)),
-    quit:()=>{ chatSpeech?.release(); return voices?voices.requestQuit():app.quit(); },
+    quit:requestQuit,
   }));
 }
 
@@ -301,11 +314,14 @@ function registerIpc() {
   });
   ipcMain.on('pet:drag-start', (event) => { if (trusted(event) && (preferences.clickThrough||!dragLifecycle?.startDrag())) send('pet:drag-state',false); });
   ipcMain.on('pet:drag-end', (event) => { if (trusted(event)) dragLifecycle?.endDrag(); });
-  ipcMain.on('pet:quit', (event) => { if (trusted(event)) voices ? voices.requestQuit() : app.quit(); });
+  ipcMain.on('pet:quit', (event) => { if (trusted(event)) requestQuit(); });
   const trustedSettings = event => isSettingsSender(event, settingsWindow?.getWindow(), settingsWindow?.url);
   ipcMain.handle('settings:voice-get', event => trustedSettings(event) ? voices?.getState() : null);
   ipcMain.handle('settings:voice-settings', (event, patch) => trustedSettings(event) ? voices?.setSettings(patch) : null);
-  ipcMain.handle('settings:voice-stop', event => trustedSettings(event) ? voices?.stopVoice() : null);
+  ipcMain.handle('settings:voice-stop', event => {
+    if (!trustedSettings(event)) return null;
+    quickChat?.interrupt(); chatSpeech?.stop(); return voices?.stopVoice();
+  });
   ipcMain.on('settings:window-control', (event, value) => {
     if (trustedSettings(event)) settingsWindow.windowControl(value);
   });
@@ -324,8 +340,12 @@ function registerIpc() {
     recover(resetScale);
     return state();
   });
-  registerChatIpc({ ipcMain, chat, chatWindow, settingsWindow, speech: chatSpeech, clipboard, getState: chatState });
-  registerModelSetupIpc({ ipcMain, settingsWindow, setup: modelSetup, voiceSetup });
+  registerChatIpc({ ipcMain, chat, chatWindow, settingsWindow, speech: chatSpeech, clipboard, getState: chatState,
+    onAction: () => { quickChat?.interrupt(); chatSpeech?.stop(); speechTarget = 'chat'; } });
+  registerModelSetupIpc({ ipcMain, settingsWindow, setup: modelSetup, voiceSetup, clipboard,
+    getAppInfo: () => ({ version: app.getVersion(), mode: isLocalPreview ? 'local-preview' : app.isPackaged ? 'release' : 'development' }) });
+  quickChatIpc = registerQuickChatIpc({ ipcMain, controller: quickChat, window: quickChatWindow, settingsWindow,
+    shortcut: quickChatShortcut, speech: chatSpeech, isSpeechTarget: () => speechTarget === 'quick' });
 }
 
 async function createWindow() {
@@ -362,7 +382,7 @@ async function createWindow() {
   pet.webContents.on('did-finish-load',()=>{desktopPointer?.reset();viewportChannel.reset();});
   pet.setMenu(null);
   pet.on('page-title-updated', event => event.preventDefault());
-  pet.on('query-session-end', () => { voices?.dispose();cursorTrail?.dispose(); });
+  pet.on('query-session-end', () => { quickChat?.dispose(); chatSpeech?.dispose(); voices?.dispose(); cursorTrail?.dispose(); });
   pet.on('session-end', () => app.quit());
   pet.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   pet.webContents.on('will-navigate', (event, url) => { if (url !== rendererUrl) event.preventDefault(); });
@@ -394,6 +414,12 @@ async function createWindow() {
     if (isChatSmoke) {
       const report = await require('./chat-smoke.cjs').checkChatRuntime({ chat, chatWindow, chatSpeech, chatSpeechTestHooks, settingsWindow, pet, root, buildMenu, directory: app.getPath('userData') });
       console.log(JSON.stringify({ chatSmoke: 'ok', ...report }));
+      app.quit(); return;
+    }
+    if (isQuickChatSmoke) {
+      const report = await require('./quick-chat-smoke.cjs').checkQuickChatRuntime({ chat, quickChat, quickChatWindow, quickChatShortcut,
+        chatWindow, settingsWindow, voices, chatSpeech, chatSpeechTestHooks, pet, screen, root, directory: app.getPath('userData') });
+      console.log(JSON.stringify({ quickChatSmoke: 'ok', ...report }));
       app.quit(); return;
     }
     if (isInteractionSmoke) {
@@ -444,13 +470,14 @@ if (!hasInstanceLock) app.quit();
 else {
   app.on('second-instance', (_event, _argv, _workingDirectory, additionalData) => {
     if (isPortableRelaunchSmoke) portableRelaunchInstances.push({ runtimeDirectory: additionalData?.runtimeDirectory });
-    recover();
+    if (isLocalPreview && _argv.includes('--show-quick-chat')) void quickChatWindow?.open();
+    else recover();
   });
   app.whenReady().then(async () => {
     settingsFile = path.join(app.getPath('userData'), 'settings.json');
     loadSettings();
     const firstChatSetup = !isSmokeTest && app.isPackaged && !fs.existsSync(path.join(app.getPath('userData'), 'chat-state.json'));
-    firstRunSetup = createFirstRunSetup({ directory: app.getPath('userData'), firstRun: firstChatSetup, enabled: !isSmokeTest && app.isPackaged });
+    firstRunSetup = createFirstRunSetup({ directory: app.getPath('userData'), firstRun: firstChatSetup, enabled: !isSmokeTest && !isLocalPreview && app.isPackaged });
     const windowIcon = createAppImage(nativeImage);
     settingsWindow=createSettingsWindow({BrowserWindow,screen,root,icon:windowIcon,isSmokeTest,isPackaged:app.isPackaged,getState:state});
     chat = createChatService({ directory: app.getPath('userData'), onChange: snapshot => {
@@ -461,19 +488,22 @@ else {
       if (enable) chatSpeech?.warmup();
       publishChat();
     }, onReplyCompleted: reply => {
-      if (chat.getState().activeConversationId === reply.conversationId) chatSpeech?.start(reply.text, { messageId: reply.messageId });
+      if (quickChat?.completed(reply)) return;
+      if (chat.getState().activeConversationId === reply.conversationId) { speechTarget = 'chat'; chatSpeech?.start(reply.text, { messageId: reply.messageId }); }
     } });
     lastChatSettings = chat.getState().settings;
-    modelSetup = createModelSetup({ userData: app.getPath('userData'), onChange: snapshot => {
+    modelSetup = createModelSetup({ userData: app.getPath('userData'), allowDownloads: !isLocalPreview && !isSmokeTest, onChange: snapshot => {
       firstRunSetup.update('chat', snapshot);
       const panel = settingsWindow?.getWindow();
       if (panel && !panel.webContents.isDestroyed()) panel.webContents.send('settings:model-setup-state', snapshot);
     } });
-    voiceSetup = createVoiceSetup({ userData: app.getPath('userData'),
+    voiceSetup = createVoiceSetup({ userData: app.getPath('userData'), allowDownloads: !isLocalPreview && !isSmokeTest,
+      beforeRepair: () => { chatSpeech?.release(); },
       resourcesPath: app.isPackaged ? process.resourcesPath : path.join(root, 'build-resources', 'voice-bootstrap'),
       assetDirectory: app.isPackaged ? process.env.PORTABLE_EXECUTABLE_DIR || path.dirname(process.execPath) : path.join(root, 'build-resources', 'voice-bootstrap'),
       onChange: snapshot => {
         firstRunSetup.update('voice', snapshot);
+        chatSpeech?.refreshPermission();
         if (snapshot.phase === 'ready' && snapshot.ready) {
           const current = chat.getState().settings.voiceProjectRoot;
           if (current === 'D:\\Elysia_AI' || current === voiceSetup.getProjectRoot()) {
@@ -484,16 +514,24 @@ else {
         if (panel && !panel.webContents.isDestroyed()) panel.webContents.send('settings:voice-setup-state', snapshot);
       },
     });
-    chatWindow = createChatWindow({ BrowserWindow, screen, root, icon:windowIcon, isSmokeTest, isPackaged: app.isPackaged, getState: chatState, onClosed: () => chatSpeech?.release() });
-    if (isChatSmoke) chatSpeechTestHooks = require('./chat-speech-smoke.cjs').createChatSpeechSmokeWorker();
+    chatWindow = createChatWindow({ BrowserWindow, screen, root, icon:windowIcon, isSmokeTest, isPackaged: app.isPackaged, getState: chatState, onClosed: () => { if (speechTarget === 'chat') chatSpeech?.release(); } });
+    quickChatWindow = createQuickChatWindow({ BrowserWindow, screen, root, icon:windowIcon, isSmokeTest, isPackaged: app.isPackaged, getState: () => quickChat?.getState() ?? { busy: false, error: null, storageError: null } });
+    if (isChatSmoke || isQuickChatSmoke) chatSpeechTestHooks = require('./chat-speech-smoke.cjs').createChatSpeechSmokeWorker();
+    const speechBlockReason = manual => getChatSpeechBlockReason(voices?.getState(), { manual,
+      setupBusy: voiceSetup.getState().busy && lastChatSettings.voiceProjectRoot === voiceSetup.getProjectRoot() });
     chatSpeech = createChatSpeech({ root, ...(chatSpeechTestHooks ?? {}),
       getProjectRoot: () => chat.getState().settings.voiceProjectRoot,
-      isEnabled: () => chat.getState().settings.readAloud === true && (!isSmokeTest || isChatSmoke),
-      isWindowOpen: () => !!chatWindow.getWindow(),
-      getBlockReason: manual => getChatSpeechBlockReason(voices?.getState(), { manual }),
+      isEnabled: () => chat.getState().settings.readAloud === true && (!isSmokeTest || isChatSmoke || isQuickChatSmoke),
+      isWindowOpen: () => !!(speechTarget === 'quick' ? quickChatWindow.getWindow() : chatWindow.getWindow()),
+      getBlockReason: speechBlockReason,
       volume: () => voices?.getState().settings.volume ?? .8,
-      sendAudio: packet => chatWindow.getWindow()?.webContents.send('chat:speech-audio', packet),
-      stopAudio: packet => chatWindow.getWindow()?.webContents.send('chat:speech-stop', packet),
+      sendAudio: packet => speechTarget === 'quick'
+        ? quickChatWindow.getWindow()?.webContents.send('quick-chat:speech-audio', packet)
+        : chatWindow.getWindow()?.webContents.send('chat:speech-audio', packet),
+      stopAudio: packet => {
+        chatWindow.getWindow()?.webContents.send('chat:speech-stop', packet);
+        quickChatWindow.getWindow()?.webContents.send('quick-chat:speech-stop', packet);
+      },
       claimAudio: value => voices?.setExternalSpeechBusy(value),
       onChange: publishChat,
     });
@@ -505,11 +543,21 @@ else {
       publish: snapshot => {
         const environment = snapshot.environment;
         chatSpeech?.refreshPermission();
+        quickChat?.changed();
         cursorTrail?.setBlocked(environment.locked || environment.suspended || environment.fullscreen || environment.monitorReady === false);
         const panel = settingsWindow?.getWindow();
         if (panel && !panel.webContents.isDestroyed()) panel.webContents.send('settings:voice-state', snapshot);
       },
     });
+    quickChat = createQuickChatController({ chat, window: quickChatWindow, voices, speech: chatSpeech,
+      ensureReady: signal => ensureQuickChatReady(chat, modelSetup, signal), selectSpeechTarget: target => { speechTarget = target; },
+      isSpeechTarget: () => speechTarget === 'quick', getSpeechBlockReason: () => speechBlockReason(false) });
+    quickChatShortcut = createQuickChatShortcut({ globalShortcut, directory: app.getPath('userData'),
+      onActivate: () => { void quickChatWindow.toggle().catch(error => console.error('Quick chat:', error.message)); },
+      onChange: snapshot => {
+        const panel = settingsWindow?.getWindow();
+        if (panel && !panel.webContents.isDestroyed()) panel.webContents.send('settings:quick-chat-state', snapshot);
+      } });
     cursorTrail = createCursorTrail({ BrowserWindow, screen, root, isSmokeTest, isPackaged: app.isPackaged });
     cursorTrail.setStyle(preferences.cursorTrailStyle);
     cursorTrail.setDuration(preferences.cursorTrailDuration);
@@ -523,7 +571,7 @@ else {
     });
     registerIpc();
     tray = new Tray(createTrayImage(nativeImage));
-    tray.setToolTip(`爱莉希雅桌宠 ${app.getVersion()} · Ctrl+Alt+P 恢复操作`);
+    tray.setToolTip(`爱莉希雅桌宠 ${isLocalPreview ? '快捷聊天测试版' : app.getVersion()} · Ctrl+Alt+P 恢复操作`);
     tray.on('click', () => tray.popUpContextMenu(buildMenu()));
     tray.on('right-click', () => tray.popUpContextMenu(buildMenu()));
     hotkeys.recovery = globalShortcut.register('CommandOrControl+Alt+P', () => recover());
@@ -531,6 +579,11 @@ else {
     configureLegacyHotkeys();
     configureTypedKeys();
     await createWindow();
+    if (isLocalPreview && !isSmokeTest) {
+      if (managedChatEndpoint(chat.getState().settings.baseUrl)) modelSetup.ensureInstalledServer();
+      void voiceSetup.inspect();
+      if (process.argv.includes('--show-quick-chat')) await quickChatWindow.open();
+    }
     if (firstRunSetup.start({ chat: modelSetup, voice: voiceSetup, chatBaseUrl: chat.getState().settings.baseUrl })) {
       const setupWindow = await settingsWindow.open();
       await setupWindow?.webContents.executeJavaScript('document.querySelector("[data-tab=chat]")?.click(); true');
@@ -542,11 +595,15 @@ else {
 }
 app.on('before-quit', () => {
   quitting = true;
+  quickChatIpc?.dispose();
+  quickChatShortcut?.dispose();
+  quickChat?.dispose();
   chatSpeech?.dispose();
   modelSetup?.dispose();
   voiceSetup?.dispose();
   chat?.dispose();
   chatWindow?.dispose();
+  quickChatWindow?.dispose();
   voices?.dispose();
   cursorTrail?.dispose();
   settingsWindow?.dispose();

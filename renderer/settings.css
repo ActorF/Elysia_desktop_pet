@@ -206,6 +206,12 @@ footer { flex: none; padding: 12px 26px 17px; border-top: 1px solid #ffffff9c; b
 
 .voice-badge { border-radius: 999px; background: #f1e5ed; color: #8c5e7c; padding: 3px 9px; font-size: 10px; white-space: nowrap; }
 .voice-error { padding: 11px 14px; margin: 0 0 12px; border-radius: 16px; background: #fff0f4; color: #963b52; overflow-wrap: anywhere; }
+.model-setup-diagnostic { margin: -3px 0 12px; padding: 0 4px; overflow-wrap: anywhere; }
+.model-setup-diagnostic p { margin: 7px 0; }
+.model-setup-diagnostic details { font-size: 11px; color: #775970; }
+.model-setup-diagnostic summary { cursor: pointer; }
+.model-setup-diagnostic pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.6; user-select: text; }
+.model-setup-diagnostic .model-setup-actions { margin-top: 6px; flex-wrap: wrap; }
 #voice-volume-value { font-size: 12px; color: var(--accent); font-variant-numeric: tabular-nums; }
 .voice-birthday-fields { display: flex; align-items: center; gap: 8px; margin: 10px 0 6px; flex-wrap: wrap; }
 .voice-birthday-fields .number-field { padding: 7px 10px; }
@@ -255,6 +261,21 @@ footer { flex: none; padding: 12px 26px 17px; border-top: 1px solid #ffffff9c; b
 }
 
 /* Chat preferences and history share the existing independent settings window. */
+.quick-chat-settings { padding: 15px 19px; }
+.quick-chat-settings .toggle-row { padding-top: 0; padding-bottom: 0; }
+.quick-chat-usage { margin: 9px 0 15px; max-width: 50em; line-height: 1.8; }
+.quick-shortcut-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px 18px; padding-top: 15px; border-top: 1px solid var(--line); }
+.quick-shortcut-current { display: flex; align-items: center; flex-wrap: wrap; min-width: 0; gap: 8px 14px; }
+#quick-shortcut-label { font-size: 12px; color: #70546b; }
+.quick-shortcut-key { display: inline-block; max-width: 100%; padding: 8px 12px; border: 1px solid #e0d2df; border-radius: 9px; background: #f9f4f9; box-shadow: 0 2px 0 #e9dfe8; color: #674c65; font: inherit; font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
+.quick-shortcut-edit { display: inline-flex; align-items: center; justify-content: center; gap: 7px; flex-shrink: 0; font-size: 12px; }
+.quick-shortcut-edit svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+.quick-shortcut-edit[aria-pressed=true] { border-color: #aa80a5; background: #f4e7f1; }
+.quick-shortcut-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 20px; margin-top: 15px; }
+.quick-shortcut-actions .text-button { padding-left: 0; padding-right: 0; font-size: 11px; }
+#quick-chat-help { margin-top: 12px; line-height: 1.8; }
+#quick-chat-settings-status { margin: 10px 0 0; }
+#quick-chat-settings-error { margin: 10px 0 0; }
 .chat-settings-form > label, .chat-connection > label { display: block; margin: 0 0 7px; color: #70546b; font-size: 12px; }
 .chat-settings-form input { display: block; width: 100%; min-width: 0; padding: 10px 12px; color: inherit; background: #fffdfd; border: 1px solid #decedd; border-radius: 11px; }
 .chat-settings-form > .hint, .chat-connection > .hint { margin: 8px 0 0; }

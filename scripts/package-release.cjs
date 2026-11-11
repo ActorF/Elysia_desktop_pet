@@ -13,5 +13,26 @@ const targets = process.argv.includes('--portable') ? ['portable'] : process.arg
 // Pinned builder 26.15.3 uses true to omit UNPACK_DIR_NAME and extract each
 // portable launch under its own $PLUGINSDIR. Its type comment says otherwise;
 // the packaged relaunch regression verifies the actual behavior.
-prepareChatBootstrap().then(() => builder.build({ targets: builder.Platform.WINDOWS.createTarget(targets), publish: 'never' }))
+// Reuse the pinned Windows Electron already installed for local development.
+// Avoid downloading a second distribution or filling the system-drive cache.
+const localElectron = process.platform === 'win32' ? require('electron') : null;
+const config = localElectron && fs.existsSync(localElectron) ? {
+  electronDist: path.dirname(localElectron),
+  afterPack: async ({ appOutDir }) => {
+    const output = path.resolve(appOutDir), allowed = path.join(root, 'release');
+    const relative = path.relative(allowed, output);
+    if (!relative || path.isAbsolute(relative) || relative.split(path.sep).includes('..')) throw new Error('Unexpected application output directory.');
+    // Custom Electron distributions retain their demo app; remove it only from
+    // the generated release tree, keeping the development runtime untouched.
+    for (const name of ['resources/default_app.asar', 'version']) {
+      const file = path.join(output, name);
+      try {
+        const stat = await fs.promises.lstat(file);
+        if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('Unexpected generated Electron resource.');
+        await fs.promises.unlink(file);
+      } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    }
+  },
+} : {};
+prepareChatBootstrap().then(() => builder.build({ targets: builder.Platform.WINDOWS.createTarget(targets), config, publish: 'never' }))
   .catch(error => { console.error(error); process.exitCode = 1; });

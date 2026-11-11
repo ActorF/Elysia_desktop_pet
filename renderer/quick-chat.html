@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src blob:; connect-src 'none'; object-src 'none'; base-uri 'none'">
+  <title>和爱莉希雅说句话</title>
+  <link rel="stylesheet" href="./quick-chat.css">
+</head>
+<body>
+  <main class="quick-card" aria-label="快捷输入">
+    <header class="quick-heading">
+      <span class="quick-identity"><span class="quick-dot" aria-hidden="true"></span><span>ELYSIA</span></span>
+      <button id="quick-hide" class="quick-hide" type="button" title="收起输入框，保留草稿" aria-label="收起输入框，保留草稿"><kbd>Esc</kbd><span>收起</span></button>
+    </header>
+    <form id="quick-form" class="quick-form">
+      <label class="visually-hidden" for="quick-input">想对爱莉希雅说的话</label>
+      <textarea id="quick-input" rows="2" maxlength="8000" placeholder="想说什么，就写在这里…" spellcheck="false" aria-describedby="quick-status"></textarea>
+      <button id="quick-send" class="quick-action quick-send" type="submit" title="发送消息" aria-label="发送消息" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5m-6 6 6-6 6 6" /></svg></button>
+      <button id="quick-stop" class="quick-action quick-stop" type="button" title="停止回答，保留草稿" aria-label="停止回答，保留草稿" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2" /></svg></button>
+    </form>
+    <p id="quick-status" class="quick-status" role="status" aria-live="polite">正在准备…</p>
+  </main>
+  <script type="module" src="./quick-chat.mjs"></script>
+  <script type="module" src="./chat-audio.mjs"></script>
+</body>
+</html>

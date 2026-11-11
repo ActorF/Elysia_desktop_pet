@@ -2,10 +2,15 @@
 'use strict';
 const { isSettingsSender } = require('./settings-policy.cjs');
 
-function registerChatIpc({ ipcMain, chat, chatWindow, settingsWindow, speech, clipboard, getState }) {
+function registerChatIpc({ ipcMain, chat, chatWindow, settingsWindow, speech, clipboard, getState, onAction = () => {} }) {
   const trustedChat = event => isSettingsSender(event, chatWindow.getWindow(), chatWindow.url);
   const trustedSettings = event => isSettingsSender(event, settingsWindow.getWindow(), settingsWindow.url);
-  const handle = (channel, trusted, action) => ipcMain.handle(channel, (event, value) => trusted(event) ? action(value) : null);
+  const mutating = new Set(['chat:send', 'chat:cancel', 'chat:new-conversation', 'chat:read-aloud', 'settings:chat-select', 'settings:chat-delete', 'settings:chat-clear']);
+  const handle = (channel, trusted, action) => ipcMain.handle(channel, (event, value) => {
+    if (!trusted(event)) return null;
+    if (mutating.has(channel)) onAction(channel);
+    return action(value);
+  });
   const snapshot = result => getState ? getState() : result;
   handle('chat:get-state', trustedChat, () => snapshot(chat.getState()));
   handle('chat:send', trustedChat, text => {

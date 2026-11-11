@@ -43,10 +43,12 @@ test('native extractor accepts ordinary nested files and rejects unsafe entries 
     { name: 'alias', entries: [{ name: 'file.dll.' }] },
     { name: 'device', entries: [{ name: 'NUL.txt' }] },
     { name: 'link', entries: [{ name: 'library.dll', data: '../outside', attributes: 0xa1ff0000 }] },
+    { name: 'empty', entries: [], exitCode: 71 },
+    { name: 'malformed', raw: Buffer.from('this is not a ZIP archive'), exitCode: 71 },
   ];
   for (const scenario of scenarios) {
     const archive = path.join(root, scenario.name + '.zip'), stage = path.join(root, scenario.name);
-    fs.mkdirSync(stage); fs.writeFileSync(archive, zip(scenario.entries));
+    fs.mkdirSync(stage); fs.writeFileSync(archive, scenario.raw || zip(scenario.entries));
     const child = spawnSync('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(EXTRACT_SCRIPT, 'utf16le').toString('base64')],
       { windowsHide: true, encoding: 'utf8', timeout: EXTRACT_TIMEOUT_MS, env: { ...process.env, ELYSIA_CHAT_ARCHIVE: archive, ELYSIA_CHAT_STAGE: stage } });
     const diagnostic = JSON.stringify({ scenario: scenario.name, timeoutMs: EXTRACT_TIMEOUT_MS,
@@ -57,7 +59,11 @@ test('native extractor accepts ordinary nested files and rejects unsafe entries 
     assert.ok(Number.isInteger(child.status), diagnostic);
     if (scenario.valid) {
       assert.equal(child.status, 0, diagnostic); assert.equal(fs.readFileSync(path.join(stage, 'lib/runtime.dll'), 'utf8'), 'library');
-    } else { assert.notEqual(child.status, 0, diagnostic); assert.deepEqual(fs.readdirSync(stage), [], scenario.name); }
+    } else {
+      assert.equal(child.status, scenario.exitCode || 70, diagnostic);
+      assert.equal(child.stderr, '', diagnostic);
+      assert.deepEqual(fs.readdirSync(stage), [], scenario.name);
+    }
   }
   assert.equal(fs.existsSync(path.join(root, 'outside.txt')), false);
 });

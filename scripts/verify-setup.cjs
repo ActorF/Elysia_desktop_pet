@@ -6,6 +6,7 @@ const crypto = require('node:crypto');
 const assert = require('node:assert/strict');
 const { execFileSync } = require('node:child_process');
 const yaml = require('js-yaml');
+const { verifyReleaseContract, verifyReleaseSmokeReport } = require('./release-contract.cjs');
 
 const root = path.resolve(__dirname, '..');
 const manifest = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
@@ -29,7 +30,8 @@ assert.equal(portable.exactFileList, true); assert.equal(portable.exactSourceByt
 assert.equal(portable.recordings, 54); assert.equal(portable.originalAudioBytes, true);
 assert.equal(portable.excludesOtherArtifacts, true); assert.equal(portable.processes.previousInstancesPreserved, true);
 assert.deepEqual(portable.processes.newRemainingProcesses, []);
-assert.ok(portable.smoke.modes.includes('chat') && portable.smoke.modes.includes('portable-relaunch'));
+verifyReleaseContract(manifest, manifest, portable.runtimeFiles);
+verifyReleaseSmokeReport(portable.smoke);
 for (const [file, sha256] of Object.entries(portable.fileHashes)) assert.equal(digest(path.join(root, file)), sha256, `Source changed after portable verification: ${file}`);
 
 fs.mkdirSync(artifacts, { recursive: true });

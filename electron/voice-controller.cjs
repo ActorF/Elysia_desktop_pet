@@ -73,6 +73,7 @@ function createVoiceController({ BrowserWindow, screen, ipcMain, powerMonitor, r
       }
       playback = { ...playback, status: event.status === 'error' ? 'error' : 'idle', error: event.error ?? null };
       pending = null;
+      previous.resolve?.(event.status);
       if (event.status !== 'ended' || externalSpeechBusy) clearInteractionQueue();
       if (event.status === 'error') retryAt = Date.now() + 30000;
       scheduleInteraction();
@@ -239,9 +240,34 @@ function createVoiceController({ BrowserWindow, screen, ipcMain, powerMonitor, r
       // Claim the audio slot before stopping the old line: its synchronous
       // completion callback must not schedule a queued interaction behind it.
       clearInteractionQueue();
-      speech.stop('external-speech');
+      if (pending?.kind !== 'chat') speech.stop('external-speech');
     }
     notify(); return getState();
+  }
+  // Reuse the character's existing caption window, including its monitor-aware
+  // layout and dismissal. Each promise ends when that one sentence disappears.
+  function showChatText(text, id, duration) {
+    if (disposed || quitRequested || farewellPending) return Promise.resolve('stopped');
+    const sample = environment.sample();
+    if (sample.locked || sample.suspended) return Promise.resolve('stopped');
+    clearInteractionQueue();
+    speech.stop('replaced');
+    const token = `chat-${++sequence}`;
+    return new Promise(resolve => {
+      pending = { token, kind: 'chat', textOnly: true, resolve };
+      playback = { lineId: id, text, kind: 'chat', textOnly: true, status: 'loading', error: null };
+      notify();
+      void speech.showText({ id, text }, { token, kind: 'chat', duration }).then(result => {
+        if (!result?.ok && pending?.token === token) {
+          pending = null;
+          playback = { ...playback, status: 'error', error: result?.error || '回复气泡暂时无法显示。' };
+          notify(); resolve('error');
+        }
+      }).catch(() => {
+        if (pending?.token === token) { pending = null; playback = { ...playback, status: 'error' }; notify(); }
+        resolve('error');
+      });
+    });
   }
   function finishQuit() {
     if (quitRequested) return; quitRequested = true;
@@ -272,7 +298,8 @@ function createVoiceController({ BrowserWindow, screen, ipcMain, powerMonitor, r
     },
   });
   return {
-    getState, setSettings, requestQuit, interact, preferencesChanged, setExternalSpeechBusy,
+    getState, setSettings, requestQuit, interact, preferencesChanged, setExternalSpeechBusy, showChatText,
+    stopChatText: () => { if (pending?.kind === 'chat') speech.stop(); },
     stopVoice: () => { clearInteractionQueue(); speech.stop(); notify(); return getState(); },
     start: () => { if (!timer && !isSmokeTest) timer = setInterval(tick, 1000); },
     reposition: () => speech.reposition(),
@@ -281,7 +308,9 @@ function createVoiceController({ BrowserWindow, screen, ipcMain, powerMonitor, r
     getHistory: () => engine.exportState(),
     dispose: () => {
       if (disposed) return; persist(); disposed = true;
+      const previous = pending; pending = null;
       clearInterval(timer); clearTimeout(quitTimer); clearInteractionQueue(); environment.dispose(); speech.dispose();
+      previous?.resolve?.('stopped');
     },
   };
 }

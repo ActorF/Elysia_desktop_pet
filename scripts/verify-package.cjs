@@ -7,6 +7,7 @@ const assert = require('node:assert/strict');
 const { spawn, execFileSync } = require('node:child_process');
 const asar = require('@electron/asar');
 const yaml = require('js-yaml');
+const { releaseSmokeModes, verifyReleaseContract, verifyQuickChatSmoke } = require('./release-contract.cjs');
 
 const root = path.resolve(__dirname, '..');
 const manifest = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
@@ -121,6 +122,7 @@ function smoke(program, consoleRequired, flag, resultKey, extraEnvironment = {})
           assert.equal(result[resultKey], 'ok');
           if (Object.hasOwn(result, 'passed')) assert.equal(result.passed, true);
           if (resultKey === 'voiceSmoke') assert.equal(result.recordings, 54);
+          if (resultKey === 'quickChatSmoke') verifyQuickChatSmoke(result);
         }
         resolve({ flag, exitCode, result, stdout, stderr, output });
       } catch (error) { reject(error); }
@@ -163,6 +165,7 @@ function smoke(program, consoleRequired, flag, resultKey, extraEnvironment = {})
     hashes[file] = digest(source);
   }
   const packagedManifest = JSON.parse(asar.extractFile(archive, 'package.json'));
+  verifyReleaseContract(manifest, packagedManifest, actual);
   for (const key of ['version', 'license', 'repository']) assert.deepEqual(packagedManifest[key], manifest[key]);
   assert.ok(fs.readFileSync(archive).equals(fs.readFileSync(path.join(output, 'win-unpacked/resources/app.asar'))), 'Portable and directory archives differ');
 
@@ -214,12 +217,7 @@ function smoke(program, consoleRequired, flag, resultKey, extraEnvironment = {})
   assert.deepEqual(verifyUpdateTarget(path.join(portableResources, 'app-update.yml')), updateTarget);
 
   const before = desktopProcesses();
-  const modes = [
-    { name: 'desktop', flag: '--smoke-test', key: 'smoke' },
-    { name: 'voice', flag: '--voice-smoke-test', key: 'voiceSmoke' },
-    { name: 'interaction', flag: '--interaction-smoke-test', key: 'interactionSmoke' },
-    { name: 'chat', flag: '--chat-smoke-test', key: 'chatSmoke' },
-  ].filter(mode => !chatOnly || mode.name === 'chat');
+  const modes = releaseSmokeModes(chatOnly);
   const directory = {}, portable = {}, smokeLog = [];
   // All runs are sequential. NSIS forwards exit status, not child stdout.
   for (const build of [

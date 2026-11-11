@@ -5,6 +5,7 @@ const path = require('node:path');
 const { createServer } = require('node:http');
 const { chromium } = require('playwright');
 const { DEFAULT_SETTINGS } = require('../electron/host-policy.cjs');
+const { createSetupDiagnostic } = require('../electron/setup-diagnostics.cjs');
 const root = path.resolve(__dirname, '..'), output = path.join(root, 'artifacts', 'chat-window-check');
 const report = { passed: false, kind: 'browser UI with mock host; real IPC and model tested separately', checks: [], screenshots: [] };
 const server = createServer(async (request, response) => {
@@ -75,6 +76,10 @@ async function main() {
         openChat: async () => { calls.push(['openChat']); return true; },
       };
       if (new URL(location.href).searchParams.has('modelSetup')) {
+        const diagnosticCopies = [];
+        let diagnosticCopyResult = { ok: true };
+        window.__setupDiagnosticQA = { copies: diagnosticCopies, result: value => { diagnosticCopyResult = value; } };
+        window.elysiaSettings.copySetupDiagnostic = async component => { diagnosticCopies.push(component); return structuredClone(diagnosticCopyResult); };
         const automatic = new URL(location.href).searchParams.get('modelSetup') === 'auto';
         if (!automatic) state.settings = { ...state.settings, baseUrl: 'https://example.test/ollama', model: 'custom-remote' };
         const setupListeners = new Set(), setupCalls = [];
@@ -94,12 +99,15 @@ async function main() {
         let voiceSetup = { phase: automatic ? 'downloading' : 'idle', busy: automatic, canCancel: automatic, ready: false,
           completedBytes: 0, totalBytes: 0, progress: null, error: null, message: null, expectedBytes: 6200000000 };
         const publishVoiceSetup = patch => { voiceSetup = { ...voiceSetup, ...patch }; for (const listener of voiceSetupListeners) listener(structuredClone(voiceSetup)); return structuredClone(voiceSetup); };
-        window.__voiceSetupQA = { calls: voiceSetupCalls, publish: publishVoiceSetup, snapshot: () => structuredClone(voiceSetup) };
+        let voiceInspection = null;
+        window.__voiceSetupQA = { calls: voiceSetupCalls, publish: publishVoiceSetup, snapshot: () => structuredClone(voiceSetup),
+          inspection: value => { voiceInspection = structuredClone(value); } };
         Object.assign(window.elysiaSettings, {
           getVoiceSetup: async () => structuredClone(voiceSetup),
           onVoiceSetup: listener => { voiceSetupListeners.add(listener); return () => voiceSetupListeners.delete(listener); },
-          inspectVoiceSetup: async () => { voiceSetupCalls.push('inspect'); return publishVoiceSetup({ phase: 'needs-install', busy: false, error: null }); },
+          inspectVoiceSetup: async () => { voiceSetupCalls.push('inspect'); return publishVoiceSetup(voiceInspection || { phase: 'needs-install', busy: false, error: null }); },
           installVoiceSetup: async () => { voiceSetupCalls.push('install'); return { ok: true, state: publishVoiceSetup({ phase: 'downloading', busy: true, canCancel: true, error: null, ready: false, completedBytes: 0, totalBytes: 0 }) }; },
+          repairVoiceSetup: async () => { voiceSetupCalls.push('repair'); return { ok: true, state: publishVoiceSetup({ phase: 'verifying', busy: true, canCancel: true, error: null, diagnostic: null, ready: false }) }; },
           cancelVoiceSetup: async () => { voiceSetupCalls.push('cancel'); return { ok: true, state: publishVoiceSetup({ phase: 'cancelled', busy: false, canCancel: false, ready: false }) }; },
         });
       }
@@ -522,6 +530,148 @@ async function main() {
     assert.equal(await setup.evaluate(() => window.__chatQA.snapshot().settings.readAloud), false, 'Preparing voice resources does not silently enable automatic speech');
     await setup.setViewportSize({ width: 500, height: 500 }); await setup.locator('#voice-setup-card').scrollIntoViewIfNeeded(); await layout(setup); await capture(setup, 'voice-setup-ready-compact');
     check('voice setup independently observes automatic preparation, displays archive progress, cancels and retries, and requires verified readiness without changing automatic speech');
+    const installedAttempts = await setup.evaluate(() => window.__voiceSetupQA.calls.filter(call => call === 'install').length);
+    await setup.setViewportSize({ width: 600, height: 741 });
+    for (const problem of [
+      { code: 'missing-marker', recognized: false, missingFiles: [], missingCount: 0, error: '已有语音目录缺少安装完成记录，暂时无法确认其状态。' },
+      { code: 'missing-files', recognized: true, missingFiles: ['python/python.exe'], missingCount: 1, error: '已有语音环境缺少必要文件：python/python.exe。' },
+    ].map(problem => ({ ...problem, diagnostic: createSetupDiagnostic('voice', `installation-${problem.code}`, problem) }))) {
+      await setup.evaluate(problem => {
+        const value = { phase: 'error', busy: false, canCancel: false, ready: false, allowDownloads: true,
+          error: problem.error, diagnostic: problem.diagnostic, message: '检测到已有语音文件，尚未确认完整。',
+          installation: { ...problem, exists: true, ready: false, message: problem.error } };
+        window.__voiceSetupQA.inspection(value); window.__voiceSetupQA.publish(value);
+      }, problem);
+      assert.equal(await setup.locator('#voice-setup-status').innerText(), '检测到已有语音文件，尚未确认完整。', 'Voice setup displays the host status instead of a generic phase message');
+      assert.equal(await setup.locator('#voice-setup-error').innerText(), problem.diagnostic.summary);
+      assert.equal(await setup.locator('#voice-setup-recovery').innerText(), problem.diagnostic.action);
+      assert.match(await setup.locator('#voice-setup-error-code').innerText(), new RegExp(problem.diagnostic.code));
+      if (problem.missingCount) {
+        await setup.locator('#voice-setup-diagnostic summary').click();
+        assert.match(await setup.locator('#voice-setup-diagnostic pre').innerText(), /python\/python.exe/);
+      }
+      await setup.locator('#voice-setup-copy-error').click();
+      assert.equal(await setup.evaluate(() => window.__setupDiagnosticQA.copies.at(-1)), 'voice');
+      assert.match(await setup.locator('#voice-setup-diagnostic [role=status]').innerText(), /已复制/);
+      assert.equal(await setup.locator('#voice-setup-install').isHidden(), true, 'Existing files must not invite another installation attempt');
+      assert.equal(await setup.locator('#voice-setup-install').isDisabled(), true);
+      assert.doesNotMatch(await setup.locator('#voice-setup-card').innerText(), /资源下载约|重试配置/);
+      assert.match(await setup.locator('#voice-setup-card .model-setup-voice').innerText(), /现有文件已保留.*重新检测.*请勿删除模型或下载缓存/);
+      await setup.locator('#voice-setup-inspect').click();
+      assert.equal(await setup.locator('#voice-setup-error').innerText(), problem.diagnostic.summary, 'Reinspection retains a still-present installation diagnosis');
+      assert.equal(await setup.locator('#voice-setup-badge').innerText(), '未完成');
+      assert.equal(await setup.locator('#voice-setup-install').isHidden(), true);
+      await setup.locator('#voice-setup-card').scrollIntoViewIfNeeded(); await layout(setup); await capture(setup, `voice-setup-${problem.code}`);
+    }
+    assert.equal(await setup.evaluate(() => window.__voiceSetupQA.calls.filter(call => call === 'install').length), installedAttempts);
+    check('existing voice directories retain missing-record or missing-file diagnostics after reinspection, preserve files and offer no ineffective installation retry');
+    await setup.evaluate(() => window.__voiceSetupQA.inspection({ phase: 'ready', busy: false, ready: true, error: null, diagnostic: null,
+      message: '现有语音环境已就绪，可以继续朗读。', installation: { code: 'ready', exists: true, ready: true, recognized: true, missingFiles: [], missingCount: 0 } }));
+    await setup.locator('#voice-setup-inspect').click();
+    assert.equal(await setup.locator('#voice-setup-badge').innerText(), '已就绪');
+    assert.equal(await setup.locator('#voice-setup-error').isHidden(), true);
+    assert.equal(await setup.locator('#voice-setup-diagnostic').isHidden(), true);
+    assert.equal(await setup.locator('#voice-setup-install').isHidden(), true);
+    assert.match(await setup.locator('#voice-setup-status').innerText(), /现有语音环境已就绪/);
+    assert.doesNotMatch(await setup.locator('#voice-setup-card').innerText(), /资源下载约|修复缺失文件/);
+    check('a repaired voice environment becomes ready after reinspection without reinstalling or retaining old errors');
+    await setup.evaluate(() => {
+      const value = { phase: 'needs-install', busy: false, ready: false, allowDownloads: false,
+        message: '请检查本机已有的语音资源。', error: '本地测试模式只使用已有语音资源，不会下载或安装。',
+        installation: { code: 'missing', exists: false, ready: false, recognized: false, missingFiles: [], missingCount: 0 } };
+      window.__voiceSetupQA.inspection(value); window.__voiceSetupQA.publish(value);
+    });
+    assert.equal(await setup.locator('#voice-setup-install').isHidden(), true);
+    assert.equal(await setup.locator('#voice-setup-install').isDisabled(), true);
+    assert.match(await setup.locator('#voice-setup-card').innerText(), /本地测试仅使用这台电脑已有的语音资源，不会下载或安装/);
+    assert.doesNotMatch(await setup.locator('#voice-setup-card').innerText(), /资源下载约|重试配置/);
+    await setup.locator('#voice-setup-inspect').click();
+    assert.equal(await setup.evaluate(() => window.__voiceSetupQA.calls.filter(call => call === 'install').length), installedAttempts);
+    await setup.setViewportSize({ width: 500, height: 500 }); await setup.locator('#voice-setup-card').scrollIntoViewIfNeeded(); await layout(setup); await capture(setup, 'voice-setup-preview-resources');
+    check('download-disabled local previews explain resource reuse and cannot offer installation when resources are missing');
+    const networkDiagnostic = createSetupDiagnostic('chat', 'network-http', { stage: 'download', httpStatus: 403 });
+    assert.equal(networkDiagnostic.code, 'NET-108');
+    await setup.evaluate(diagnostic => window.__modelSetupQA.publish({ phase: 'error', busy: false, modelReady: false,
+      allowDownloads: false, error: 'legacy generic error', message: diagnostic.summary, diagnostic }), networkDiagnostic);
+    assert.equal(await setup.locator('#model-setup-error').innerText(), networkDiagnostic.summary);
+    assert.equal(await setup.locator('#model-setup-status').isHidden(), true, 'The summary is not displayed twice');
+    assert.equal(await setup.locator('#model-setup-recovery').innerText(), networkDiagnostic.action);
+    assert.equal(await setup.locator('#model-setup-install').isHidden(), true);
+    await setup.locator('#model-setup-diagnostic summary').click();
+    assert.match(await setup.locator('#model-setup-diagnostic pre').innerText(), /HTTP 403/);
+    await setup.locator('#model-setup-copy-error').click();
+    assert.equal(await setup.evaluate(() => window.__setupDiagnosticQA.copies.at(-1)), 'chat');
+    assert.match(await setup.locator('#model-setup-diagnostic [role=status]').innerText(), /已复制/);
+    await setup.evaluate(() => window.__setupDiagnosticQA.result({ ok: false, error: '暂时无法复制错误信息，请重试。' }));
+    await setup.locator('#model-setup-copy-error').click();
+    assert.match(await setup.locator('#model-setup-diagnostic [role=status]').innerText(), /暂时无法复制/);
+    await setup.setViewportSize({ width: 500, height: 500 }); await setup.locator('#model-setup-card').scrollIntoViewIfNeeded();
+    await layout(setup); await capture(setup, 'model-setup-diagnostic-compact');
+    await setup.evaluate(() => window.__modelSetupQA.publish({ phase: 'cancelled', error: null, diagnostic: null }));
+    assert.equal(await setup.locator('#model-setup-diagnostic').isHidden(), true);
+    assert.equal(await setup.locator('#model-setup-error').isHidden(), true);
+    check('classified errors show a clear cause, next action, stable code and optional facts; copy selects the right component and handles failure; cancelled or repaired states clear the diagnosis');
+    for (const component of ['model', 'voice']) {
+      const scope = component === 'model' ? 'chat' : 'voice';
+      const denied = createSetupDiagnostic(scope, 'preview-disabled'), changed = createSetupDiagnostic(scope, 'storage-space');
+      await setup.evaluate(({ component, denied }) => {
+        const qa = component === 'model' ? window.__modelSetupQA : window.__voiceSetupQA;
+        qa.publish({ phase: 'needs-install', busy: false, ready: false, modelReady: false, allowDownloads: true,
+          error: null, diagnostic: null, installation: { exists: false } });
+        const method = component === 'model' ? 'installChatModel' : 'installVoiceSetup';
+        window.elysiaSettings[method] = async () => ({ ok: false, error: denied.summary, diagnostic: denied, state: qa.snapshot() });
+      }, { component, denied });
+      await setup.locator(`#${component}-setup-install`).click();
+      assert.match(await setup.locator(`#${component}-setup-error-code`).innerText(), /MODE-101/);
+      await setup.evaluate(({ component, changed }) => {
+        const qa = component === 'model' ? window.__modelSetupQA : window.__voiceSetupQA;
+        qa.publish({ phase: 'error', error: changed.summary, diagnostic: changed });
+      }, { component, changed });
+      assert.match(await setup.locator(`#${component}-setup-error-code`).innerText(), /FS-101/, 'New host evidence replaces an earlier action refusal');
+      await setup.evaluate(({ component, denied }) => {
+        const qa = component === 'model' ? window.__modelSetupQA : window.__voiceSetupQA;
+        const method = component === 'model' ? 'installChatModel' : 'installVoiceSetup';
+        window.elysiaSettings[method] = () => {
+          const stale = qa.snapshot();
+          return new Promise(resolve => { window.__resolveSetupAction = () => resolve({ ok: false, diagnostic: denied, error: denied.summary, state: stale }); });
+        };
+      }, { component, denied });
+      await setup.locator(`#${component}-setup-install`).click();
+      await setup.evaluate(component => {
+        const qa = component === 'model' ? window.__modelSetupQA : window.__voiceSetupQA;
+        qa.publish({ phase: 'ready', ready: true, modelReady: true, error: null, diagnostic: null });
+        window.__resolveSetupAction();
+      }, component);
+      await setup.waitForFunction(component => !document.querySelector(`#${component}-setup-inspect`).disabled, component);
+      assert.equal(await setup.locator(`#${component}-setup-error`).isHidden(), true, 'A delayed failed action cannot restore an old error after host recovery');
+      assert.equal(await setup.locator(`#${component}-setup-diagnostic`).isHidden(), true);
+    }
+    check('both setup cards replace refused-action diagnoses with new host evidence and ignore stale asynchronous results after recovery');
+    const repairProblem = createSetupDiagnostic('voice', 'installation-missing-marker');
+    await setup.evaluate(diagnostic => window.__voiceSetupQA.publish({ phase: 'error', busy: false, ready: false,
+      allowDownloads: true, repairAvailable: true, diagnostic, error: diagnostic.summary,
+      installation: { code: 'missing-marker', exists: true, ready: false } }), repairProblem);
+    assert.equal(await setup.locator('#voice-setup-install').isHidden(), true);
+    assert.equal(await setup.locator('#voice-setup-repair').isEnabled(), true);
+    assert.match(await setup.locator('#voice-setup-card .model-setup-voice').innerText(), /复用.*缺失或损坏.*备份/);
+    await setup.setViewportSize({ width: 600, height: 741 });
+    await setup.locator('#voice-setup-card').scrollIntoViewIfNeeded(); await layout(setup); await capture(setup, 'voice-setup-repair');
+    await setup.locator('#voice-setup-repair').click();
+    assert.equal(await setup.evaluate(() => window.__voiceSetupQA.calls.at(-1)), 'repair');
+    assert.equal(await setup.locator('#voice-setup-repair').isDisabled(), true);
+    assert.equal(await setup.locator('#voice-setup-diagnostic').isHidden(), true);
+    await setup.evaluate(() => window.__voiceSetupQA.publish({ phase: 'finishing', busy: true, canCancel: false,
+      message: '正在切换已验证的语音环境…' }));
+    assert.equal(await setup.locator('#voice-setup-badge').innerText(), '正在完成');
+    assert.equal(await setup.locator('#voice-setup-cancel').isDisabled(), true);
+    await setup.evaluate(() => window.__voiceSetupQA.publish({ phase: 'ready', ready: true, busy: false,
+      repairAvailable: false, backupPreserved: true, message: '语音环境已修复，原目录已保留为备份。' }));
+    assert.equal(await setup.locator('#voice-setup-repair').isHidden(), true);
+    assert.match(await setup.locator('#voice-setup-status').innerText(), /已修复.*备份/);
+    await setup.evaluate(diagnostic => window.__voiceSetupQA.publish({ phase: 'error', ready: false,
+      allowDownloads: false, repairAvailable: true, diagnostic, error: diagnostic.summary }), repairProblem);
+    assert.equal(await setup.locator('#voice-setup-repair').isHidden(), true, 'Local preview never offers mutating repairs even if stale host metadata says repairable');
+    check('incomplete old voice environments offer explicit repair with cache reuse and backup explanation, atomic completion disables cancellation, success clears repair, and preview stays read-only');
     assert.deepEqual(errors, []); report.passed = true;
   } catch (error) { report.error = error.stack; process.exitCode = 1; }
   finally {
