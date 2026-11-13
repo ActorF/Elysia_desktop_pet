@@ -45,8 +45,8 @@ function createQuickChatShortcut({ globalShortcut, directory, onActivate, onChan
   if (typeof directory !== 'string' || !path.isAbsolute(directory)) throw new TypeError('Shortcut settings directory must be absolute.');
   const file = path.join(directory, 'quick-chat-settings.json');
   let settings = { ...DEFAULT_QUICK_CHAT_SETTINGS }, capturing = false, disposed = false;
-  let operationError = null, registrationError = null;
-  const owned = new Set();
+  let operationError = null, registrationError = null, activationError = null, activationRevision = 0;
+  const owned = new Map();
   try {
     const stat = fs.lstatSync(file);
     if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 8192) throw new Error('invalid-file');
@@ -56,23 +56,38 @@ function createQuickChatShortcut({ globalShortcut, directory, onActivate, onChan
   } catch (error) {
     if (error.code !== 'ENOENT') operationError = '快捷聊天设置读取失败，已使用默认快捷键；原文件保留到你重新保存设置。';
   }
-  const getState = () => ({ ...settings, registered: settings.enabled && !capturing && owned.has(settings.accelerator), error: operationError || registrationError });
+  const getState = () => ({ ...settings, registered: !disposed && settings.enabled && !capturing && owned.has(settings.accelerator), error: operationError || registrationError || activationError });
   function publish() { const snapshot = getState(); if (!disposed) onChange(snapshot); return snapshot; }
   function fail(message) { operationError = message; return publish(); }
   function register(accelerator) {
+    const owner = Symbol(accelerator);
+    const current = () => !disposed && !capturing && settings.enabled && settings.accelerator === accelerator && owned.get(accelerator) === owner;
     try {
       if (!globalShortcut.register(accelerator, () => {
-        if (disposed || capturing || !settings.enabled || settings.accelerator !== accelerator || !owned.has(accelerator)) return;
-        try { void Promise.resolve(onActivate()).catch(() => { if (!disposed) fail('快捷聊天暂时无法打开，请重试。'); }); }
-        catch { fail('快捷聊天暂时无法打开，请重试。'); }
+        if (!current()) return;
+        const attempt = ++activationRevision;
+        if (activationError) { activationError = null; publish(); }
+        const failed = () => {
+          if (attempt !== activationRevision || !current()) return;
+          activationError = '快捷聊天暂时无法打开，请重试。'; publish();
+        };
+        try { void Promise.resolve(onActivate()).catch(failed); }
+        catch { failed(); }
       })) return false;
-      owned.add(accelerator); return true;
+      owned.set(accelerator, owner); return true;
     } catch { return false; }
   }
   function unregister(accelerator) {
-    if (!owned.has(accelerator)) return;
-    globalShortcut.unregister(accelerator); owned.delete(accelerator);
+    if (!owned.has(accelerator)) return true;
+    try { globalShortcut.unregister(accelerator); owned.delete(accelerator); return true; }
+    catch { return false; }
   }
+  function releaseOthers(requested) {
+    let released = true;
+    for (const accelerator of [...owned.keys()]) if (accelerator !== requested && !unregister(accelerator)) released = false;
+    return released;
+  }
+  const releaseError = '旧快捷键暂时未能释放，请重试保存或重新启动桌宠。';
   function save(next) {
     const temporary = `${file}.${randomUUID()}.tmp`;
     try {
@@ -91,6 +106,7 @@ function createQuickChatShortcut({ globalShortcut, directory, onActivate, onChan
   }
   function setSettings(patch) {
     if (disposed) return fail('快捷聊天快捷键已关闭。');
+    activationRevision++;
     let next;
     try { next = validateSettings(patch, settings); } catch (error) { return fail(error.message); }
     const requested = next.enabled ? next.accelerator : null;
@@ -101,30 +117,30 @@ function createQuickChatShortcut({ globalShortcut, directory, onActivate, onChan
     }
     try { save(next); }
     catch {
-      if (added) unregister(added);
+      if (added && !unregister(added)) return fail('快捷聊天设置未能保存，旧设置已保留；新快捷键暂时未能释放，请重新保存或重启桌宠。');
       return fail('快捷聊天设置未能保存，已保留原快捷键。请检查用户目录权限和磁盘空间。');
     }
-    settings = next; operationError = null; registrationError = null;
-    for (const accelerator of [...owned]) if (capturing || accelerator !== requested) unregister(accelerator);
+    settings = next; operationError = null; registrationError = null; activationError = null;
+    if (!releaseOthers(capturing ? null : requested)) registrationError = releaseError;
     return publish();
   }
   function setCapturing(value) {
     if (disposed) return getState();
-    if (typeof value !== 'boolean') return fail('快捷键录制状态无效。');
+    if (typeof value !== 'boolean') return fail('快捷键编辑状态无效。');
     if (capturing === value) return getState();
-    capturing = value;
+    capturing = value; activationRevision++; activationError = null;
     if (capturing) {
-      for (const accelerator of [...owned]) unregister(accelerator);
-      operationError = null; registrationError = null;
-    } else if (settings.enabled && !owned.has(settings.accelerator)) {
-      registrationError = register(settings.accelerator) ? null : '快捷聊天快捷键已被其他程序占用，请在设置中更换。';
+      operationError = null; registrationError = releaseOthers(null) ? null : releaseError;
+    } else {
+      const requested = settings.enabled ? settings.accelerator : null;
+      registrationError = requested && !owned.has(requested) && !register(requested) ? '快捷聊天快捷键已被其他程序占用，请在设置中更换。' : null;
+      if (!releaseOthers(requested)) registrationError = releaseError;
     }
     return publish();
   }
   function dispose() {
-    if (disposed) return;
-    disposed = true;
-    for (const accelerator of [...owned]) unregister(accelerator);
+    disposed = true; activationRevision++;
+    releaseOthers(null);
   }
   if (settings.enabled && !register(settings.accelerator)) registrationError = '快捷聊天快捷键已被其他程序占用，请在设置中更换。';
   return { getState, setSettings, setCapturing, dispose };

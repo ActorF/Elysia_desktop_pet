@@ -109,6 +109,25 @@ test('malformed SSE events and incomplete event boundaries never fabricate a com
   }
 });
 
+test('SSE accepts lone CR and mixed legal line endings across every byte boundary', async t => {
+  for (const separator of ['\r', '\r\n', '\n']) {
+    const f = fixture(t);
+    const text = '你好，مرحبا 👋🏽。';
+    const source = '\ufeff: keepalive' + separator + separator
+      + event(text).replaceAll('\n', separator)
+      + 'data: [DONE]' + separator + separator;
+    const bytes = new TextEncoder().encode(source);
+    const service = f.create({ fetchImpl: async () => new Response(new ReadableStream({ start(controller) {
+      for (const byte of bytes) controller.enqueue(Uint8Array.of(byte));
+      controller.close();
+    } })) });
+    service.send('多语言请求'); await settled(service);
+    assert.equal(service.getState().error, null, `legal SSE separator ${JSON.stringify(separator)}`);
+    assert.equal(latest(service).messages.at(-1).content, text);
+    assert.equal(latest(service).messages.at(-1).status, 'complete');
+  }
+});
+
 test('streaming joins split UTF-8/SSE, persists replies and sends role prompt plus bounded successful history', async t => {
   const calls = [], f = fixture(t);
   let round = 0;
@@ -292,6 +311,113 @@ test('corrupt history remains byte-for-byte untouched and blocks sends and setti
   assert.equal(fs.readFileSync(f.file, 'utf8'), original); assert.equal(calls, 0);
 });
 
+test('invalid UTF-8 inside otherwise valid history is protected without replacing original bytes', t => {
+  const f = fixture(t), seed = f.create(); seed.newConversation();
+  const saved = JSON.parse(fs.readFileSync(f.file, 'utf8'));
+  saved.conversations[0].messages = [{ id: 'damaged-message', role: 'assistant', content: 'UTF8_DAMAGE',
+    status: 'complete', createdAt: new Date().toISOString() }];
+  const [before, after] = JSON.stringify(saved).split('UTF8_DAMAGE');
+  for (const damage of [Buffer.from([0x80]), Buffer.from([0xc3, 0x28]), Buffer.from([0xed, 0xa0, 0x80])]) {
+    const original = Buffer.concat([Buffer.from(before), damage, Buffer.from(after)]);
+    fs.writeFileSync(f.file, original);
+    const service = f.create();
+    assert.match(service.getState().storageError ?? '', /原文件已保留/);
+    assert.ok(service.setSettings({ username: '不得覆盖损坏内容' }).storageError);
+    assert.deepEqual(fs.readFileSync(f.file), original);
+  }
+});
+
+test('unknown or damaged history format versions remain protected instead of being rewritten as version 1', t => {
+  const f = fixture(t), seed = f.create(); seed.newConversation();
+  const saved = JSON.parse(fs.readFileSync(f.file, 'utf8'));
+  for (const version of [0, 2, -1, null, '1', true]) {
+    const original = JSON.stringify({ ...saved, version, extension: { keep: 'unrecognized format data' } });
+    fs.writeFileSync(f.file, original);
+    const service = f.create();
+    assert.match(service.getState().storageError ?? '', /原文件已保留/, String(version));
+    assert.ok(service.setSettings({ username: '不得重写未知格式' }).storageError);
+    assert.equal(fs.readFileSync(f.file, 'utf8'), original);
+  }
+  delete saved.version;
+  fs.writeFileSync(f.file, JSON.stringify(saved));
+  assert.equal(f.create().getState().storageError, null, 'versionless legacy histories remain compatible');
+});
+
+test('history capacity failure names the history limit and is recoverable by deleting conversations', async t => {
+  const f = fixture(t), service = f.create({ fetchImpl: async () => complete('保留的回答。') });
+  service.send('保留的问题'); await settled(service);
+  const original = fs.readFileSync(f.file), previous = service.getState();
+  const byteLength = Buffer.byteLength;
+  const mockedLength = t.mock.method(Buffer, 'byteLength', (value, ...args) =>
+    typeof value === 'string' && value.startsWith('{"version":1,') && value.includes('容量边界')
+      ? 32 * 1024 * 1024 + 1 : byteLength(value, ...args));
+  const failed = service.send('容量边界');
+  assert.match(failed.storageError ?? '', /上限/);
+  assert.match(failed.storageError, /删除|清理/);
+  assert.deepEqual(failed.conversations, previous.conversations);
+  assert.deepEqual(fs.readFileSync(f.file), original);
+  mockedLength.mock.restore();
+  const cleared = service.deleteConversation(previous.activeConversationId);
+  assert.equal(cleared.storageError, null);
+  service.send('清理后继续'); await settled(service);
+  assert.equal(service.getState().storageError, null);
+});
+
+test('valid multilingual UTF-8 history with a BOM or an intentional replacement character remains readable', t => {
+  const f = fixture(t), seed = f.create(); seed.newConversation();
+  const saved = JSON.parse(fs.readFileSync(f.file, 'utf8'));
+  saved.conversations[0].messages = [{ id: 'unicode-message', role: 'assistant', content: '你好、東京、مرحبا、café、😀、�。',
+    status: 'complete', createdAt: new Date().toISOString() }];
+  for (const prefix of ['', '\ufeff']) {
+    fs.writeFileSync(f.file, prefix + JSON.stringify(saved), 'utf8');
+    const service = f.create();
+    assert.equal(service.getState().storageError, null);
+    assert.equal(latest(service).messages[0].content, saved.conversations[0].messages[0].content);
+    assert.equal(service.setSettings({ username: '新用户名' }).storageError, null);
+    assert.equal(latest(f.create()).messages[0].content, saved.conversations[0].messages[0].content);
+  }
+});
+
+test('conversation title truncation never creates a broken surrogate from a complete Unicode character', async t => {
+  const f = fixture(t), service = f.create({ fetchImpl: async () => complete('收到。') });
+  service.send('甲'.repeat(39) + '😀新话题'); await settled(service);
+  assert.equal(latest(service).title.isWellFormed(), true);
+  assert.equal(latest(service).title, '甲'.repeat(39));
+  const saved = JSON.parse(fs.readFileSync(f.file, 'utf8'));
+  saved.conversations[0].title = '乙'.repeat(99) + '𠮷更多内容';
+  fs.writeFileSync(f.file, JSON.stringify(saved));
+  const restarted = f.create();
+  assert.equal(latest(restarted).title.isWellFormed(), true);
+  assert.equal(latest(restarted).title, '乙'.repeat(99));
+});
+
+test('history preserves Unicode messages exactly at its limits and protects oversized or duplicate records', t => {
+  const f = fixture(t), seed = f.create(); seed.newConversation();
+  const saved = JSON.parse(fs.readFileSync(f.file, 'utf8')), date = new Date().toISOString();
+  saved.conversations[0].messages = [
+    { id: 'unicode-user', role: 'user', content: '😀'.repeat(4000), status: 'complete', createdAt: date },
+    { id: 'unicode-assistant', role: 'assistant', content: '𠮷'.repeat(8000), status: 'complete', createdAt: date },
+  ];
+  fs.writeFileSync(f.file, JSON.stringify(saved));
+  const valid = f.create();
+  assert.equal(valid.getState().storageError, null);
+  assert.equal(valid.setSettings({ username: '边界记录' }).storageError, null);
+  assert.deepEqual(latest(f.create()).messages, saved.conversations[0].messages);
+  const invalid = [
+    document => { document.conversations[0].messages[0].content += 'x'; },
+    document => { document.conversations[0].messages[1].content += 'x'; },
+    document => { document.conversations[0].messages[1].id = document.conversations[0].messages[0].id; },
+  ];
+  for (const mutate of invalid) {
+    const damaged = structuredClone(saved); mutate(damaged);
+    const original = JSON.stringify(damaged); fs.writeFileSync(f.file, original);
+    const service = f.create({ fetchImpl: () => assert.fail('protected history must not send a request') });
+    assert.ok(service.send('保留原文件').storageError);
+    assert.ok(service.clearHistory().storageError);
+    assert.equal(fs.readFileSync(f.file, 'utf8'), original);
+  }
+});
+
 test('failed persistence does not acknowledge or send a message and can recover after the disk issue is fixed', async t => {
   const f = fixture(t), blocker = path.join(f.directory, 'blocked'); fs.writeFileSync(blocker, 'file');
   let calls = 0; const service = f.create({ directory: blocker, fetchImpl: async () => { calls++; return complete('reply'); } });
@@ -303,6 +429,27 @@ test('failed persistence does not acknowledge or send a message and can recover 
   fs.rmdirSync(f.file + '.tmp');
   assert.equal(good.setSettings({ username: '恢复后' }).storageError, null);
   good.send('hello'); await settled(good); assert.equal(calls, 1);
+});
+
+test('a failed final save retains the completed reply in memory and saves it intact on recovery', async t => {
+  const f = fixture(t); let releaseResponse;
+  const service = f.create({ fetchImpl: () => new Promise(resolve => { releaseResponse = resolve; }) });
+  service.send('发送后磁盘暂时不可写');
+  await new Promise(resolve => setImmediate(resolve));
+  const beforeCompletion = fs.readFileSync(f.file);
+  fs.mkdirSync(f.file + '.tmp');
+  releaseResponse(complete('这句话需要在恢复后完整保存。'));
+  await settled(service);
+  const completed = latest(service).messages.at(-1);
+  assert.equal(completed.status, 'complete');
+  assert.equal(completed.content, '这句话需要在恢复后完整保存。');
+  assert.ok(service.getState().storageError);
+  assert.deepEqual(fs.readFileSync(f.file), beforeCompletion);
+  assert.ok(service.send('保存恢复前拒绝新请求').error);
+  assert.equal(latest(service).messages.length, 2);
+  fs.rmdirSync(f.file + '.tmp');
+  assert.equal(service.setSettings({ username: '恢复保存' }).storageError, null);
+  assert.deepEqual(latest(f.create()).messages.at(-1), completed);
 });
 
 test('restart marks interrupted streaming as cancelled without inventing a completed answer', t => {
@@ -337,6 +484,23 @@ test('timeout and dispose abort even an unresponsive fetch and no late result ov
   assert.equal(latest(service).messages[1].content, '');
   const pending = f.create({ fetchImpl: () => new Promise(() => {}) }); pending.send('关闭测试'); pending.dispose();
   assert.equal(pending.getState().busy, false); assert.equal(latest(pending).messages.at(-1).status, 'cancelled');
+});
+
+test('disposing chat closes the send gate before synchronous cancellation subscribers can reenter', async t => {
+  const f = fixture(t); let closing = false, requests = 0, service;
+  service = f.create({
+    requestTimeoutMs: 100,
+    fetchImpl: () => { requests++; return new Promise(() => {}); },
+    onChange: state => { if (closing && !state.busy) { closing = false; service.send('不得在关闭后发送'); } },
+  });
+  service.send('正在等待的请求');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(requests, 1);
+  closing = true; service.dispose();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(requests, 1);
+  assert.equal(service.getState().busy, false);
+  assert.equal(latest(service).messages.length, 2);
 });
 
 test('context retains recent whole successful pairs and never splits a pair to fit', async t => {

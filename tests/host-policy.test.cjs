@@ -4,7 +4,20 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
-const { DEFAULT_SETTINGS, EXPRESSION_KEYS, SKIN_KEYS, POSE_KEYS, sanitizeAppearance, sanitizeSettings, dimensions, freeBounds, fitBounds, restoreBounds, recoverBounds, pointerPayload, actionForKey, isLocalResource } = require('../electron/host-policy.cjs');
+const { DEFAULT_SETTINGS, EXPRESSION_KEYS, SKIN_KEYS, POSE_KEYS, sanitizeAppearance, sanitizeSettings, dimensions, freeBounds, fitBounds, restoreBounds, recoverBounds, pointerPayload, actionForKey, isLocalResource, sameWindowsDirectory } = require('../electron/host-policy.cjs');
+
+test('managed voice blocking recognizes equivalent Windows directory spellings without filesystem access', () => {
+  const expected = 'D:\\用户\\Elysia Desktop Pet\\voice-runtime';
+  for (const candidate of [expected.toLowerCase(), expected + '\\', expected.replaceAll('\\', '/'),
+    'D:\\用户\\Elysia Desktop Pet\\other\\..\\voice-runtime', '\\\\?\\' + expected, '\\\\.\\' + expected]) {
+    assert.equal(sameWindowsDirectory(candidate, expected), true, candidate);
+  }
+  assert.equal(sameWindowsDirectory('\\\\?\\UNC\\Server\\Share\\Voice\\', '\\\\server\\share\\voice'), true);
+  for (const candidate of [null, 42, '', 'voice-runtime', 'D:voice-runtime', expected + '-other',
+    expected.replace('D:', 'E:'), expected + '\\child', expected + '\u0000']) {
+    assert.equal(sameWindowsDirectory(candidate, expected), false);
+  }
+});
 
 test('preferences reject unexpected values and allow one percent through extreme zoom', () => {
   const next = sanitizeSettings({ alwaysOnTop: 'false', clickThrough: true, scale: Infinity, legacyHotkeys: 0, injected: 'ignore' });

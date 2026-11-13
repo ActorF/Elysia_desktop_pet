@@ -66,3 +66,22 @@ test('new fields are sanitized and a pre-existing backup is never overwritten', 
   assert.deepEqual(f.read(f.stable, 'settings.json').settings, { scale: .9, interactionsEnabled: true, cursorTrailStyle: 'pink', cursorTrailDuration: 5 });
   assert.deepEqual(f.read(f.stable, 'settings.pre-1.3.0.json'), { savedEarlier: true });
 });
+
+test('legacy migration preserves invalid UTF-8 instead of normalizing corrupted preference bytes', t => {
+  const f = fixture(t), target = path.join(f.stable, 'settings.json');
+  const damaged = Buffer.concat([Buffer.from('{"settings":{},"note":"'), Buffer.from([0xc0]), Buffer.from('"}')]);
+  fs.writeFileSync(target, damaged);
+  f.write(f.sample, 'settings.json', { settings: { cursorTrailStyle: 'ribbon' } });
+  assert.deepEqual(migrateSampleProfile(f.root).addedSettings, []);
+  assert.deepEqual(fs.readFileSync(target), damaged);
+  const voice = path.join(f.sample, 'voice-state.json'); fs.writeFileSync(voice, damaged);
+  assert.equal(migrateSampleProfile(f.root).copied.includes('voice-state.json'), false);
+});
+
+test('legacy UTF-8 BOM profiles migrate while keeping copied bytes intact', t => {
+  const f = fixture(t), contents = '\uFEFF' + JSON.stringify({ settings: { cursorTrailStyle: 'ribbon' } });
+  fs.writeFileSync(path.join(f.sample, 'settings.json'), contents);
+  const result = migrateSampleProfile(f.root);
+  assert.deepEqual(result.copied, ['settings.json']);
+  assert.equal(fs.readFileSync(path.join(f.stable, 'settings.json'), 'utf8'), contents);
+});

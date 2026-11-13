@@ -64,6 +64,29 @@ test('unavailable native support stays inactive without claiming global capture 
   assert.equal(statuses.at(-1).active, false); assert.match(statuses.at(-1).error, /Windows/);
 });
 
+test('failed listener termination never throws or starts overlapping native listeners', () => {
+  for (const kind of ['false', 'throw']) {
+    const f = fixture(); f.listener.start(); const previous = f.children[0]; previous.pid = 123;
+    previous.kill = () => { if (kind === 'throw') throw new Error('fixture kill failure'); return false; };
+    assert.doesNotThrow(() => f.listener.start(false));
+    previous.stdout.emit('data', 'READY\nKEY:65\n'); assert.deepEqual(f.characters, []);
+    f.listener.start(); f.listener.start();
+    assert.equal(f.children.length, 1, 'Re-enabling must wait for the old process to exit');
+    assert.equal(f.statuses.at(-1).active, false); assert.ok(f.statuses.at(-1).error);
+    previous.emit('exit', 0);
+    assert.equal(f.children.length, 2, 'A late confirmed exit may start the one requested replacement');
+    previous.emit('close', 0); assert.equal(f.children.length, 2);
+    f.listener.stop();
+  }
+});
+
+test('a disabled listener cannot restart after a delayed process exit', () => {
+  const f = fixture(); f.listener.start(); const previous = f.children[0];
+  previous.kill = () => false;
+  f.listener.start(); f.listener.stop(); previous.emit('close', 0);
+  assert.equal(f.children.length, 1); assert.equal(f.statuses.at(-1).active, false);
+});
+
 test('Windows native translation handles Shift, Caps Lock, punctuation, numpad and ignored controls without injecting keys', { skip: process.platform !== 'win32', timeout: 20000 }, () => {
   const result = spawnSync('powershell.exe', ['-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',path.join(__dirname,'..','electron','typed-keys.ps1'),'-SelfTest'], {windowsHide:true,encoding:'utf8',timeout:15000});
   assert.equal(result.status, 0, result.stderr);

@@ -5,6 +5,10 @@ const assert = require('node:assert/strict');
 const REQUIRED_RUNTIME_FILES = Object.freeze([
   'electron/main.cjs', 'electron/model-setup.cjs', 'electron/voice-setup.cjs', 'electron/voice-repair.cjs',
   'electron/voice-installation.cjs', 'electron/setup-diagnostics.cjs', 'electron/resource-download.cjs',
+  'electron/setup-child-process.cjs', 'electron/windows-file-move.cjs', 'electron/windows-file-move.ps1',
+  'electron/resource-download-hosts.cjs',
+  'electron/quit-coordinator.cjs', 'electron/renderer-recovery.cjs',
+  'electron/legacy-hotkey-listener.cjs',
   'electron/quick-chat-window.cjs', 'electron/quick-chat-controller.cjs', 'electron/quick-chat-shortcut.cjs',
   'electron/quick-chat-ipc.cjs', 'electron/quick-chat-preload.cjs', 'electron/quick-chat-smoke.cjs',
   'renderer/quick-chat.html', 'renderer/quick-chat.css', 'renderer/quick-chat.mjs', 'renderer/quick-chat-settings.mjs',

@@ -10,8 +10,9 @@ const { createInteractionReplies, interactionDuration, INTERACTION_CATALOG } = r
 // Exercise the real controller and real time-rule engine. Only platform windows,
 // filesystem persistence and the wall clock are replaced; no Electron process,
 // user's preferences, actual speaker or native listener is touched by these tests.
-function fixture({ saved = {}, available = true, interactionAvailable = available, delayed = false, delayedText = false, testAccess = true } = {}) {
+function fixture({ saved = {}, savedRaw, readError, available = true, interactionAvailable = available, delayed = false, delayedText = false, testAccess = true } = {}) {
   let now = new Date(2026,9,26,8).getTime(), nextTimer = 0, quitCount = 0;
+  let elapsed = now, saveFailure = null;
   let speechHooks, environmentHooks, active = null, replies;
   const intervals = new Map(), timeouts = new Map(), stored = new Map();
   const lines = new Map(), played = [], stopped = [], published = [], volumeChanges = [];
@@ -20,15 +21,19 @@ function fixture({ saved = {}, available = true, interactionAvailable = availabl
   const environment = {idleSeconds:0,locked:false,suspended:false,fullscreen:false,monitorReady:true};
   const preferences = {};
   const directory = path.resolve('voice-controller-unit-profile'), file = path.join(directory,'voice-state.json');
-  stored.set(file,JSON.stringify(saved));
+  stored.set(file,savedRaw ?? JSON.stringify(saved));
   for(let group=1;group<=12;group++) for(let index=1;index<=3;index++) {
     const id=`${String(group).padStart(2,'0')}-${index}`;
     lines.set(id,{id,groupId:id.slice(0,2),text:`测试台词 ${id}`,audioUrl:`file:///voice/${id}.wav`});
   }
-  const timers = (collection, fn, delay) => {const id=++nextTimer;collection.set(id,{fn,delay,dueAt:now+delay});return id;};
+  const timers = (collection, fn, delay) => {const id=++nextTimer;collection.set(id,{fn,delay,dueAt:elapsed+delay});return id;};
   const fakeFs = {
-    readFileSync(name) {if(!stored.has(name))throw new Error('ENOENT');return stored.get(name);},
-    mkdirSync() {}, writeFileSync(name,value) {stored.set(name,value);},
+    readFileSync(name,encoding) {
+      if(readError)throw Object.assign(new Error('fixture read failure'),{code:readError});
+      if(!stored.has(name))throw Object.assign(new Error('missing fixture'),{code:'ENOENT'});
+      const value=Buffer.from(stored.get(name));return encoding?value.toString(encoding):value;
+    },
+    mkdirSync() {}, writeFileSync(name,value) {if(saveFailure)throw Object.assign(new Error('fixture save failure'),{code:saveFailure});stored.set(name,value);},
     renameSync(from,to) {stored.set(to,stored.get(from));stored.delete(from);},
   };
   function finish(record = active, status = 'ended', error = null) {
@@ -59,6 +64,8 @@ function fixture({ saved = {}, available = true, interactionAvailable = availabl
     require(name) {
       if(name==='node:fs')return fakeFs;
       if(name==='node:path')return path;
+      if(name==='node:perf_hooks')return require(name);
+      if(name==='node:util')return require(name);
       if(name==='./voice-engine.cjs')return {createVoiceEngine};
       if(name==='./interaction-replies.cjs')return {INTERACTION_CATALOG,createInteractionReplies:()=>{replies=createInteractionReplies({random:()=>0});return replies;}};
       if(name==='./voice-assets.cjs')return {
@@ -76,25 +83,28 @@ function fixture({ saved = {}, available = true, interactionAvailable = availabl
   const productionController=module.exports.createVoiceController({root:path.resolve(__dirname,'..'),userData:directory,
     interactionAssetDirectory:path.resolve('voice-controller-unit-interaction-assets'),
     getCharacterBounds:()=>({x:100,y:100,width:420,height:560}),getPreferences:()=>preferences,
-    publish:value=>published.push(value),quit:()=>quitCount++,testHooks});
+    publish:value=>published.push(value),quit:()=>quitCount++,testHooks,clock:()=>elapsed});
   const controller={...productionController,...testHooks};
   controller.start();
   const flush=async()=>{await Promise.resolve();await Promise.resolve();};
   async function advance(milliseconds=0) {
-    const target=now+milliseconds;let count=0;
+    const target=elapsed+milliseconds;let count=0;
     while(true) {
       const due=[...timeouts].filter(([,entry])=>entry.dueAt<=target).sort((a,b)=>a[1].dueAt-b[1].dueAt)[0];
       if(!due)break;
       assert.ok(++count<10000,'Timers must advance rather than spinning at the same timestamp');
-      const [id,entry]=due;now=Math.max(now,entry.dueAt);timeouts.delete(id);entry.fn();await flush();
+      const [id,entry]=due;const next=Math.max(elapsed,entry.dueAt);now+=next-elapsed;elapsed=next;timeouts.delete(id);entry.fn();await flush();
     }
-    now=target;await flush();
+    now+=target-elapsed;elapsed=target;await flush();
   }
   return {
     controller,productionController,testHooks,played,stopped,published,volumeChanges,intervals,timeouts,environment,preferences,assetCalls,
     replyHistory:()=>replies.snapshot(),
     get now(){return now;},get quitCount(){return quitCount;},
     persisted:()=>JSON.parse(stored.get(file)),
+    savedBytes:()=>Buffer.from(stored.get(file)),
+    moveWallClock: delta => { now += delta; },
+    failSaving: code => { saveFailure = code; },
     async tick(milliseconds=1000,patch={}) {Object.assign(environment,patch);await advance(milliseconds);for(const {fn} of [...intervals.values()])fn();await flush();},
     started(record=active) {speechHooks.onStarted({token:record.token,lineId:record.line.id,kind:record.kind});},
     finish,flush,advance,
@@ -103,6 +113,28 @@ function fixture({ saved = {}, available = true, interactionAvailable = availabl
   };
 }
 const playedToday = f => f.controller.getHistory().days['2026-10-26']?.total ?? 0;
+
+test('invalid voice settings remain untouched by periodic saves, explicit edits and disposal', async()=>{
+  const invalidUtf8=Buffer.concat([Buffer.from('{"settings":{"birthday":"'),Buffer.from([0xc0]),Buffer.from('"}}')]);
+  for(const savedRaw of ['{"settings":','null','[]',invalidUtf8,
+    '{"settings":null}','{"settings":[]}','{"settings":"damaged"}',
+    '{"history":null}','{"history":[]}','{"history":{"version":2}}']) {
+    const f=fixture({savedRaw}), original=f.savedBytes();
+    assert.match(f.controller.getState().storageError||'',/读取/);
+    f.controller.setSettings({dnd:true});await f.tick(16000);f.controller.dispose();
+    assert.deepEqual(f.savedBytes(),original);
+  }
+  const f=fixture({saved:{settings:{birthday:'02-29'}},readError:'EACCES'}),original=f.savedBytes();
+  f.controller.setSettings({volume:0});f.controller.dispose();assert.deepEqual(f.savedBytes(),original);
+});
+
+test('voice settings written with a UTF-8 BOM retain birthday and mute preferences',()=>{
+  const f=fixture({savedRaw:'\uFEFF{"settings":{"birthday":"02-29","dnd":true}}'});
+  assert.equal(f.controller.getState().settings.birthday,'02-29');
+  assert.equal(f.controller.getState().settings.dnd,true);
+  assert.equal(f.controller.getState().storageError,null);
+  f.controller.dispose();assert.equal(f.persisted().settings.birthday,'02-29');
+});
 
 test('non-object JSON voice profiles fall back safely and do not prevent normal automatic playback', async()=>{
   for(const saved of [null, [], 'old malformed state', 7, false]) {
@@ -124,6 +156,81 @@ test('production controller exposes no audition, simulation, or sample catalog w
   await f.tick(5000);assert.equal(f.played.length,1);assert.equal(f.played[0].kind,'automatic');
   assert.equal(f.controller.getState().playback.text,f.played[0].line.text);
   f.started();assert.equal(playedToday(f),1);
+  f.controller.dispose();
+});
+
+test('quitting while chat owns audio exits immediately instead of waiting for an unplayable farewell', () => {
+  const f = fixture();
+  f.controller.setExternalSpeechBusy(true);
+  f.controller.requestQuit();
+  assert.equal(f.quitCount, 1);
+  assert.equal(f.played.length, 0);
+  assert.equal(f.timeouts.size, 0);
+  f.controller.dispose();
+});
+
+test('a quit that already released chat startup or playback still skips farewell exactly once', async () => {
+  const f = fixture();
+  assert.equal(f.controller.getState().externalSpeechBusy, false);
+  f.controller.requestQuit({ skipFarewell: true });
+  await f.flush();
+  assert.equal(f.quitCount, 1);
+  assert.equal(f.played.length, 0);
+  assert.equal(f.timeouts.size, 0);
+  f.controller.requestQuit();
+  assert.equal(f.quitCount, 1);
+  f.controller.dispose();
+});
+
+test('interaction debounce and quiet gaps follow elapsed time across wall-clock corrections', async () => {
+  const f = fixture();
+  assert.equal(await f.controller.interact('head-pat'), true);
+  f.moveWallClock(-60 * 60 * 1000);
+  await f.advance(300);
+  assert.equal(f.played.length, 1, 'Rolling back the clock must not postpone a 300 ms reply by an hour');
+  f.started(); f.finish();
+  f.moveWallClock(2 * 60 * 60 * 1000);
+  assert.equal(await f.controller.interact('head-pat'), false, 'Moving forward must not skip the speech gap');
+  await f.advance(1200);
+  assert.equal(await f.controller.interact('head-pat'), true);
+  await f.advance(300); assert.equal(f.played.length, 2);
+  f.controller.dispose();
+});
+
+test('silent interaction throttling recovers after real elapsed time when the wall clock rolls back', async () => {
+  const f = fixture({ available: false });
+  await f.controller.interact('head-pat'); f.finish();
+  f.moveWallClock(-60 * 60 * 1000);
+  await f.advance(250);
+  assert.equal(await f.controller.interact('head-pat'), true);
+  f.controller.dispose();
+});
+
+test('a queued interaction exposes one stable display expiry across clock corrections', async () => {
+  const f = fixture();
+  await f.controller.interact('poke-annoyed');
+  const queued = f.controller.getState().queuedInteraction;
+  f.moveWallClock(1234);
+  assert.deepEqual(f.controller.getState().queuedInteraction, queued);
+  await f.controller.interact('poke-annoyed');
+  assert.deepEqual(f.controller.getState().queuedInteraction, queued);
+  await f.advance(300);
+  assert.equal(f.played.length, 1, 'The fixed display timestamp does not control the elapsed deadline');
+  f.controller.dispose();
+});
+
+test('voice persistence failures remain visible and retry without undoing a mute or birthday edit', async () => {
+  const f = fixture();
+  f.failSaving('ENOSPC');
+  const state = f.controller.setSettings({ volume: 0, birthday: '02-29' });
+  assert.equal(state.settings.volume, 0); assert.equal(state.settings.birthday, '02-29');
+  assert.equal(typeof state.storageError, 'string'); assert.ok(state.storageError.length);
+  assert.equal(f.persisted().settings, undefined, 'The old saved file remains unchanged');
+  f.failSaving(null); f.moveWallClock(-60 * 60 * 1000);
+  await f.tick(15000);
+  assert.equal(f.controller.getState().storageError, null);
+  assert.equal(f.persisted().settings.volume, 0); assert.equal(f.persisted().settings.birthday, '02-29');
+  assert.equal(f.published.at(-1).storageError, null, 'Recovery is sent to the settings page');
   f.controller.dispose();
 });
 

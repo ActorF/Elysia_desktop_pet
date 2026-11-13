@@ -65,6 +65,18 @@ test('waiting for the model rejects duplicates, can be cancelled and never sends
   assert.deepEqual(f.conversation().messages.filter(item => item.role === 'user').map(item => item.content), ['保留后重新发送']);
 });
 
+test('a quick send preserves an existing warmup but explicit cancellation stops it', async t => {
+  const ready = deferred(), stopped = [];
+  const f = fixture(t, { ensureReady: () => ready.promise });
+  f.speech.stop = options => stopped.push(options);
+  const sending = f.quick.send('继续已经准备中的语音');
+  assert.deepEqual(stopped, [{ preserveWarmup: true }]);
+  f.quick.cancel();
+  assert.equal(stopped.at(-1)?.preserveWarmup, undefined);
+  ready.resolve(); assert.equal((await sending).accepted, false);
+  assert.equal(f.requests.length, 0);
+});
+
 test('a busy existing chat is rejected without stopping its response or claiming speech', async t => {
   const f = fixture(t); f.chat.send('完整聊天窗口的问题');
   await until(() => f.requests.length === 1);
@@ -196,6 +208,31 @@ test('external context changes and disposal cancel preparation without reviving 
   }
 });
 
+test('switching to a new chat clears the previous quick-input failure instead of carrying it into the new conversation', async t => {
+  const f = fixture(t);
+  await f.quick.send('旧问题'); await until(() => f.requests.length === 1);
+  f.requests[0].reject(new Error('controlled connection failure'));
+  await until(() => !f.chat.getState().busy);
+  assert.ok(f.quick.getState().error);
+  const ipc = registerExternalActions(f);
+  await ipc.handlers.get('chat:new-conversation')(ipc.chatWindow.event);
+  assert.equal(f.chat.getState().error, null);
+  assert.equal(f.quick.getState().error, null);
+  assert.equal(f.publications.at(-1).error, null);
+});
+
+test('a rejected external new-conversation request does not detach a pending quick reply from its bubbles', async t => {
+  const f = fixture(t);
+  await f.quick.send('尚在生成的快捷问题'); await until(() => f.requests.length === 1);
+  const ipc = registerExternalActions(f);
+  const rejected = await ipc.handlers.get('chat:new-conversation')(ipc.chatWindow.event);
+  assert.match(rejected.error, /先等待/);
+  assert.equal(rejected.busy, true);
+  await f.finish('仍然应当显示在角色旁边。');
+  assert.equal(f.completed[0].handled, true);
+  assert.deepEqual(f.captions.map(item => item.text), ['仍然应当显示在角色旁边。']);
+});
+
 test('readiness starts only installed managed servers, surfaces refusal and supports prompt abort', async () => {
   const signal = new AbortController(); let starts = 0;
   const chat = baseUrl => ({ getState: () => ({ settings: { baseUrl } }) });
@@ -210,4 +247,15 @@ test('readiness starts only installed managed servers, surfaces refusal and supp
   signal.abort(); await assert.rejects(waiting, /取消/);
   const before = starts;
   await assert.rejects(ensureQuickChatReady(managed, setup, signal.signal), /取消/); assert.equal(starts, before);
+});
+
+test('model readiness timeout follows elapsed time even when the system clock rolls back', async t => {
+  const wall = Date.now(), calls = [];
+  let elapsed = 0;
+  t.mock.method(Date, 'now', () => wall - 3600000);
+  const chat = { getState: () => ({ settings: { baseUrl: 'http://127.0.0.1:18434' } }) };
+  const setup = { ensureInstalledServer() {}, getState: () => { elapsed = 150001; return { busy: true }; } };
+  await assert.rejects(ensureQuickChatReady(chat, setup, new AbortController().signal, 150000,
+    () => { calls.push(elapsed); return elapsed; }), /还在启动/);
+  assert.deepEqual(calls, [0, 150001]);
 });

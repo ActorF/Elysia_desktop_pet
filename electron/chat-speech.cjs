@@ -40,10 +40,12 @@ function createChatSpeech({ root, projectRoot = 'D:\\Elysia_AI', getProjectRoot 
   getBlockReason = () => canSpeak() ? null : '当前语音状态不允许朗读，请稍后重试。',
   sendAudio = () => {}, stopAudio = () => {}, onChange = () => {}, claimAudio = () => {},
   spawnImpl = spawn, exists = fs.existsSync, timeoutMs = 600000, idleTimeoutMs = 45000,
+  shutdownTimeoutMs = 10000, killTimeoutMs = 5000,
   maxCacheEntries = 8, maxCacheBytes = 24 * 1024 * 1024 }) {
   let active = null, worker = null, disposed = false, idleTimer = null, claimed = false, cacheBytes = 0;
   let state = { status: 'idle', error: null, messageId: null, emotion: null, cached: false };
   const cache = new Map();
+  const retiring = new Set();
   const getState = () => ({ ...state });
   function status(value, extra = {}) {
     const next = { ...state, status: value, error: null, ...extra };
@@ -62,13 +64,44 @@ function createChatSpeech({ root, projectRoot = 'D:\\Elysia_AI', getProjectRoot 
     const value = getProjectRoot();
     return typeof value === 'string' && path.isAbsolute(value) ? path.resolve(value) : null;
   }
-  function killWorker() {
+  function finishRetirement(owner) {
+    clearTimeout(owner.shutdownTimer); clearTimeout(owner.killTimer);
+    retiring.delete(owner); owner.resolveRelease?.(true);
+    if (worker && !worker.child && retiring.size === 0) launchWorker(worker);
+  }
+  function whenReleased() {
+    return Promise.all([...retiring].map(owner => owner.released)).then(results => {
+      if (!results.every(Boolean)) {
+        const error = new Error('本地朗读进程尚未退出，请稍后重试。');
+        error.diagnosticKind = 'storage-busy'; throw error;
+      }
+    });
+  }
+  function retireWorker() {
     clearTimeout(idleTimer); idleTimer = null;
     const owner = worker; worker = null;
     if (!owner) return;
     clearTimeout(owner.deadline);
-    // The bridge's non-inherited Kill-On-Close Job owns only its own model process tree.
-    if (!owner.exited) { try { owner.child.kill(); } catch {} }
+    if (owner.exited || !owner.child) return;
+    // EOF is an explicit cancellation request. The bridge shuts down its own
+    // managed runtime and removes its guarded bootstrap copies before exiting.
+    // Keep the old owner until close: a replacement must not overlap its model.
+    owner.released = new Promise(resolve => { owner.resolveRelease = resolve; });
+    retiring.add(owner);
+    const force = () => {
+      if (owner.exited) return;
+      // The non-inherited Kill-On-Close Job remains the bounded fallback.
+      try { owner.child.kill(); } catch {}
+      if (owner.exited) return;
+      owner.killTimer = setTimeout(() => {
+        if (owner.exited) return;
+        owner.releaseFailed = true; owner.resolveRelease(false);
+        if (worker && !worker.child) fail('本地朗读进程尚未退出，请稍后重试。');
+      }, killTimeoutMs);
+      owner.killTimer.unref?.();
+    };
+    owner.shutdownTimer = setTimeout(force, shutdownTimeoutMs); owner.shutdownTimer.unref?.();
+    try { owner.child.stdin.end(); } catch { clearTimeout(owner.shutdownTimer); force(); }
   }
   function discardActive() {
     const job = active; active = null;
@@ -76,24 +109,27 @@ function createChatSpeech({ root, projectRoot = 'D:\\Elysia_AI', getProjectRoot 
     claim(false);
   }
   function release() {
-    killWorker(); discardActive();
+    retireWorker(); discardActive();
     status('idle', { messageId: null, emotion: null, cached: false }); return getState();
   }
   function fail(error) {
     const messageId = active?.messageId ?? state.messageId;
-    killWorker(); discardActive(); status('error', { error, messageId, cached: false });
+    retireWorker(); discardActive(); status('error', { error, messageId, cached: false });
   }
   function scheduleIdle() {
     clearTimeout(idleTimer); idleTimer = null;
     if (worker && !worker.warming && !active) {
-      idleTimer = setTimeout(() => { if (!active) { killWorker(); status('idle', { messageId: null }); } }, idleTimeoutMs);
+      idleTimer = setTimeout(() => { if (!active) { retireWorker(); status('idle', { messageId: null }); } }, idleTimeoutMs);
       idleTimer.unref?.();
     }
   }
   function stop(options = {}) {
     if (options.release) return release();
+    return stopCurrent(options.preserveWarmup === true);
+  }
+  function stopCurrent(preserveWarmup) {
     // In-flight inference requires process cancellation; an idle model stays reusable.
-    if (active?.source === 'worker') killWorker();
+    if (active?.source === 'worker' || (worker?.warming && !preserveWarmup)) retireWorker();
     discardActive(); status(worker?.warming ? 'warming' : worker ? 'ready' : 'idle', { messageId: null, emotion: null, cached: false });
     scheduleIdle(); return getState();
   }
@@ -106,6 +142,7 @@ function createChatSpeech({ root, projectRoot = 'D:\\Elysia_AI', getProjectRoot 
   }
   function write(owner, packet) {
     if (owner !== worker || owner.exited) return false;
+    if (!owner.child) { owner.pending.push(packet); return true; }
     try { owner.child.stdin.write(JSON.stringify(packet) + '\n'); return true; }
     catch { fail('本地朗读连接中断，文字回答已保留。'); return false; }
   }
@@ -139,6 +176,7 @@ function createChatSpeech({ root, projectRoot = 'D:\\Elysia_AI', getProjectRoot 
     job.audioToken = randomUUID();
     job.audioTimer = setTimeout(() => fail('朗读播放未完成，已停止本次语音。'), (duration + 15) * 1000);
     status('playing', { messageId: job.messageId, emotion, cached: job.source === 'cache' });
+    if (active !== job) return;
     sendAudio({ token: job.audioToken, base64: packet.base64, mime: 'audio/wav', volume: volume(), messageId: job.messageId, emotion });
   }
   function receive(owner, line) {
@@ -172,8 +210,21 @@ function createChatSpeech({ root, projectRoot = 'D:\\Elysia_AI', getProjectRoot 
   }
   function ensureWorker(project) {
     clearTimeout(idleTimer); idleTimer = null;
-    if (worker?.project !== project) killWorker();
+    if (worker?.project !== project) retireWorker();
     if (worker) return worker;
+    if ([...retiring].some(owner => owner.releaseFailed)) {
+      fail('本地朗读进程尚未退出，请稍后重试。'); return null;
+    }
+    const owner = { child: null, project, buffer: '', exited: false, warming: true, manual: active?.manual === true,
+      deadline: null, pending: [] };
+    worker = owner;
+    if (retiring.size === 0) launchWorker(owner);
+    return worker === owner ? owner : null;
+  }
+  function launchWorker(owner) {
+    if (worker !== owner || disposed || owner.child || retiring.size) return;
+    if (!permitted(owner.manual)) { release(); return; }
+    const project = owner.project;
     const embedded = path.join(project, 'python', 'python.exe');
     const python = exists(embedded) ? embedded : path.join(project, '.venv', 'Scripts', 'python.exe');
     const script = path.join(root.replace(/app\.asar$/i, 'app.asar.unpacked'), 'electron', 'chat-tts-worker.py');
@@ -183,8 +234,7 @@ function createChatSpeech({ root, projectRoot = 'D:\\Elysia_AI', getProjectRoot 
     let child;
     try { child = spawnImpl(python, ['-u', script, '--project-root', project, '--parent-pid', String(process.pid)], { cwd: project, windowsHide: true, env, stdio: ['pipe', 'pipe', 'pipe'] }); }
     catch { fail('无法启动本地朗读，请检查所选语音项目的环境。'); return null; }
-    const owner = { child, project, buffer: '', exited: false, warming: true, manual: false, deadline: null };
-    worker = owner;
+    owner.child = child;
     owner.deadline = setTimeout(() => { if (worker === owner) fail('本次朗读等待超时，文字回答已保留。'); }, timeoutMs);
     child.stdout.setEncoding('utf8');
     child.stdout.on('data', chunk => {
@@ -203,11 +253,12 @@ function createChatSpeech({ root, projectRoot = 'D:\\Elysia_AI', getProjectRoot 
     child.on('error', () => { if (owner === worker) fail('无法启动本地朗读，请检查所选语音项目的环境。'); });
     child.on('close', code => {
       owner.exited = true;
+      if (retiring.has(owner)) { finishRetirement(owner); return; }
       if (owner !== worker) return;
-      if (!active && !owner.warming && code === 0) { killWorker(); status('idle', { emotion: null }); }
+      if (!active && !owner.warming && code === 0) { retireWorker(); status('idle', { emotion: null }); }
       else fail('本地朗读意外结束，文字回答已保留。');
     });
-    return owner;
+    for (const packet of owner.pending.splice(0)) { if (!write(owner, packet)) break; }
   }
   function warmup() {
     if (!permitted(false) || active) return false;
@@ -232,7 +283,9 @@ function createChatSpeech({ root, projectRoot = 'D:\\Elysia_AI', getProjectRoot 
     }
     const project = currentProject();
     if (!project) { fail('请在设置中选择有效的语音项目路径。'); return false; }
-    stop(); clearTimeout(idleTimer); idleTimer = null;
+    // A reply may arrive before its speculative warmup completes. Reuse that
+    // owner here; an explicit Stop still cancels the unfinished warmup.
+    stopCurrent(true); clearTimeout(idleTimer); idleTimer = null;
     const key = project.toLowerCase() + '\n' + text, cached = cache.get(key);
     const messageId = typeof options.messageId === 'string' && options.messageId.length <= 100 ? options.messageId : null;
     const job = { source: cached ? 'cache' : 'worker', key, manual, messageId, clips: [], bytes: 0,
@@ -245,6 +298,7 @@ function createChatSpeech({ root, projectRoot = 'D:\\Elysia_AI', getProjectRoot 
       return false;
     }
     status('starting', { messageId, emotion: null, cached: Boolean(cached) });
+    if (active !== job) return false;
     job.deadline = setTimeout(() => { if (active === job) fail('本次朗读等待超时，文字回答已保留。'); }, timeoutMs);
     if (cached) {
       cache.delete(key); cache.set(key, cached);
@@ -270,8 +324,8 @@ function createChatSpeech({ root, projectRoot = 'D:\\Elysia_AI', getProjectRoot 
     return true;
   }
   function clearCache() { release(); cache.clear(); cacheBytes = 0; }
-  function dispose() { clearCache(); disposed = true; }
+  function dispose() { disposed = true; clearCache(); }
   return { getState, start, speak: (text, options = {}) => start(text, { ...options, manual: true }), warmup,
-    stop, release, refreshPermission, clearCache, report, dispose, isActive: () => active !== null || worker?.warming === true };
+    stop, release, whenReleased, refreshPermission, clearCache, report, dispose, isActive: () => active !== null || worker?.warming === true };
 }
 module.exports = { createChatSpeech, wavDuration, getChatSpeechBlockReason };

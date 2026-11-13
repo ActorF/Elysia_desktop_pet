@@ -6,12 +6,14 @@ const { createCursorTrail, trailDisplays, displayForPoint, breaksTrail, TRAIL_LI
 const primary = { id: 1, bounds: { x: 0, y: 0, width: 1920, height: 1080 }, scaleFactor: 1.25 };
 const secondary = { id: 2, bounds: { x: -2200, y: -200, width: 1600, height: 1000 }, scaleFactor: 1.5 };
 
-function fixture({ deferred = false, smoke = false, monitors = [primary, secondary], factory = createCursorTrail } = {}) {
+function fixture({ deferred = false, smoke = false, monitors = [primary, secondary], factory = createCursorTrail,
+  failCreating = () => false, failInitializing = () => false } = {}) {
   const windows = [], screen = new EventEmitter(); let now = 10000, displays = monitors;
   screen.getAllDisplays = () => displays;
   class Window extends EventEmitter {
     constructor(options) {
-      super(); this.options = options; this.destroyed = false; this.visible = false; this.sent = []; this.sentAt = []; this.calls = [];
+      super(); if (failCreating()) throw new Error('native window unavailable');
+      this.options = options; this.destroyed = false; this.visible = false; this.sent = []; this.sentAt = []; this.calls = [];
       this.webContents = new EventEmitter(); this.webContents.isDestroyed = () => this.destroyed;
       this.webContents.send = (...args) => { this.sent.push(args); this.sentAt.push(now); };
       this.webContents.setWindowOpenHandler = callback => { this.windowOpen = callback; };
@@ -20,7 +22,7 @@ function fixture({ deferred = false, smoke = false, monitors = [primary, seconda
     }
     isDestroyed() { return this.destroyed; } isVisible() { return this.visible; }
     setMenu(value) { this.menu = value; }
-    setIgnoreMouseEvents(...args) { this.ignore = args; }
+    setIgnoreMouseEvents(...args) { if (failInitializing()) throw new Error('native initialization unavailable'); this.ignore = args; }
     setAlwaysOnTop(...args) { this.top = args; }
     loadURL(url) { this.url = url; return this.loading; }
     showInactive() { this.visible = true; this.calls.push('showInactive'); }
@@ -47,6 +49,85 @@ test('display routing uses DIPs and breaks time gaps, clock rollback and monitor
   for (const distance of [30, 400, 700, 1000]) assert.equal(breaksTrail(previous, { ...previous, x: previous.x + distance, at: 1016 }), false);
   assert.equal(breaksTrail(previous, { ...previous, x: 1000, at: 1180 }), false);
   for (const next of [{ ...previous, at: 1181 }, { ...previous, at: 900 }, { ...previous, displayId: '2' }]) assert.equal(breaksTrail(previous, next), true);
+});
+
+test('native trail window allocation failure stays local and retries after a bounded cooldown', async () => {
+  let attempts = 0;
+  const f = fixture({ failCreating: () => ++attempts === 1 });
+  try {
+    f.sample(100, 100);
+    assert.doesNotThrow(() => f.sample(120, 100), 'An optional trail must not throw from the main pointer timer');
+    assert.equal(f.windows.length, 0); assert.equal(typeof f.controller.getState().lastError, 'string');
+    f.advance(1999); f.sample(140, 100); assert.equal(attempts, 1);
+    f.advance(1); f.sample(160, 100); await f.flush();
+    assert.equal(attempts, 2); assert.equal(f.windows.length, 1);
+    assert.equal(f.controller.getState().lastError, null);
+  } finally { f.controller.dispose(); }
+});
+
+test('partly initialized trail windows are destroyed and do not block later recovery', async () => {
+  let attempts = 0; const f = fixture({ failInitializing: () => ++attempts === 1 });
+  try {
+    f.sample(100, 100); assert.doesNotThrow(() => f.sample(120, 100));
+    assert.equal(f.windows[0].destroyed, true); assert.equal(f.controller.getWindows().length, 0);
+    f.advance(2000); f.sample(140, 100); await f.flush();
+    assert.equal(f.controller.getWindows().length, 1); assert.equal(f.controller.getState().lastError, null);
+  } finally { f.controller.dispose(); }
+});
+
+test('ready trail send and show failures stay local, discard stale strokes and recover after cooldown', async () => {
+  for (const operation of ['send', 'showInactive']) {
+    const f = fixture();
+    try {
+      f.sample(100, 100); f.sample(120, 100); await f.flush(); const previous = f.windows[0];
+      if (operation === 'send') previous.webContents.send = () => { throw new Error('fixture IPC unavailable'); };
+      else { previous.visible = false; previous.showInactive = () => { throw new Error('fixture show unavailable'); }; }
+      f.advance(20); assert.doesNotThrow(() => f.sample(140, 100));
+      assert.equal(previous.destroyed, true); assert.equal(f.controller.getWindows().length, 0);
+      assert.equal(typeof f.controller.getState().lastError, 'string'); assert.deepEqual(f.controller.getState().pending, []);
+      f.advance(1999); f.sample(160, 100); assert.equal(f.windows.length, 1);
+      f.advance(1); f.sample(180, 100); await f.flush();
+      assert.equal(f.windows.length, 2); assert.equal(f.controller.getState().lastError, null);
+      assert.equal(samples(f.windows[1]).some(point => point.x === 140), false, 'Failed native sends cannot revive old buffered strokes');
+    } finally { f.controller.dispose(); }
+  }
+});
+
+test('idle hide, state visibility and shutdown destroy failures cannot escape optional trail cleanup', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  for (const operation of ['hide', 'visibility', 'destroy']) {
+    const f = fixture();
+    try {
+      f.sample(100, 100); f.sample(120, 100); await f.flush(); const previous = f.windows[0];
+      if (operation === 'hide') {
+        previous.hide = () => { throw new Error('fixture hide unavailable'); };
+        assert.doesNotThrow(() => f.advance(TRAIL_LIFETIME_MS, t.mock.timers));
+        assert.equal(previous.destroyed, true);
+      } else if (operation === 'visibility') {
+        previous.isVisible = () => { throw new Error('fixture native window unavailable'); };
+        assert.doesNotThrow(() => f.controller.getState()); assert.equal(previous.destroyed, true);
+      } else {
+        previous.destroy = () => { throw new Error('fixture destroy unavailable'); };
+        assert.doesNotThrow(() => f.controller.dispose());
+      }
+      assert.equal(f.controller.getWindows().length, 0);
+      assert.doesNotThrow(() => f.advance(2000, t.mock.timers));
+    } finally { f.controller.dispose(); }
+    assert.equal(f.screen.listenerCount('display-removed'), 0);
+  }
+});
+
+test('the production trail clock preserves continuous motion through wall-clock corrections', async t => {
+  let wall = 10000; t.mock.method(Date, 'now', () => wall);
+  const f = fixture({ factory: options => createCursorTrail({ ...options, now: undefined }) });
+  try {
+    f.sample(100, 100); f.sample(120, 100); await f.flush(); const window = f.windows[0];
+    for (const delta of [86400000, -172800000]) {
+      wall += delta; await new Promise(resolve => setTimeout(resolve, 25));
+      const x = delta > 0 ? 140 : 160; f.sample(x, 100); await f.flush();
+      assert.equal(samples(window).at(-1).x, x); assert.equal(samples(window).at(-1).break, false);
+    }
+  } finally { f.controller.dispose(); }
 });
 
 test('first movement creates only its monitor window with transparent, click-through, sandboxed nonactivating behavior', async () => {

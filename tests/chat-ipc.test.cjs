@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { registerChatIpc } = require('../electron/chat-ipc.cjs');
 
-function fixture({ withSpeech = false, getState, chatState } = {}) {
+function fixture({ withSpeech = false, getState, chatState, onAction } = {}) {
   const handlers = new Map(), listeners = new Map(), calls = [];
   function windowController(name) {
     const frame = { url: `file:///${name}.html` };
@@ -19,7 +19,7 @@ function fixture({ withSpeech = false, getState, chatState } = {}) {
   }
   const chatWindow = windowController('chat'), settingsWindow = windowController('settings');
   const chat = Object.fromEntries(['getState', 'send', 'cancel', 'newConversation', 'setSettings', 'selectConversation', 'deleteConversation', 'clearHistory']
-    .map(method => [method, (...args) => { calls.push([method, ...args]); return { result: method }; }]));
+    .map(method => [method, (...args) => { calls.push([method, ...args]); return { result: method, ...(method === 'send' && withSpeech ? { busy: true } : {}) }; }]));
   if (chatState) chat.getState = () => { calls.push(['getState']); return structuredClone(chatState); };
   chat.getMessage = reference => {
     calls.push(['getMessage', reference]);
@@ -32,7 +32,7 @@ function fixture({ withSpeech = false, getState, chatState } = {}) {
     clearCache: () => calls.push(['speech:clear-cache']), start: (text, options) => { calls.push(['speech:start', text, options]); return true; },
     speak: (text, options) => { calls.push(['speech:speak', text, options]); return speech.accept !== false; }, getState: () => ({ error: speech.error || null }),
   } : undefined;
-  registerChatIpc({ ipcMain: { handle: (name, fn) => handlers.set(name, fn), on: (name, fn) => listeners.set(name, fn) }, chat, chatWindow, settingsWindow, speech, clipboard, getState });
+  registerChatIpc({ ipcMain: { handle: (name, fn) => handlers.set(name, fn), on: (name, fn) => listeners.set(name, fn) }, chat, chatWindow, settingsWindow, speech, clipboard, getState, onAction });
   return { handlers, listeners, calls, chatWindow, settingsWindow, chat, chatState, speech, clipboard };
 }
 
@@ -206,7 +206,7 @@ test('speech completion reports accept only the current chat main frame, never s
   assert.deepEqual(f.calls, [['speech:report', packet]]);
 });
 
-test('authorized send, cancel, new and history-selection commands stop speech before changing the conversation', async () => {
+test('accepted sends and context changes stop prior speech, while explicit cancel stops it before cancellation', async () => {
   const f = fixture({ withSpeech: true });
   for (const [channel, argument, operation] of [
     ['chat:send', '新问题', ['send', '新问题']], ['chat:cancel', undefined, ['cancel']],
@@ -218,7 +218,49 @@ test('authorized send, cancel, new and history-selection commands stop speech be
     assert.equal(await f.handlers.get(channel)(other.event, argument), null);
     assert.equal(f.calls.length, before, 'Rejected command must not stop another window’s audio');
     await f.handlers.get(channel)(owner.event, argument);
-    assert.deepEqual(f.calls.slice(before), [['speech:stop'], operation]);
+    assert.deepEqual(f.calls.slice(before), channel === 'chat:cancel' ? [['speech:stop'], operation]
+      : [operation, ['speech:stop'], ...(channel === 'chat:send' ? [['speech:warmup']] : [])]);
+  }
+});
+
+test('rejected or unsaved chat changes do not interrupt bubbles, speech or cached audio', async () => {
+  const actions = [], f = fixture({ withSpeech: true, onAction: channel => actions.push(channel) });
+  for (const [channel, method] of [['chat:send', 'send'], ['chat:new-conversation', 'newConversation'],
+    ['settings:chat-select', 'selectConversation'], ['settings:chat-delete', 'deleteConversation'], ['settings:chat-clear', 'clearHistory']]) {
+    for (const rejected of [{ busy: true, error: 'busy' }, { error: 'invalid request' }, { storageError: 'disk failure' }]) {
+      f.chat[method] = () => rejected;
+      const owner = channel.startsWith('settings:') ? f.settingsWindow : f.chatWindow;
+      const previous = f.calls.length;
+      assert.equal(await f.handlers.get(channel)(owner.event, 'ignored'), rejected);
+      assert.equal(f.calls.length, previous);
+      assert.deepEqual(actions, []);
+    }
+  }
+});
+
+test('invalid manual-reading references and busy history cannot steal speech ownership', async () => {
+  const actions = [], state = storedChat(), f = fixture({ withSpeech: true, chatState: state, onAction: channel => actions.push(channel) });
+  const invoke = reference => f.handlers.get('chat:read-aloud')(f.chatWindow.event, reference);
+  for (const reference of [null, {}, { conversationId: 'missing', messageId: 'missing' }]) {
+    const before = f.calls.length;
+    assert.equal((await invoke(reference)).ok, false);
+    assert.equal(f.calls.slice(before).some(([name]) => name.startsWith('speech:')), false);
+    assert.deepEqual(actions, []);
+  }
+  state.busy = true;
+  assert.equal((await invoke({ conversationId: 'current', messageId: state.conversations[0].messages[0].id })).ok, false);
+  assert.deepEqual(actions, []);
+});
+
+test('only a new send preserves speculative warmup; stop and context changes cancel it', async () => {
+  const f = fixture({ withSpeech: true }), options = [];
+  f.speech.stop = value => options.push(value);
+  await f.handlers.get('chat:send')(f.chatWindow.event, '新问题');
+  assert.deepEqual(options.pop(), { preserveWarmup: true });
+  for (const [channel, owner] of [['chat:cancel', f.chatWindow], ['chat:new-conversation', f.chatWindow],
+    ['settings:chat-select', f.settingsWindow]]) {
+    await f.handlers.get(channel)(owner.event, 'conversation-1');
+    assert.equal(options.pop()?.preserveWarmup, undefined);
   }
 });
 

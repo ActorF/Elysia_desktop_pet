@@ -1,6 +1,7 @@
 'use strict';
 const path = require('node:path');
 const { spawn: nativeSpawn } = require('node:child_process');
+const { performance } = require('node:perf_hooks');
 
 // Electron's floating level only handles Shell_TrayWnd. This Windows helper
 // keeps visible shell taskbars above our HWND and our HWND above other apps.
@@ -8,7 +9,7 @@ const { spawn: nativeSpawn } = require('node:child_process');
 function createTaskbarOrderer(window, options = {}) {
   const spawn = options.spawn ?? nativeSpawn;
   const platform = options.platform ?? process.platform;
-  const now = options.now ?? Date.now;
+  const now = options.now ?? (() => performance.now());
   const schedule = options.setTimeout ?? setTimeout;
   const cancel = options.clearTimeout ?? clearTimeout;
   const parentProcessId = options.parentProcessId ?? process.pid;
@@ -29,7 +30,9 @@ function createTaskbarOrderer(window, options = {}) {
   }
   function report(error) { options.onError?.(error); }
   function kill(record) {
-    try { record.child.kill(); } catch (error) { report(error); }
+    record.killRefused = false;
+    try { record.killRefused = record.child.kill() === false; }
+    catch (error) { record.killRefused = true; report(error); }
   }
   function fail(record, error) {
     if (current !== record || record.cancelled || record.finished || record.failed) return;
@@ -62,7 +65,7 @@ function createTaskbarOrderer(window, options = {}) {
       const child = spawn(executable, ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
         '-File', script, '-TargetHwnd', hwnd, '-ParentProcessId', String(parentProcessId)],
       { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
-      record = { child, ready: false, cancelled: false, failed: false, finished: false, pending: '', stderr: '', timer: null };
+      record = { child, ready: false, cancelled: false, failed: false, finished: false, killRefused: false, pending: '', stderr: '', timer: null };
       current = record; processes.add(record);
       child.stdout.setEncoding('utf8');
       child.stdout.on('data', chunk => {
@@ -79,7 +82,7 @@ function createTaskbarOrderer(window, options = {}) {
       child.stderr.on('data', chunk => {
         if (current === record) record.stderr = (record.stderr + chunk).slice(-2048);
       });
-      child.once('error', error => fail(record, error));
+      child.on('error', error => fail(record, error));
       child.once('exit', (code, signal) => finish(record, code, signal));
       // Failed spawning can emit error/close without exit.
       child.once('close', (code, signal) => finish(record, code, signal));
@@ -93,9 +96,13 @@ function createTaskbarOrderer(window, options = {}) {
     }
   }
   function stop() {
-    const record = current;
     current = null; attempts = 0; retryAfter = 0;
-    if (record) { record.cancelled = true; clearStartup(record); kill(record); }
+    // A failed helper may already have left `current` while its kill failed.
+    // Explicit shutdown still owns it and gets one more termination attempt.
+    for (const record of processes) {
+      if (record.finished || (record.cancelled && !record.killRefused)) continue;
+      record.cancelled = true; clearStartup(record); kill(record);
+    }
   }
   function dispose() {
     if (disposed) return;

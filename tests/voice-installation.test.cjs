@@ -4,12 +4,14 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { spawnSync } = require('node:child_process');
 const { REQUIRED, inspectVoiceInstallation } = require('../electron/voice-installation.cjs');
 
 const sourceFile = path.resolve(__dirname, '../electron/voice-installation.cjs');
 const source = fs.readFileSync(sourceFile, 'utf8');
 const tempRoot = path.resolve(__dirname, '../artifacts/voice-setup-issue/temp');
 const manifest = Object.freeze({ version: 1, assets: { sha256: 'a'.repeat(64) }, runtime: { sha256: 'b'.repeat(64) } });
+const hashFilename = 'models/cache/GPT-SoVITS-v2-240821/runtime/Lib/site-packages/pandas/tests/io/data/legacy_pickle/1.2.4/empty_frame_v1_2_4-GH#42345.pkl';
 function fixture(t) {
   fs.mkdirSync(tempRoot, { recursive: true });
   const directory = fs.mkdtempSync(path.join(tempRoot, 'inspect-'));
@@ -104,8 +106,8 @@ test('different marker and resource versions remain distinct from missing files'
 
 test('marker resource paths reject query-like, illegal and excessive names before filesystem inspection', t => {
   const f = fixture(t); f.install();
-  const illegal = ['folder/file?token=secret', 'folder/file#secret', 'folder/*.bin', 'folder/<file',
-    'folder/file>', 'folder/"file', 'folder/file|data', 'a'.repeat(241)];
+  const illegal = ['folder/file?token=secret', 'folder/*.bin', 'folder/<file',
+    'folder/file>', 'folder/"file', 'folder/file|data', 'folder#tag/../secret', 'folder#tag/file:secret', 'a'.repeat(241)];
   const inspect = withFs({ lstatSync(file) {
     assert.ok(file === f.project || file === f.marker, 'invalid marker must not inspect its resource paths');
     return fs.lstatSync(file);
@@ -125,6 +127,34 @@ test('marker resource paths reject query-like, illegal and excessive names befor
   } });
   const boundary = inspectBoundary(f.project, manifest);
   assert.equal(boundary.code, 'missing-files'); assert.equal(boundary.missingFiles[0], longest);
+});
+
+test('a real runtime filename containing a hash sign is valid and remains identifiable if missing', t => {
+  const f = fixture(t); f.install();
+  f.write(hashFilename); f.mark({ ...f.markerValue, required: [...REQUIRED, hashFilename] });
+  const original = fs.readFileSync(f.marker, 'utf8');
+  assert.equal(f.inspect().code, 'ready');
+  fs.unlinkSync(path.join(f.project, hashFilename));
+  const missing = f.inspect(); assert.equal(missing.code, 'missing-files');
+  assert.deepEqual(missing.missingFiles, [hashFilename]); assert.equal(fs.readFileSync(f.marker, 'utf8'), original);
+});
+
+test('the PowerShell diagnostic accepts the real hash-sign filename while rejecting unsafe paths', { skip: process.platform !== 'win32' }, t => {
+  const f = fixture(t); f.install(); f.write(hashFilename);
+  const script = path.resolve(__dirname, '../scripts/diagnose-voice-setup.ps1');
+  const run = (name, required) => {
+    f.mark({ ...f.markerValue, required });
+    const markerBefore = fs.readFileSync(f.marker, 'utf8'), output = path.join(f.directory, `${name}.json`);
+    const result = spawnSync('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+      '-File', script, '-ProfilePath', f.directory, '-OutputPath', output], { windowsHide: true, encoding: 'utf8', timeout: 10000 });
+    assert.equal(result.status, 0, result.stderr); assert.equal(fs.readFileSync(f.marker, 'utf8'), markerBefore);
+    return JSON.parse(fs.readFileSync(output, 'utf8'));
+  };
+  const valid = run('valid-hash', [...REQUIRED, hashFilename]);
+  assert.equal(valid.requiredListStatus, 'valid'); assert.equal(valid.invalidEntries, 0); assert.deepEqual(valid.fileProblems, []);
+  const unsafe = run('unsafe', [...REQUIRED, 'folder#tag/../secret', 'file#tag:secret', 'file?token=secret']);
+  assert.equal(unsafe.requiredListStatus, 'invalid-entries'); assert.equal(unsafe.invalidEntries, 3);
+  assert.equal(unsafe.filesChecked, REQUIRED.length); assert.doesNotMatch(JSON.stringify(unsafe), /secret|token=/);
 });
 
 test('ordinary-directory and ordinary-file requirements reject substituted types', t => {

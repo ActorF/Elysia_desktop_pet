@@ -8,12 +8,13 @@ const { spawn, execFileSync } = require('node:child_process');
 const asar = require('@electron/asar');
 const yaml = require('js-yaml');
 const { releaseSmokeModes, verifyReleaseContract, verifyQuickChatSmoke } = require('./release-contract.cjs');
+const { resolveReleaseOutput } = require('./release-output.cjs');
 
 const root = path.resolve(__dirname, '..');
 const manifest = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
 const chatOnly = process.argv.includes('--chat-only');
 assert.ok(process.argv.slice(2).every(argument => argument === '--chat-only'), 'Only --chat-only is supported');
-const output = path.resolve(root, manifest.build.directories.output);
+const output = resolveReleaseOutput({ root, manifest });
 const artifacts = path.join(root, 'artifacts', `validation-v${manifest.version}`);
 const filename = manifest.build.portable.artifactName.replaceAll('${version}', manifest.version);
 assert.equal(path.basename(filename), filename); assert.ok(!filename.includes('${'));

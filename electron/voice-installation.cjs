@@ -25,7 +25,8 @@ const digest = value => typeof value === 'string' && /^[0-9a-f]{64}$/i.test(valu
 const missing = error => error?.code === 'ENOENT' || error?.code === 'ENOTDIR';
 
 function safeEntry(name) {
-  if (typeof name !== 'string' || !name || name.length > 240 || /[\u0000-\u001f\u007f:?*<>"|#]/.test(name) || /^[\\/]/.test(name)) return false;
+  // A hash sign is legal in resource filenames and is present in the pinned runtime.
+  if (typeof name !== 'string' || !name || name.length > 240 || /[\u0000-\u001f\u007f:?*<>"|]/.test(name) || /^[\\/]/.test(name)) return false;
   return name.replace(/\\/g, '/').split('/').every(part => part && !['.', '..'].includes(part) && !/[. ]$/.test(part)
     && !/^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(part));
 }

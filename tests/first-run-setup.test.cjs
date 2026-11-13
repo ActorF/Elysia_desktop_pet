@@ -6,6 +6,35 @@ const os = require('node:os');
 const path = require('node:path');
 const { createFirstRunSetup } = require('../electron/first-run-setup.cjs');
 
+test('an unavailable automatic-setup marker cannot abort startup or completed resource callbacks', t => {
+  const scratch = path.resolve(__dirname, '../artifacts/deep-audit/temp');
+  fs.mkdirSync(scratch, { recursive: true });
+  const directory = fs.mkdtempSync(path.join(scratch, 'marker-failure-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  // A real write failure without changing permissions or using a user profile.
+  const blocked = path.join(directory, 'automatic-setup.json.tmp');
+  fs.mkdirSync(blocked);
+  const errors = [], calls = [];
+  let setup;
+  assert.doesNotThrow(() => { setup = createFirstRunSetup({ directory, firstRun: true, onError: code => errors.push(code) }); });
+  assert.doesNotThrow(() => setup.start({ chat: { installChatModel: () => calls.push('chat') }, voice: { install: () => calls.push('voice') } }));
+  assert.deepEqual(calls, ['chat', 'voice']);
+  assert.doesNotThrow(() => setup.update('voice', { phase: 'cancelled' }));
+  assert.doesNotThrow(() => setup.update('chat', { phase: 'ready' }));
+  assert.equal(setup.needsSetup(), false);
+  assert.ok(errors.length > 0);
+  assert.ok(errors.every(code => typeof code === 'string' && /^[A-Z0-9_]+$/.test(code)));
+  assert.equal(fs.existsSync(path.join(directory, 'automatic-setup.json')), false);
+  fs.rmdirSync(blocked);
+  // A later terminal notification retries the unchanged in-memory decision.
+  setup.update('chat', { phase: 'ready' });
+  const resumed = createFirstRunSetup({ directory, firstRun: true });
+  calls.length = 0;
+  resumed.start({ chat: { installChatModel: () => calls.push('unexpected-install'), ensureInstalledServer: () => calls.push('reuse') }, voice: { install: () => calls.push('unexpected-voice') } });
+  assert.deepEqual(calls, ['reuse']);
+  assert.equal(resumed.needsSetup(), false);
+});
+
 test('new installation prepares both models; restart resumes only unfinished work and respects cancellation', t => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'elysia-first-setup-'));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));

@@ -1,5 +1,5 @@
 /** Desktop IPC, tray-selected appearance, native dragging and right-button wheel zoom. */
-import { EXPRESSIONS, POSES, createPetState, applyAction, actionForKey, advance } from './state.mjs';
+import { EXPRESSIONS, POSES, createPetState, applyAction, restoreAppearance, actionForKey, advance } from './state.mjs';
 import { loadCharacter, drawCharacter, drawCharacterDecorations, composeCharacterFrame, RIG } from './faithful-character.mjs';
 import { createPointerTracking } from './pointer-tracking.mjs';
 import { createCharacterHitRegion, prepareCharacterHitRegions, withKeyCloudRegion } from './hit-region.mjs';
@@ -18,6 +18,7 @@ let hotkeys = {}, viewport = null;
 let dragging = null, rightPointer = null;
 let characterAtlas = null, dragRenderPaused = false, redrawRequested = true, shapeScheduled = false;
 let spaceHeld = false, restoringAppearance = Boolean(desktop);
+let initialAppearance = null;
 let settingsEpoch = 0, viewportEpoch = 0, settingsWrite = 0;
 let zoomSteps = 0, zoomAnchor = null, zoomScheduled = false, zoomBusy = false;
 let updateCanvas = () => {};
@@ -108,6 +109,7 @@ function receiveViewport(next) {
   updateCanvas();
 }
 function receiveSettings(snapshot, includeViewport = true) {
+  if (restoringAppearance && snapshot?.appearance) initialAppearance = snapshot.appearance;
   if (snapshot?.settings) { settings = {...snapshot.settings}; settingsEpoch++; }
   if(settings.keyDisplay===false){keyDisplay.clear();keyCloudVisible=false;}
   if(settings.interactionsEnabled===false){interactions.reset();expressionReaction.cancel({restore:true});}
@@ -224,7 +226,7 @@ if (desktop) {
   const epoch = settingsEpoch, viewEpoch = viewportEpoch;
   const snapshot = await desktop.getState();
   if (epoch === settingsEpoch) receiveSettings(snapshot, viewEpoch === viewportEpoch);
-  state.cat = settings.cat === true; state.glasses = settings.glasses === true;
+  restoreAppearance(state, initialAppearance, settings);
   restoringAppearance = false;
   for (const action of pendingActions.splice(0)) act(action);
 }

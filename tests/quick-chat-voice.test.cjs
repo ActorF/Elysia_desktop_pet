@@ -13,7 +13,7 @@ const { createQuickChatController } = require('../electron/quick-chat-controller
 function fixture(t, { readAloud = true } = {}) {
   const environment = { now: Date.now(), locked: false, suspended: false, fullscreen: false, monitorReady: true, idleSeconds: 0 };
   const captions = [], spoken = [], timers = new Map();
-  let speechHooks, environmentHooks, active = null, nextTimer = 0, quitCount = 0, audioBusy = false;
+  let speechHooks, environmentHooks, active = null, nextTimer = 0, quitCount = 0, audioBusy = false, elapsed = 0;
   const finish = (record = active, status = 'ended') => {
     if (!record) return;
     if (record === active) active = null;
@@ -36,7 +36,9 @@ function fixture(t, { readAloud = true } = {}) {
     setTimeout: timer, setInterval: timer, clearTimeout: id => timers.delete(id), clearInterval: id => timers.delete(id),
     require(name) {
       if (name === 'node:path') return path;
-      if (name === 'node:fs') return { readFileSync() { throw new Error('synthetic empty profile'); }, mkdirSync() {}, writeFileSync() {}, renameSync() {} };
+      if (name === 'node:perf_hooks') return require(name);
+      if (name === 'node:util') return require(name);
+      if (name === 'node:fs') return { readFileSync() { throw Object.assign(new Error('synthetic empty profile'), { code: 'ENOENT' }); }, mkdirSync() {}, writeFileSync() {}, renameSync() {} };
       if (name === './voice-engine.cjs') return { createVoiceEngine };
       if (name === './interaction-replies.cjs') return interaction;
       if (name === './voice-assets.cjs') return { loadVoiceAssets: () => assetSet, loadInteractionAssets: () => assetSet };
@@ -50,7 +52,7 @@ function fixture(t, { readAloud = true } = {}) {
   let speech;
   const voices = module.exports.createVoiceController({ root: path.resolve(__dirname, '..'), userData: path.resolve('synthetic-quick-voice'),
     getCharacterBounds: () => ({ x: 0, y: 0, width: 100, height: 100 }), getPreferences: () => ({}), isSmokeTest: true,
-    publish() { if (audioBusy && (environment.locked || environment.suspended)) speech.stop(); }, quit: () => { quitCount++; } });
+    publish() { if (audioBusy && (environment.locked || environment.suspended)) speech.stop(); }, quit: () => { quitCount++; }, clock: () => elapsed });
   speech = {
     start(text, reference) {
       if (!readAloud || environment.locked || environment.suspended) return false;
@@ -83,6 +85,7 @@ function fixture(t, { readAloud = true } = {}) {
   t.after(() => { quick.dispose(); speech.stop(); voices.dispose(); });
   return { quick, voices, captions, spoken, environment, complete, finish, flush, speech,
     get audioBusy() { return audioBusy; }, get quitCount() { return quitCount; },
+    advance(milliseconds) { elapsed += milliseconds; environment.now += milliseconds; },
     block(reason) { environment[reason] = true; environmentHooks.onBlocked(reason); } };
 }
 

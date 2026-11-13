@@ -6,11 +6,12 @@ import { createServer } from 'node:http';
 import { chromium } from 'playwright';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const output = path.join(root, 'artifacts', 'quick-chat-ui');
+const output = process.env.ELYSIA_UI_OUTPUT ? path.resolve(process.env.ELYSIA_UI_OUTPUT) : path.join(root, 'artifacts', 'quick-chat-ui');
 await fs.mkdir(path.join(output, 'temp'), { recursive: true });
 process.env.TEMP = path.join(output, 'temp');
 process.env.TMP = process.env.TEMP;
-const report = { passed: false, checks: [], screenshots: [] }, errors = [];
+const browserRegion = { locale: process.env.ELYSIA_UI_LOCALE || 'zh-CN', timezoneId: process.env.ELYSIA_UI_TIMEZONE || 'Asia/Shanghai' };
+const report = { passed: false, ...browserRegion, checks: [], screenshots: [] }, errors = [];
 const check = name => report.checks.push(name);
 const server = createServer(async (request, response) => {
   try {
@@ -31,7 +32,7 @@ const origin = `http://127.0.0.1:${server.address().port}`;
 let browser;
 try {
   browser = await chromium.launch({ channel: 'msedge', headless: true });
-  const context = await browser.newContext({ viewport: { width: 640, height: 140 } });
+  const context = await browser.newContext({ ...browserRegion, viewport: { width: 640, height: 140 } });
   context.on('page', page => page.on('pageerror', error => errors.push(error.message)));
   await context.addInitScript(() => {
     let state = { busy: false, error: null, storageError: null, voice: { enabled: true, status: 'idle', error: null, blocked: null } }, mode = 'accept', finish;
@@ -40,6 +41,7 @@ try {
     const publish = patch => { state = { ...state, ...patch }; for (const callback of listeners) callback(copy()); return copy(); };
     const subscribe = set => callback => { set.add(callback); return () => set.delete(callback); };
     window.__quickQA = { calls, publish, mode: value => { mode = value; }, focus: () => { for (const callback of focusListeners) callback(); },
+      finishOnly: result => finish(result),
       finish: result => { publish(result); finish(result); } };
     window.elysiaQuickChat = {
       getState: async () => copy(), onState: subscribe(listeners), onFocus: subscribe(focusListeners),
@@ -136,6 +138,8 @@ try {
   assert.equal(await page.evaluate(() => window.__quickQA.calls.filter(call => call[0] === 'hide').length), 1);
   check('Rejected send and Escape/refocus preserve the draft');
   await page.evaluate(() => { window.__quickQA.publish({ error: null }); window.__quickQA.mode('defer'); });
+  assert.doesNotMatch(await page.locator('#quick-status').textContent(), /暂时无法发送/);
+  check('Recovered host send errors clear without requiring another quick-chat submission');
   await page.keyboard.press('Enter');
   await page.waitForFunction(() => document.querySelector('#quick-input').getAttribute('aria-busy') === 'true');
   await input.fill('等待确认时写下的新草稿。');
@@ -144,6 +148,18 @@ try {
   assert.equal(await input.inputValue(), '等待确认时写下的新草稿。');
   assert.equal(await page.evaluate(() => window.__quickQA.calls.filter(call => call[0] === 'hide').length), 1, 'Only the earlier explicit Escape can hide, never accepted sends or voice events');
   check('Typing while send acceptance is pending survives the accepted result and state event');
+  await page.evaluate(() => { window.__quickQA.publish({ busy: false }); window.__quickQA.mode('defer'); });
+  const repeatedDraft = '你好，こんにちは，مرحبا 👩🏽‍💻';
+  await input.fill(repeatedDraft);
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => document.querySelector('#quick-input').getAttribute('aria-busy') === 'true');
+  await input.fill('另一条草稿');
+  await input.fill(repeatedDraft);
+  await page.evaluate(() => window.__quickQA.finish({ accepted: true, busy: true, error: null, storageError: null }));
+  await page.waitForFunction(() => document.querySelector('#quick-input').getAttribute('aria-busy') === 'false');
+  assert.equal(await input.inputValue(), repeatedDraft, 'A retyped draft remains new even if its text equals the previous submission');
+  assert.equal(await page.evaluate(() => window.__quickQA.calls.filter(call => call[0] === 'send').at(-1)[1]), repeatedDraft);
+  check('Unicode messages stay exact and an edited-then-restored draft survives late acceptance');
   await page.evaluate(() => { window.__quickQA.publish({ busy: false }); window.__quickQA.mode('preparing'); });
   await page.keyboard.press('Enter');
   await page.waitForFunction(() => document.querySelector('#quick-status').textContent === '正在唤醒爱莉希雅…');
@@ -167,14 +183,42 @@ try {
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth || document.documentElement.scrollHeight > innerHeight), false);
   check('Compact 320 × 140 layout fits without page overflow');
 
-  const settingsContext = await browser.newContext({ viewport: { width: 720, height: 830 } });
+  // Drive Chromium's own IME in an isolated headless page, never the OS keyboard.
+  const imePage = await context.newPage();
+  await imePage.goto(`${origin}/renderer/quick-chat.html`);
+  await imePage.waitForFunction(() => document.documentElement.dataset.quickChatReady === 'true');
+  await imePage.locator('#quick-input').focus();
+  const ime = await context.newCDPSession(imePage);
+  await ime.send('Input.imeSetComposition', { text: '中文草稿', selectionStart: 4, selectionEnd: 4 });
+  await imePage.locator('#quick-hide').focus();
+  await imePage.locator('#quick-input').focus();
+  await imePage.locator('#quick-input').press('Enter');
+  await imePage.waitForFunction(() => window.__quickQA.calls.some(call => call[0] === 'send'));
+  assert.equal(await imePage.evaluate(() => window.__quickQA.calls.find(call => call[0] === 'send')[1]), '中文草稿');
+  await ime.detach(); await imePage.close();
+  check('Chromium IME composition commits on focus loss and a refocused composer can send its exact draft');
+
+  const stalePage = await context.newPage();
+  await stalePage.goto(`${origin}/renderer/quick-chat.html`);
+  await stalePage.waitForFunction(() => document.documentElement.dataset.quickChatReady === 'true');
+  await stalePage.locator('#quick-input').fill('保留这条草稿');
+  await stalePage.evaluate(() => window.__quickQA.mode('defer'));
+  await stalePage.locator('#quick-input').press('Enter');
+  await stalePage.evaluate(() => { window.__quickQA.publish({ busy: true, error: null, status: '另一窗口正在回答' }); window.__quickQA.finishOnly({ accepted: false, busy: false, error: '旧的准备错误' }); });
+  await stalePage.waitForFunction(() => document.querySelector('#quick-input').getAttribute('aria-busy') === 'false');
+  assert.equal(await stalePage.locator('#quick-status').textContent(), '另一窗口正在回答');
+  assert.equal(await stalePage.locator('#quick-input').inputValue(), '保留这条草稿');
+  await stalePage.close();
+  check('A late rejected quick send cannot overwrite newer host activity from another window');
+
+  const settingsContext = await browser.newContext({ ...browserRegion, viewport: { width: 720, height: 830 } });
   settingsContext.on('page', target => target.on('pageerror', error => errors.push(error.message)));
   await settingsContext.addInitScript(() => {
     let state = { enabled: true, accelerator: 'Control+Space', registered: true, error: null }, capturing = false, reject = false, hold = false, resolveStart;
     const listeners = new Set(), calls = [];
     const copy = () => structuredClone(state);
     const publish = patch => { state = { ...state, ...patch }; for (const callback of listeners) callback(copy()); return copy(); };
-    window.__quickSettingsQA = { calls, snapshot: copy, reject: () => { reject = true; }, holdStart: () => { hold = true; }, releaseStart: () => { resolveStart(copy()); } };
+    window.__quickSettingsQA = { calls, snapshot: copy, capturing: () => capturing, reject: () => { reject = true; }, holdStart: () => { hold = true; }, releaseStart: () => { resolveStart(copy()); } };
     window.elysiaSettings = {
       getQuickChatSettings: async () => copy(),
       onQuickChatSettings: callback => { listeners.add(callback); return () => listeners.delete(callback); },
@@ -258,6 +302,33 @@ try {
   await settings.waitForFunction(() => !document.querySelector('#quick-chat-record').disabled);
   assert.equal(await settings.evaluate(() => window.__quickSettingsQA.calls.at(-1)[1]), false);
   check('Reset, Escape, blur, and blur during pending suspension restore a usable shortcut');
+  await settings.evaluate(() => window.__quickSettingsQA.holdStart());
+  await record.click();
+  await settings.waitForFunction(() => document.querySelector('#quick-chat-record').disabled);
+  await settings.evaluate(() => window.dispatchEvent(new Event('blur')));
+  await settings.waitForFunction(() => !document.querySelector('#quick-chat-record').disabled);
+  await record.click();
+  await settings.waitForFunction(() => document.querySelector('#quick-chat-record').getAttribute('aria-pressed') === 'true');
+  await settings.evaluate(() => window.__quickSettingsQA.releaseStart());
+  await settings.evaluate(() => new Promise(resolve => setTimeout(resolve, 0)));
+  assert.equal(await settings.evaluate(() => window.__quickSettingsQA.capturing()), true, 'An old capture reply must not restore the shortcut during a newer edit');
+  assert.equal(await record.getAttribute('aria-pressed'), 'true');
+  await settings.keyboard.press('Escape');
+  await settings.waitForFunction(() => !document.querySelector('#quick-chat-record').disabled);
+  check('A delayed first edit response cannot release a second active shortcut edit');
+  for (const [name, keyboard, expected] of [
+    ['AZERTY A', { key: 'a', code: 'KeyQ', ctrlKey: true }, 'Ctrl + A'],
+    ['QWERTZ Z', { key: 'z', code: 'KeyY', ctrlKey: true }, 'Ctrl + Z'],
+    ['Cyrillic position', { key: 'я', code: 'KeyZ', ctrlKey: true }, 'Ctrl + Z'],
+    ['Shift digit', { key: '!', code: 'Digit1', ctrlKey: true, shiftKey: true }, 'Ctrl + Shift + 1'],
+  ]) {
+    await record.click();
+    await settings.waitForFunction(() => document.querySelector('#quick-chat-record').getAttribute('aria-pressed') === 'true');
+    await settings.evaluate(keyboard => document.dispatchEvent(new KeyboardEvent('keydown', { ...keyboard, bubbles: true, cancelable: true })), keyboard);
+    await settings.waitForFunction(() => !document.querySelector('#quick-chat-record').disabled);
+    assert.equal(await shortcut.textContent(), expected, name);
+  }
+  check('Shortcut capture follows Latin layout letters and retains physical fallback for non-Latin input and shifted digits');
   await settings.locator('#quick-chat-open').click();
   assert.equal(await settings.evaluate(() => window.__quickSettingsQA.calls.at(-1)[0]), 'open');
   await settings.setViewportSize({ width: 420, height: 830 });

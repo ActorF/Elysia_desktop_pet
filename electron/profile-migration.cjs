@@ -1,12 +1,13 @@
 'use strict';
 const fs = require('node:fs');
 const path = require('node:path');
+const { TextDecoder } = require('node:util');
 const { sanitizeSettings } = require('./host-policy.cjs');
 
 const NEW_SETTINGS = ['interactionsEnabled', 'cursorTrailEnabled', 'cursorTrailStyle', 'cursorTrailDuration'];
 const record = value => value && typeof value === 'object' && !Array.isArray(value);
 function readRecord(file) {
-  try { const value = JSON.parse(fs.readFileSync(file, 'utf8')); return record(value) ? value : null; } catch { return null; }
+  try { const value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(fs.readFileSync(file))); return record(value) ? value : null; } catch { return null; }
 }
 
 /** Keep the stable 1.2 profile and import only missing data from the local sample. */

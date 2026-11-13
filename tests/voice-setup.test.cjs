@@ -20,7 +20,8 @@ const assetsFiles = ['config/settings.py', 'python/python.exe', 'python/python31
 const anchors = Array.from({ length: 20 }, (_, index) => `models/cache/${runtimeName}/runtime/anchor${index}`);
 function fixture(t, overrides = {}) {
   const { mutateManifest, ...serviceOverrides } = overrides;
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'elysia-voice-setup-'));
+  const temporary = os.tmpdir();
+  const root = fs.mkdtempSync(path.join(temporary, 'elysia-voice-setup-'));
   const userData = path.join(root, 'data'), resources = path.join(root, 'resources'), offline = path.join(root, 'offline');
   const assets = Buffer.from('zip fixture'), runtime = Buffer.from('7z fixture'), executable = Buffer.from('7za fixture');
   const descriptor = (fileName, data, url) => ({ fileName, bytes: data.length, sha256: hash(data), url });
@@ -50,7 +51,11 @@ function fixture(t, overrides = {}) {
   };
   const service = createVoiceSetup({ userData, resourcesPath: resources, assetDirectory: offline, manifest,
     env: {}, spawnImpl, onChange: value => notices.push(value), fetchImpl: async url => new Response(url.endsWith('.zip') ? assets : runtime), ...serviceOverrides });
-  t.after(() => { service.dispose(); fs.rmSync(root, { recursive: true, force: true }); });
+  t.after(() => {
+    service.dispose(); const actual = fs.realpathSync(root);
+    assert.equal(path.dirname(actual), fs.realpathSync(temporary));
+    fs.rmSync(actual, { recursive: true, force: true });
+  });
   return { root, userData, resources, offline, manifest, assets, runtime, service, calls, notices, spawnImpl };
 }
 async function settled(service) {
@@ -64,6 +69,56 @@ async function waitFor(predicate) {
   while (!predicate() && Date.now() < deadline) await new Promise(resolve => setImmediate(resolve));
   assert.ok(predicate(), 'expected download progress did not arrive');
 }
+
+test('an unconfirmed voice extractor stop settles and retains its stage until real exit', async t => {
+  for (const mode of ['timeout', 'cancel']) await t.test(mode, async t => {
+    let stuck = true, child, stage;
+    const f = fixture(t, { extractionTimeoutMs: 8, processStopTimeoutMs: 5, spawnImpl: (file, args, options) => {
+      if (!stuck || args[0] !== 'x') return f.spawnImpl(file, args, options);
+      const target = args.find(arg => arg.startsWith('-o')).slice(2); stage = path.dirname(target);
+      write(target, 'in-progress', 'owned partial');
+      child = new EventEmitter(); child.pid = 123; child.stdout = new PassThrough();
+      child.kill = () => { if (mode === 'cancel') throw new Error('refused'); return false; };
+      if (mode === 'cancel') queueMicrotask(() => f.service.cancel());
+      return child;
+    } });
+    f.service.install(); const state = await settled(f.service);
+    assert.equal(state.phase, mode === 'cancel' ? 'cancelled' : 'error');
+    assert.equal(state.diagnostic?.code || null, mode === 'cancel' ? null : 'EXT-103');
+    assert.equal(fs.existsSync(path.join(stage, 'runtime', 'in-progress')), true);
+    assert.equal(f.service.install().ok, false); assert.equal(f.service.repair().ok, false);
+    stuck = false; child.emit('exit', 1); child.emit('close', 1);
+    await waitFor(() => !fs.existsSync(stage));
+    assert.equal(f.service.install().ok, true); assert.equal((await settled(f.service)).phase, 'ready');
+  });
+});
+
+test('late extractor exit cannot remove a different directory substituted for its retained stage', async t => {
+  let child, stage;
+  const f = fixture(t, { extractionTimeoutMs: 8, processStopTimeoutMs: 5, spawnImpl: (file, args, options) => {
+    if (args[0] !== 'x') return f.spawnImpl(file, args, options);
+    stage = path.dirname(args.find(arg => arg.startsWith('-o')).slice(2));
+    child = new EventEmitter(); child.pid = 123; child.stdout = new PassThrough(); child.kill = () => false; return child;
+  } });
+  f.service.install(); await settled(f.service);
+  fs.renameSync(stage, path.join(f.userData, 'saved-owned-stage')); fs.mkdirSync(stage); write(stage, 'keep', 'unrelated data');
+  child.emit('exit', 1); child.emit('close', 1);
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert.equal(fs.readFileSync(path.join(stage, 'keep'), 'utf8'), 'unrelated data');
+});
+
+test('replacing an owned corrupt cache counts the bytes freed before downloading its replacement', async t => {
+  let fetched = 0, cached;
+  const f = fixture(t, { statfsImpl: async () => ({ bsize: 1, bavail: 64 * 1024 ** 2 + (fs.existsSync(cached) ? 5 : 5 + f.runtime.length) }),
+    fetchImpl: async url => { fetched++; assert.ok(url.endsWith('.7z')); return new Response(f.runtime); } });
+  write(f.offline, 'assets.zip', f.assets);
+  cached = path.join(f.userData, 'voice-downloads', `${f.manifest.runtime.sha256.slice(0, 16)}-${f.manifest.runtime.fileName}`);
+  write(path.dirname(cached), path.basename(cached), Buffer.alloc(f.runtime.length));
+  f.service.install();
+  assert.equal((await settled(f.service)).phase, 'ready'); assert.equal(fetched, 1);
+  assert.deepEqual(fs.readFileSync(cached), f.runtime);
+  assert.deepEqual(fs.readdirSync(path.dirname(cached)), [path.basename(cached)]);
+});
 
 test('construction and inspection do not download, create user state or launch interpreters', async t => {
   const f = fixture(t, { fetchImpl: () => assert.fail('unexpected download') });
@@ -165,10 +220,49 @@ test('the pinned Hugging Face archive may redirect to its current official CDN',
   assert.ok(visited.some(url => url.startsWith('https://us.aws.cdn.hf.co/')));
 });
 
+test('pinned voice archives accept official European, Asian and GCP download hosts', async t => {
+  for (const host of ['cdn-lfs-eu-1.hf.co', 'eu-west-3.aws.cdn.hf.co', 'europe-west4.us.gcp.cdn.hf.co',
+    'asia-southeast1.us.gcp.cdn.hf.co', 'transfer.xethub-eu.hf.co']) await t.test(host, async t => {
+    const visited = [];
+    const f = fixture(t, { fetchImpl: async url => {
+      visited.push(url);
+      if (url === f.manifest.runtime.url) return new Response(null, { status: 302, headers: { location: `https://${host}/pinned-blob?signature=opaque` } });
+      return new Response(url.endsWith('.zip') ? f.assets : f.runtime);
+    } });
+    f.service.install(); assert.equal((await settled(f.service)).phase, 'ready');
+    assert.equal(visited.filter(url => new URL(url).hostname === host).length, 1);
+  });
+});
+
+test('regional voice redirects still reject lookalike domains, unsafe URLs and cross-source ModelScope redirects', async t => {
+  const urls = ['https://us.gcp.cdn.hf.co.evil.example/asset', 'https://fake-us.gcp.cdn.hf.co/asset',
+    'https://unlisted.cdn.hf.co/asset', 'https://user:password@us.gcp.cdn.hf.co/asset',
+    'https://us.gcp.cdn.hf.co:8443/asset', 'http://us.gcp.cdn.hf.co/asset', 'https://s3.us-east-1.amazonaws.com/arbitrary/asset'];
+  for (const location of urls) {
+    const visited = [];
+    const f = fixture(t, { fetchImpl: async url => {
+      visited.push(url);
+      if (url === f.manifest.runtime.url) return new Response(null, { status: 302, headers: { location } });
+      assert.equal(url, f.manifest.assets.url); return new Response(f.assets);
+    } });
+    f.service.install(); const state = await settled(f.service);
+    assert.equal(state.diagnostic.code, createSetupDiagnostic('voice', 'network-redirect').code);
+    assert.equal(visited.includes(location), false); assert.equal(f.calls.length, 0);
+  }
+  const f = fixture(t, { mutateManifest: manifest => { manifest.runtime.fileName = `${runtimeName}.7z`; manifest.runtime.sources = [modelScopeRuntime]; },
+    fetchImpl: async url => {
+      if (url === modelScopeRuntime) return new Response(null, { status: 302, headers: { location: 'https://eu-west-3.aws.cdn.hf.co/asset' } });
+      assert.equal(url, f.manifest.assets.url); return new Response(f.assets);
+    } });
+  f.service.install(); assert.equal((await settled(f.service)).diagnostic.code, createSetupDiagnostic('voice', 'network-redirect').code);
+});
+
 test('archive traversal, drive paths, Windows aliases, duplicates and links are rejected before extraction', async t => {
   for (const record of ['Path = ../escape\nSize = 1', 'Path = C:\\escape\nSize = 1', 'Path = safe:ads\nSize = 1',
     'Path = AUX.txt\nSize = 1', 'Path = folder.\nSize = 0', 'Path = safe\nSymbolic Link = ../escape',
-    'Path = safe\nAttributes = A_ lrwxrwxrwx', 'Path = safe\n\nPath = SAFE']) {
+    'Path = safe\nAttributes = A_ lrwxrwxrwx', 'Path = safe\n\nPath = SAFE',
+    'Path = folder#tag/../escape', 'Path = folder#tag/file:stream',
+    ...['?', '*', '<', '>', '"', '|', '\u0001'].map(character => `Path = file${character}name`)]) {
     const f = fixture(t, { spawnImpl: (file, args) => {
       assert.equal(args[0], 'l', 'unsafe archive was extracted');
       const child = new EventEmitter(); child.stdout = new PassThrough(); child.kill = () => {};
@@ -179,6 +273,169 @@ test('archive traversal, drive paths, Windows aliases, duplicates and links are 
     assert.equal(fs.existsSync(f.service.getProjectRoot()), false);
     assert.ok(!fs.readdirSync(f.userData).some(name => name.startsWith('voice-staging-')));
   }
+});
+
+test('a verified cached runtime with the real hash-sign filename retries without downloading and remains inspectable', async t => {
+  // Exact entry from GPT-SoVITS-v2-240821.7z; # is a legal Windows filename character.
+  const archiveEntry = `${runtimeName}/runtime/Lib/site-packages/pandas/tests/io/data/legacy_pickle/1.2.4/empty_frame_v1_2_4-GH#42345.pkl`;
+  const installedEntry = `models/cache/${archiveEntry}`;
+  const outputChild = output => {
+    const child = new EventEmitter(); child.stdout = new PassThrough(); child.kill = () => {};
+    // Real child-process close follows drained stdout; keep that ordering in the mock.
+    process.nextTick(() => { child.stdout.once('end', () => child.emit('close', 0)); child.stdout.end(output); }); return child;
+  };
+  let f;
+  f = fixture(t, { fetchImpl: () => assert.fail('previously verified cached archives must not download again'),
+    spawnImpl: (file, args, options) => {
+      if (args[0] === 'l' && args.at(-1).endsWith('.7z')) {
+        return outputChild(`----------\r\nPath = ${archiveEntry.replaceAll('/', '\\')}\r\nSize = 1\r\nAttributes = A\r\n\r\n`);
+      }
+      if (args[0] === '-I') return outputChild(JSON.stringify({ required: [...anchors, installedEntry] }));
+      if (args[0] === 'x' && args.at(-1).endsWith('.7z')) {
+        const destination = args.find(arg => arg.startsWith('-o')).slice(2);
+        // Materialize the fake extraction before any child completion event.
+        write(destination, archiveEntry, 'small synthetic pandas fixture');
+      }
+      return f.spawnImpl(file, args, options);
+    } });
+  const cachedAssets = `voice-downloads/${f.manifest.assets.sha256.slice(0, 16)}-${f.manifest.assets.fileName}`;
+  const cachedRuntime = `voice-downloads/${f.manifest.runtime.sha256.slice(0, 16)}-${f.manifest.runtime.fileName}`;
+  write(f.userData, cachedAssets, f.assets); write(f.userData, cachedRuntime, f.runtime);
+  f.service.install(); const state = await settled(f.service);
+  assert.equal(state.phase, 'ready', JSON.stringify(state.diagnostic)); assert.equal(state.diagnostic, null);
+  assert.equal(fs.readFileSync(path.join(f.service.getProjectRoot(), installedEntry), 'utf8'), 'small synthetic pandas fixture');
+  const marker = JSON.parse(fs.readFileSync(path.join(f.service.getProjectRoot(), 'voice-setup-complete.json'), 'utf8'));
+  assert.ok(marker.required.includes(installedEntry)); assert.equal((await f.service.inspect()).ready, true);
+  assert.deepEqual(fs.readFileSync(path.join(f.userData, cachedAssets)), f.assets);
+  assert.deepEqual(fs.readFileSync(path.join(f.userData, cachedRuntime)), f.runtime);
+});
+
+test('the internal Windows runtime move retries temporary errors within the same staging tree', { skip: process.platform !== 'win32' }, async t => {
+  const failures = ['EPERM', 'EBUSY', 'EACCES'], attempts = [];
+  const f = fixture(t, { fetchImpl: () => assert.fail('offline fixtures must not download'),
+    renameRuntimeImpl: async (source, destination) => {
+      attempts.push([source, destination]);
+      const code = failures[attempts.length - 1];
+      if (code) throw Object.assign(new Error('temporary fixture move error'), { code });
+      return fs.promises.rename(source, destination);
+    } });
+  write(f.offline, 'assets.zip', f.assets); write(f.offline, 'runtime.7z', f.runtime);
+  f.service.install(); const state = await settled(f.service);
+  assert.equal(state.phase, 'ready', JSON.stringify(state.diagnostic)); assert.equal(attempts.length, 4);
+  for (const attempt of attempts) {
+    assert.deepEqual(attempt, attempts[0]);
+    const relative = path.relative(f.userData, attempt[0]);
+    assert.match(relative, /^voice-staging-[0-9a-f-]{36}[\\/]runtime[\\/]GPT-SoVITS-v2-240821$/);
+    assert.equal(attempt[1], path.join(f.userData, relative.split(path.sep)[0], 'project', 'models', 'cache', runtimeName));
+  }
+  assert.equal(fs.readFileSync(path.join(f.service.getProjectRoot(), `models/cache/${runtimeName}/runtime/python.exe`), 'utf8'), 'fixture');
+});
+
+test('permanent Windows runtime move refusal exhausts its bound and preserves the original system error', { skip: process.platform !== 'win32' }, async t => {
+  let attempts = 0;
+  const f = fixture(t, { renameRuntimeImpl: async () => {
+    attempts++; throw Object.assign(new Error('private permanent fixture refusal'), { code: 'EACCES' });
+  } });
+  f.service.install(); const state = await settled(f.service);
+  assert.equal(attempts, 5); assert.equal(state.phase, 'error');
+  assert.equal(state.diagnostic.code, createSetupDiagnostic('voice', 'storage-permission').code);
+  assert.equal(state.diagnostic.details.systemCode, 'EACCES'); assert.doesNotMatch(JSON.stringify(state), /private permanent/);
+  assert.equal(fs.existsSync(f.service.getProjectRoot()), false);
+  assert.ok(!fs.readdirSync(f.userData).some(name => name.startsWith('voice-staging-')));
+});
+
+test('cancellation during the Windows runtime move backoff prevents another rename attempt', { skip: process.platform !== 'win32' }, async t => {
+  let f, attempts = 0, cancelled;
+  f = fixture(t, { renameRuntimeImpl: async () => {
+    attempts++; setImmediate(() => { cancelled = f.service.cancel(); });
+    throw Object.assign(new Error('temporary fixture move error'), { code: 'EBUSY' });
+  } });
+  f.service.install(); const state = await settled(f.service);
+  assert.equal(cancelled?.ok, true); assert.equal(attempts, 1);
+  assert.equal(state.phase, 'cancelled'); assert.equal(state.diagnostic, null);
+  assert.equal(fs.existsSync(f.service.getProjectRoot()), false);
+  assert.ok(!fs.readdirSync(f.userData).some(name => name.startsWith('voice-staging-')));
+});
+
+test('a target that appears during runtime move backoff is not overwritten', { skip: process.platform !== 'win32' }, async t => {
+  let attempts = 0, originalSource, externalTarget;
+  const f = fixture(t, { renameRuntimeImpl: async (source, destination) => {
+    attempts++;
+    assert.equal(attempts, 1, 'an external target must prevent a second rename call');
+    originalSource = source; externalTarget = destination;
+    write(destination, 'external.fixture', 'external target contents');
+    throw Object.assign(new Error('temporary fixture move error'), { code: 'EBUSY' });
+  } });
+  f.service.install(); const state = await settled(f.service);
+  assert.equal(attempts, 1); assert.equal(state.phase, 'error');
+  assert.equal(state.diagnostic.code, createSetupDiagnostic('voice', 'installation-conflict').code);
+  assert.equal(fs.existsSync(f.service.getProjectRoot()), false);
+  assert.equal(fs.readFileSync(path.join(externalTarget, 'external.fixture'), 'utf8'), 'external target contents');
+  assert.equal(fs.readFileSync(path.join(originalSource, 'runtime/python.exe'), 'utf8'), 'fixture');
+  assert.ok(fs.readdirSync(f.userData).some(name => name.startsWith('voice-staging-')));
+});
+
+test('a changed source identity during runtime move backoff prevents another rename attempt', { skip: process.platform !== 'win32' }, async t => {
+  let attempts = 0, substitutedSource;
+  const f = fixture(t, { renameRuntimeImpl: async (source) => {
+    attempts++;
+    assert.equal(attempts, 1, 'a substituted source must prevent a second rename call');
+    substitutedSource = source;
+    fs.renameSync(source, source + '.saved-fixture'); write(source, 'external.fixture', 'different source directory');
+    throw Object.assign(new Error('temporary fixture move error'), { code: 'EPERM' });
+  } });
+  f.service.install(); const state = await settled(f.service);
+  assert.equal(attempts, 1); assert.equal(state.phase, 'error');
+  assert.equal(state.diagnostic.code, createSetupDiagnostic('voice', 'installation-conflict').code);
+  assert.equal(fs.existsSync(f.service.getProjectRoot()), false);
+  assert.equal(fs.readFileSync(path.join(substitutedSource, 'external.fixture'), 'utf8'), 'different source directory');
+  assert.equal(fs.readFileSync(path.join(substitutedSource + '.saved-fixture', 'runtime/python.exe'), 'utf8'), 'fixture');
+  assert.ok(fs.readdirSync(f.userData).some(name => name.startsWith('voice-staging-')));
+});
+
+test('an external target appearing on the final runtime move failure is preserved with the source', { skip: process.platform !== 'win32' }, async t => {
+  let attempts = 0, originalSource, externalTarget;
+  const f = fixture(t, { renameRuntimeImpl: async (source, destination) => {
+    attempts++; originalSource = source; externalTarget = destination;
+    if (attempts === 5) write(destination, 'external.fixture', 'target appeared on the last attempt');
+    throw Object.assign(new Error('temporary fixture move error'), { code: 'EBUSY' });
+  } });
+  f.service.install(); const state = await settled(f.service);
+  assert.equal(attempts, 5); assert.equal(state.phase, 'error'); assert.equal(state.ready, false);
+  assert.equal(fs.existsSync(f.service.getProjectRoot()), false);
+  assert.equal(fs.readFileSync(path.join(externalTarget, 'external.fixture'), 'utf8'), 'target appeared on the last attempt');
+  assert.equal(fs.readFileSync(path.join(originalSource, 'runtime/python.exe'), 'utf8'), 'fixture');
+  assert.ok(fs.readdirSync(f.userData).some(name => name.startsWith('voice-staging-')));
+});
+
+test('cancelling runtime move backoff preserves a newly appeared target and the original source', { skip: process.platform !== 'win32' }, async t => {
+  let f, attempts = 0, originalSource, externalTarget, cancellation;
+  f = fixture(t, { renameRuntimeImpl: async (source, destination) => {
+    attempts++; originalSource = source; externalTarget = destination;
+    setImmediate(() => {
+      write(destination, 'external.fixture', 'target appeared while waiting to retry');
+      cancellation = f.service.cancel();
+    });
+    throw Object.assign(new Error('temporary fixture move error'), { code: 'EBUSY' });
+  } });
+  f.service.install(); const state = await settled(f.service);
+  assert.equal(cancellation?.ok, true); assert.equal(attempts, 1);
+  assert.equal(state.phase, 'cancelled'); assert.equal(state.diagnostic, null); assert.equal(state.ready, false);
+  assert.equal(fs.existsSync(f.service.getProjectRoot()), false);
+  assert.equal(fs.readFileSync(path.join(externalTarget, 'external.fixture'), 'utf8'), 'target appeared while waiting to retry');
+  assert.equal(fs.readFileSync(path.join(originalSource, 'runtime/python.exe'), 'utf8'), 'fixture');
+  assert.ok(fs.readdirSync(f.userData).some(name => name.startsWith('voice-staging-')));
+});
+
+test('a non-transient runtime move error is reported without retrying', async t => {
+  let attempts = 0;
+  const f = fixture(t, { renameRuntimeImpl: async () => {
+    attempts++; throw Object.assign(new Error('fixture disk full'), { code: 'ENOSPC' });
+  } });
+  f.service.install(); const state = await settled(f.service);
+  assert.equal(attempts, 1); assert.equal(state.phase, 'error');
+  assert.equal(state.diagnostic.code, createSetupDiagnostic('voice', 'storage-space').code);
+  assert.equal(state.diagnostic.details.systemCode, 'ENOSPC'); assert.equal(fs.existsSync(f.service.getProjectRoot()), false);
 });
 
 test('cancel retains a partial and retry resumes it while preserving unrelated user data', async t => {

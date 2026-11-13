@@ -6,7 +6,7 @@ const { createServer } = require('node:http');
 const { chromium } = require('playwright');
 const { DEFAULT_SETTINGS } = require('../electron/host-policy.cjs');
 const { createSetupDiagnostic } = require('../electron/setup-diagnostics.cjs');
-const root = path.resolve(__dirname, '..'), output = path.join(root, 'artifacts', 'chat-window-check');
+const root = path.resolve(__dirname, '..'), output = process.env.ELYSIA_UI_OUTPUT ? path.resolve(process.env.ELYSIA_UI_OUTPUT) : path.join(root, 'artifacts', 'chat-window-check');
 const report = { passed: false, kind: 'browser UI with mock host; real IPC and model tested separately', checks: [], screenshots: [] };
 const server = createServer(async (request, response) => {
   try {
@@ -223,10 +223,12 @@ async function main() {
     assert.equal(await page.locator('#chat-speech-error').isVisible(), true); assert.equal(await input.isEnabled(), true);
     await page.evaluate(() => window.__chatQA.publish({ speech: { status: 'idle', error: null } }));
     assert.equal(await page.locator('#chat-speech-error').isHidden(), true);
-    for (const status of ['warming', 'ready']) {
+    for (const status of ['warming', 'starting', 'synthesizing']) {
       await page.evaluate(status => window.__chatQA.publish({ speech: { status, error: null } }), status);
-      assert.equal(await page.locator('#chat-status').isHidden(), true); assert.equal(await page.locator('#chat-stop').isHidden(), true);
+      assert.equal(await page.locator('#chat-status').isVisible(), true); assert.equal(await page.locator('#chat-stop').isVisible(), true);
     }
+    await page.evaluate(() => window.__chatQA.publish({ speech: { status: 'ready', error: null } }));
+    assert.equal(await page.locator('#chat-status').isHidden(), true); assert.equal(await page.locator('#chat-stop').isHidden(), true);
     check('speech has a stop control while active and an error notice without blocking text chat');
     await input.fill('消息未发送时保留我'); await page.evaluate(() => window.__chatQA.reject()); await input.press('Enter');
     await page.waitForFunction(() => document.querySelector('#chat-input').value === '消息未发送时保留我');

@@ -61,8 +61,9 @@ function Get-SafeItem([string]$Path) {
 }
 
 function Test-RelativeResourcePath($Relative) {
+    # These are filesystem paths; # is valid and occurs in the pinned runtime.
     if ($Relative -isnot [string] -or [string]::IsNullOrWhiteSpace($Relative) -or $Relative.Length -gt 240 -or
-        $Relative -match '[\x00-\x1f\x7f:?*<>|"#]' -or $Relative -match '^[\\/]') { return $false }
+        $Relative -match '[\x00-\x1f\x7f:?*<>|"]' -or $Relative -match '^[\\/]') { return $false }
     # Validate EVERY segment before any filesystem access for this entry.
     foreach ($segment in ($Relative -split '[\\/]')) {
         if (-not $segment -or $segment -in @('.', '..') -or $segment -match '[. ]$' -or

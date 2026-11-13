@@ -2,6 +2,12 @@ const desktop = window.elysiaSpeech;
 const bubble = document.querySelector('#speech'), text = document.querySelector('#line'), tail = document.querySelector('#tail');
 const HORIZONTAL_INSET = 64, VERTICAL_INSET = 52;
 let current = null;
+let disposed = false;
+const subscriptions = [];
+function subscribe(method, callback) {
+  const stop = desktop?.[method]?.(value => { if (!disposed) return callback(value); });
+  if (typeof stop === 'function') subscriptions.push(stop);
+}
 function placement(value) {
   if (!value) return;
   bubble.dataset.side = value.side === 'right' ? 'right' : 'left';
@@ -50,7 +56,7 @@ function measure(request, value) {
   request.measured = { width: Math.ceil(width + HORIZONTAL_INSET), height: Math.ceil(height + VERTICAL_INSET), fontSize };
   desktop.layout({ token: request.token, revision: request.revision, width: request.measured.width, height: request.measured.height });
 }
-desktop?.onPlay(async value => {
+subscribe('onPlay', async value => {
   clearAudio(); placement(value); text.textContent = value.line.text;
   const audio = value.textOnly ? null : new Audio(value.line.audioUrl);
   if (audio) audio.volume = value.volume;
@@ -66,8 +72,8 @@ desktop?.onPlay(async value => {
   await document.fonts.ready;
   measure(request, value);
 });
-desktop?.onMeasure(value => { if (current?.token === value?.token) measure(current, value); });
-desktop?.onLayoutReady(async value => {
+subscribe('onMeasure', value => { if (current?.token === value?.token) measure(current, value); });
+subscribe('onLayoutReady', async value => {
   const request = current;
   if (!request || request.token !== value?.token || request.revision !== value.revision || !request.measured) return;
   placement(value); text.style.width = '100%'; bubble.dataset.layout = 'ready';
@@ -80,11 +86,11 @@ desktop?.onLayoutReady(async value => {
   try { await request.audio.play(); }
   catch { if (current === request) desktop.report({ token: request.token, type: 'error', error: '语音未能播放。' }); }
 });
-desktop?.onStop(value => { if (value?.token == null || current?.token === value.token) clearAudio(); });
-desktop?.onVolume(value => {
+subscribe('onStop', value => { if (value?.token == null || current?.token === value.token) clearAudio(); });
+subscribe('onVolume', value => {
   if (current?.audio && current.token === value?.token && Number.isFinite(value.volume)) current.audio.volume = Math.max(0, Math.min(1, value.volume));
 });
-desktop?.onPlacement(placement);
-desktop?.onError(value => { if (current?.token === value?.token) clearAudio(); });
-window.addEventListener('pagehide', clearAudio);
+subscribe('onPlacement', placement);
+subscribe('onError', value => { if (current?.token === value?.token) clearAudio(); });
+window.addEventListener('pagehide', () => { disposed = true; clearAudio(); for (const stop of subscriptions.splice(0)) stop(); }, { once: true });
 document.documentElement.dataset.ready = 'true';

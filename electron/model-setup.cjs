@@ -4,12 +4,15 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { spawn } = require('node:child_process');
+const { performance } = require('node:perf_hooks');
 const manifestDefault = require('./chat-bootstrap-manifest.json');
 const { EXTRACT_SCRIPT } = require('./chat-runtime-extract.cjs');
 const { createRuntimeDependencies, validDependenciesManifest } = require('./chat-runtime-dependencies.cjs');
 const { downloadResource, verifyResource } = require('./resource-download.cjs');
 const { createSetupDiagnostic, classifySetupFailure } = require('./setup-diagnostics.cjs');
 const { createRuntimeRepair } = require('./voice-repair.cjs');
+const { createSetupProcessTracker } = require('./setup-child-process.cjs');
+const { isHuggingFaceDownloadHost } = require('./resource-download-hosts.cjs');
 
 const SETUP_MODEL = 'elysia-chat';
 const SETUP_BASE_URL = 'http://127.0.0.1:18434';
@@ -80,10 +83,7 @@ function allowedDownload(url, source, asset) {
     return ['release-assets.githubusercontent.com', 'objects.githubusercontent.com'].includes(url.hostname)
       && /^\/github-production-release-asset(?:-2e65be)?\//.test(url.pathname);
   }
-  return (url.hostname === 'huggingface.co' && url.pathname === original.pathname) || url.hostname === 'cdn-lfs.huggingface.co'
-    || url.hostname === 'cdn-lfs-us-1.hf.co' || url.hostname === 'cdn-lfs-eu-1.hf.co'
-    || url.hostname === 'cdn.hf.co' || url.hostname.endsWith('.cdn.hf.co')
-    || url.hostname === 'cas-bridge.xethub.hf.co';
+  return (url.hostname === 'huggingface.co' && url.pathname === original.pathname) || isHuggingFaceDownloadHost(url.hostname);
 }
 
 function createModelSetup({ userData, onChange = () => {}, fetchImpl = globalThis.fetch, spawnImpl = spawn, allowDownloads = true,
@@ -91,13 +91,14 @@ function createModelSetup({ userData, onChange = () => {}, fetchImpl = globalThi
   resourcesPath = process.resourcesPath, assetDirectory, runtimeAssetDirectory,
   probeTimeoutMs = 1500, startTimeoutMs = 180000, pollIntervalMs = 500,
   downloadTimeoutMs = 4 * 60 * 60 * 1000, requestTimeoutMs = 15000, idleTimeoutMs = 30000,
-  extractionTimeoutMs = 5 * 60 * 1000 } = {}) {
+  extractionTimeoutMs = 5 * 60 * 1000, deviceTimeoutMs = 10000, processStopTimeoutMs = 2000 } = {}) {
   if (typeof userData !== 'string' || !path.isAbsolute(userData)) throw new TypeError('userData must be an absolute directory.');
   if (typeof allowDownloads !== 'boolean') throw new TypeError('allowDownloads must be a boolean.');
   let manifestValid = false;
   try { manifestValid = validManifest(manifest); } catch {}
+  const helperProcesses = createSetupProcessTracker({ stopTimeoutMs: processStopTimeoutMs });
   const runtimeDependencies = createRuntimeDependencies({ manifest: manifest?.runtimeDependencies,
-    resourcesPath, assetDirectory, env, spawnImpl, extractionTimeoutMs });
+    resourcesPath, assetDirectory, env, spawnImpl, extractionTimeoutMs, processStopTimeoutMs });
   const runtimeRoot = path.join(userData, 'chat-runtime');
   const modelRoot = path.join(userData, 'chat-models');
   const modelPath = path.join(modelRoot, manifestValid ? manifest.model.file : 'invalid.gguf');
@@ -112,8 +113,9 @@ function createModelSetup({ userData, onChange = () => {}, fetchImpl = globalThi
   const getState = () => structuredClone(state);
   function update(patch, throttle = false) {
     Object.assign(state, patch);
-    if (disposed || (throttle && Date.now() - lastNotice < 150)) return;
-    lastNotice = Date.now(); onChange(getState());
+    const now = performance.now();
+    if (disposed || (throttle && now - lastNotice < 150)) return;
+    lastNotice = now; onChange(getState());
   }
   function phase(value, message) {
     update({ phase: value, message, busy: true, canCancel: true, error: null, diagnostic: null, completedBytes: 0, totalBytes: 0, progress: null });
@@ -195,15 +197,21 @@ function createModelSetup({ userData, onChange = () => {}, fetchImpl = globalThi
       if (response.status === 503) { await response.body?.cancel(); return 'loading'; }
       if (!response.ok) { await response.body?.cancel(); return 'occupied'; }
       const health = JSON.parse(await readLimited(response, combined, 65536));
-      if (health.status !== 'ok') return 'occupied';
+      if (health?.status !== 'ok') return 'occupied';
       const models = await fetchImpl(`${SETUP_BASE_URL}/v1/models`, { signal: combined, redirect: 'error' });
       if (!models.ok) { await models.body?.cancel(); return 'occupied'; }
       const data = JSON.parse(await readLimited(models, combined, 65536));
-      return data.data?.some(item => item.id === SETUP_MODEL) ? 'ready' : 'occupied';
-    } catch { checkAbort(signal); return 'occupied'; }
+      return Array.isArray(data?.data) && data.data.some(item => item?.id === SETUP_MODEL) ? 'ready' : 'occupied';
+    } catch (error) {
+      checkAbort(signal);
+      // A complete but invalid protocol response is different from a socket
+      // failure while an owned server is loading. Keep that process alive for
+      // another bounded probe. An unowned responding port still blocks spawn.
+      return error instanceof SyntaxError || error.diagnosticKind === 'server-protocol' ? 'occupied' : 'loading';
+    }
   }
   async function consume(response, signal, accept) {
-    if (!response.body) throw failure('download');
+    if (!response.body) throw failure('start', 'server-protocol');
     const reader = response.body.getReader();
     const abort = () => { void reader.cancel().catch(() => {}); };
     signal.addEventListener('abort', abort, { once: true });
@@ -223,7 +231,7 @@ function createModelSetup({ userData, onChange = () => {}, fetchImpl = globalThi
   async function readLimited(response, signal, limit) {
     let bytes = 0; const chunks = [];
     await consume(response, signal, chunk => {
-      bytes += chunk.length; if (bytes > limit) throw failure('download');
+      bytes += chunk.length; if (bytes > limit) throw failure('start', 'server-protocol');
       chunks.push(Buffer.from(chunk));
     });
     return Buffer.concat(chunks).toString('utf8');
@@ -255,29 +263,23 @@ function createModelSetup({ userData, onChange = () => {}, fetchImpl = globalThi
     if (manifest.runtime.bundled) throw failure('runtime-source');
     return null;
   }
-  function extract(archive, stage, signal) {
-    return new Promise((resolve, reject) => {
-      checkAbort(signal);
-      const executable = path.join(env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-      let child, failureReason = null, finished = false;
-      try {
-        child = spawnImpl(executable, ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(EXTRACT_SCRIPT, 'utf16le').toString('base64')],
-          { windowsHide: true, shell: false, stdio: 'ignore', env: { ...env, ELYSIA_CHAT_ARCHIVE: archive, ELYSIA_CHAT_STAGE: stage } });
-      } catch (error) { reject(failure('archive', classifySetupFailure(error, 'extraction-launch'), {}, error)); return; }
-      const finish = error => {
-        if (finished) return; finished = true;
-        clearTimeout(timer); signal.removeEventListener('abort', abort);
-        error ? reject(error) : resolve();
-      };
-      const abort = () => { failureReason = cancelled(); child.kill(); };
-      const timer = setTimeout(() => { failureReason = failure('archive', 'extraction-timeout'); child.kill(); }, extractionTimeoutMs);
-      signal.addEventListener('abort', abort, { once: true });
-      child.once('error', error => finish(failureReason || failure('archive', classifySetupFailure(error, 'extraction-launch'), {}, error)));
-      // Wait until file handles close before the caller removes the staging tree.
-      child.once('exit', code => finish(failureReason || (code === 0 ? null : failure('archive',
-        ({ 70: 'archive-unsafe', 71: 'archive-layout', 72: 'storage-space', 73: 'storage-permission', 74: 'storage-busy', 75: 'storage-path' })[code] || 'extraction-exit', { exitCode: code }))));
-      if (signal.aborted) abort();
-    });
+  async function extract(archive, stage, signal) {
+    checkAbort(signal);
+    const executable = path.join(env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+    try {
+      const child = spawnImpl(executable, ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(EXTRACT_SCRIPT, 'utf16le').toString('base64')],
+        { windowsHide: true, shell: false, stdio: 'ignore', env: { ...env, ELYSIA_CHAT_ARCHIVE: archive, ELYSIA_CHAT_STAGE: stage } });
+      const code = await helperProcesses.wait(child, { signal, timeoutMs: extractionTimeoutMs,
+        timeoutError: () => failure('archive', 'extraction-timeout') });
+      if (code !== 0) throw failure('archive',
+        ({ 70: 'archive-unsafe', 71: 'archive-layout', 72: 'storage-space', 73: 'storage-permission', 74: 'storage-busy', 75: 'storage-path' })[code] || 'extraction-exit', { exitCode: code });
+    } catch (error) {
+      if (error.setupCode || error.name === 'AbortError') throw error;
+      const wrapped = failure('archive', classifySetupFailure(error, 'extraction-launch'),
+        { preserveStage: error.preserveStage === true, setupProcessPending: error.setupProcessPending === true }, error);
+      if (error.setupProcessExit) Object.defineProperty(wrapped, 'setupProcessExit', { value: error.setupProcessExit });
+      throw wrapped;
+    }
   }
   async function runtimeDirectory() {
     let stat;
@@ -290,7 +292,7 @@ function createModelSetup({ userData, onChange = () => {}, fetchImpl = globalThi
     || left.dev === right.dev && left.ino === right.ino && left.birthtimeMs === right.birthtimeMs);
   async function prepare(signal) {
     if (!manifestValid) throw failure('manifest');
-    const repair = createRuntimeRepair({ kind: 'chat', userData, verifyInstallation: directory => {
+    const repair = createRuntimeRepair({ kind: 'chat', userData, beforeChange: stopServerForRepair, verifyInstallation: directory => {
       checkAbort(signal);
       return runtimeInstalled(directory) && runtimeDependencies.ready(directory);
     } });
@@ -309,6 +311,13 @@ function createModelSetup({ userData, onChange = () => {}, fetchImpl = globalThi
         await download(manifest.runtime, archive, signal);
       }
       const stage = await fs.promises.mkdtemp(path.join(userData, 'chat-staging-'));
+      const stageIdentity = fs.lstatSync(stage, { bigint: true });
+      const removeOwnedStage = async () => {
+        const current = await fs.promises.lstat(stage, { bigint: true });
+        if (current.isDirectory() && !current.isSymbolicLink() && current.dev === stageIdentity.dev && current.ino === stageIdentity.ino) {
+          await fs.promises.rm(stage, { recursive: true, force: true });
+        }
+      };
       let preserveStage = false;
       try {
         phase('installing', '正在解压聊天运行环境…');
@@ -320,8 +329,11 @@ function createModelSetup({ userData, onChange = () => {}, fetchImpl = globalThi
         if (!sameDirectory(await runtimeDirectory(), previous)) throw failure('conflict');
         checkAbort(signal);
         await repair.commit(stage, { allowReplace: Boolean(previous) });
-      } catch (error) { preserveStage = error.preserveStage === true; throw error; }
-      finally { if (!preserveStage) await fs.promises.rm(stage, { recursive: true, force: true }).catch(() => {}); }
+      } catch (error) {
+        preserveStage = error.preserveStage === true;
+        if (error.setupProcessExit) void error.setupProcessExit.then(removeOwnedStage).catch(() => {});
+        throw error;
+      } finally { if (!preserveStage) await removeOwnedStage().catch(() => {}); }
     }
     await prepareRuntimeDependencies(signal);
     if (!available.modelReady) {
@@ -345,8 +357,22 @@ function createModelSetup({ userData, onChange = () => {}, fetchImpl = globalThi
     }
   }
   function stopServer() {
-    const owned = server; server = null;
-    if (owned && !owned.exited) { try { owned.child.kill(); } catch {} }
+    const owned = server;
+    if (owned && !owned.exited) {
+      owned.stopping = true;
+      try { owned.child.kill(); } catch {}
+    }
+  }
+  async function stopServerForRepair() {
+    const owner = server;
+    if (!owner || owner.exited) return;
+    stopServer();
+    let timer;
+    try {
+      const exited = await Promise.race([owner.exitConfirmed.then(() => true),
+        new Promise(resolve => { timer = setTimeout(() => resolve(false), processStopTimeoutMs); })]);
+      if (!exited) throw failure('conflict', 'storage-busy');
+    } finally { clearTimeout(timer); }
   }
   async function waitTick(signal) {
     await new Promise((resolve, reject) => {
@@ -358,28 +384,30 @@ function createModelSetup({ userData, onChange = () => {}, fetchImpl = globalThi
   async function selectDevice(signal) {
     // Integrated GPUs report shared RAM as VRAM. Prefer a recognizable discrete
     // device; CPU is safer than filling system memory on an unknown adapter.
-    return new Promise((resolve, reject) => {
-      checkAbort(signal);
-      let child, output = '', aborted = false, finished = false;
-      try { child = spawnImpl(serverPath, ['--list-devices'], { cwd: runtimeRoot, windowsHide: true, shell: false, stdio: ['ignore', 'pipe', 'ignore'], env }); }
-      catch { resolve('none'); return; }
-      const finish = () => {
-        if (finished) return; finished = true;
-        clearTimeout(timer); signal.removeEventListener('abort', abort);
-        if (aborted) { reject(cancelled()); return; }
-        const match = output.split(/\r?\n/).map(line => line.match(/^\s*(Vulkan\d+):\s*(?:NVIDIA\b|AMD Radeon RX\b|Intel\(R\) Arc\b|Intel Arc\b)/i)).find(Boolean);
-        resolve(match?.[1] || 'none');
-      };
-      const abort = () => { aborted = true; child.kill(); };
-      const timer = setTimeout(() => { child.kill(); }, 10000);
-      signal.addEventListener('abort', abort, { once: true });
-      child.stdout?.setEncoding('utf8'); child.stdout?.on('data', chunk => { output = (output + chunk).slice(0, 65536); });
-      child.once('error', finish); child.once('exit', finish);
-      if (signal.aborted) abort();
-    });
+    checkAbort(signal);
+    let child, output = '';
+    try { child = spawnImpl(serverPath, ['--list-devices'], { cwd: runtimeRoot, windowsHide: true, shell: false, stdio: ['ignore', 'pipe', 'ignore'], env }); }
+    catch { return 'none'; }
+    child.stdout?.setEncoding('utf8');
+    const read = chunk => { output = (output + chunk).slice(0, 65536); };
+    child.stdout?.on('data', read);
+    try {
+      const code = await helperProcesses.wait(child, { signal, timeoutMs: deviceTimeoutMs,
+        completionEvent: 'close', timeoutError: () => failure('start', 'server-timeout') });
+      if (code !== 0) return 'none';
+      const match = output.split(/\r?\n/).map(line => line.match(/^\s*(Vulkan\d+):\s*(?:NVIDIA\b|AMD Radeon RX\b|Intel\(R\) Arc\b|Intel Arc\b)/i)).find(Boolean);
+      return match?.[1] || 'none';
+    } catch (error) {
+      if (error.name === 'AbortError' || error.preserveStage) throw error;
+      return 'none';
+    } finally { child.stdout?.removeListener('data', read); }
   }
   async function startServer(signal) {
-    const observed = await probe(signal); checkAbort(signal);
+    if (server?.stopping) throw failure('conflict', 'storage-busy');
+    const observedOwner = server, observed = await probe(signal); checkAbort(signal);
+    if (server !== observedOwner || observedOwner?.exited || observedOwner?.stopping) {
+      throw observedOwner?.failure || failure('conflict', 'storage-busy');
+    }
     if (server && observed === 'ready') return;
     if (!server && observed !== 'offline') throw failure('port');
     if (!server) {
@@ -395,26 +423,38 @@ function createModelSetup({ userData, onChange = () => {}, fetchImpl = globalThi
         { cwd: runtimeRoot, windowsHide: true, shell: false, stdio: ['ignore', 'ignore', 'ignore'],
           env: { ...env, ELYSIA_CHAT_SERVER: serverPath, ELYSIA_CHAT_ARGS: JSON.stringify(args), ELYSIA_CHAT_PARENT_PID: String(process.pid) } }); }
       catch (error) { throw failure('start', classifySetupFailure(error, 'server-launch'), {}, error); }
-      const owner = { child, exited: false, failure: null }; server = owner;
+      let confirmExit;
+      const owner = { child, exited: false, stopping: false, failure: null,
+        exitConfirmed: new Promise(resolve => { confirmExit = resolve; }) }; server = owner;
       const ended = error => {
         if (owner.exited) return;
         owner.exited = true;
         owner.failure = error;
+        confirmExit();
         if (server !== owner) return; server = null;
-        if (!active) update({ phase: 'error', serverReady: false, busy: false, canCancel: false, error: ERRORS.start, message: ERRORS.start,
+        if (!active && !owner.stopping) update({ phase: 'error', serverReady: false, busy: false, canCancel: false, error: ERRORS.start, message: ERRORS.start,
           diagnostic: diagnosticFor(error, 'start') });
       };
-      child.once('error', error => ended(failure('start', classifySetupFailure(error, 'server-launch'), {}, error)));
+      child.on('error', error => {
+        const problem = failure('start', classifySetupFailure(error, 'server-launch'), {}, error);
+        if (!child.pid) { ended(problem); return; }
+        // A kill/send error from a live host does not mean its Job or model
+        // process has exited. Keep this owner until the real exit event.
+        if (owner.exited || owner.stopping) return;
+        owner.failure = problem; stopServer();
+        if (!active) update({ phase: 'error', serverReady: false, busy: false, canCancel: false,
+          error: ERRORS.start, message: ERRORS.start, diagnostic: diagnosticFor(problem, 'start') });
+      });
       child.once('exit', code => ended(failure('start', 'server-exit', { exitCode: code })));
     }
-    const owner = server, deadline = Date.now() + startTimeoutMs;
-    while (Date.now() < deadline) {
+    const owner = server, deadline = performance.now() + startTimeoutMs;
+    while (performance.now() < deadline) {
       checkAbort(signal);
-      if (!owner || owner.exited || server !== owner) throw owner?.failure || failure('start', 'server-exit');
+      if (!owner || owner.exited || owner.stopping || server !== owner) throw owner?.failure || failure('start', 'server-exit');
       const status = await probe(signal);
       if (status === 'ready') {
         checkAbort(signal);
-        if (owner.exited || server !== owner) throw owner.failure || failure('start', 'server-exit');
+        if (owner.exited || owner.stopping || server !== owner) throw owner.failure || failure('start', 'server-exit');
         return;
       }
       if (status === 'occupied') throw failure('start', 'server-protocol');
@@ -468,6 +508,10 @@ function createModelSetup({ userData, onChange = () => {}, fetchImpl = globalThi
       }
       return { ok: false, error: '配置正在进行，请等待当前操作完成。' };
     }
+    if (server?.stopping || helperProcesses.pending() || runtimeDependencies.pending()) {
+      const diagnostic = createSetupDiagnostic('chat', 'storage-busy', { stage: 'start' });
+      return { ok: false, error: diagnostic.summary, diagnostic, state: getState() };
+    }
     const operation = { controller: new AbortController(), kind }; active = operation;
     phase('checking', '正在检测本地聊天环境…'); void run(operation, kind === 'install');
     return { ok: true, state: getState() };
@@ -481,10 +525,11 @@ function createModelSetup({ userData, onChange = () => {}, fetchImpl = globalThi
       if (platform !== 'win32' || arch !== 'x64') throw failure('unsupported');
       if (!manifestValid) throw failure('manifest');
       const available = resources(), status = await probe(operation.controller.signal);
-      const ready = !!server && status === 'ready' && available.runtimeReady && available.modelReady;
+      const ready = !!server && !server.stopping && status === 'ready' && available.runtimeReady && available.modelReady;
       const missingPreviewResources = !allowDownloads && (!available.runtimeReady || !available.modelReady);
       const problem = resourceProblem(available);
-      let diagnostic = ready ? null : !server && status !== 'offline' ? createSetupDiagnostic('chat', 'server-port-busy', { stage: 'start' })
+      let diagnostic = ready ? null : server?.stopping ? createSetupDiagnostic('chat', 'storage-busy', { stage: 'start' })
+        : !server && status !== 'offline' ? createSetupDiagnostic('chat', 'server-port-busy', { stage: 'start' })
         : server && status === 'occupied' ? createSetupDiagnostic('chat', 'server-protocol', { stage: 'start' })
           : problem ? createSetupDiagnostic('chat', problem.kind, { ...problem, stage: 'inspection' }) : null;
       // Inspection checks files and a running owned server; it cannot prove a
@@ -509,7 +554,7 @@ function createModelSetup({ userData, onChange = () => {}, fetchImpl = globalThi
     if (!active || !state.canCancel) return { ok: false, state: getState() };
     startAfterInspection = false; active.controller.abort(); return { ok: true, state: getState() };
   }
-  function dispose() { disposed = true; startAfterInspection = false; active?.controller.abort(); stopServer(); }
+  function dispose() { disposed = true; startAfterInspection = false; active?.controller.abort(); helperProcesses.stop(); runtimeDependencies.dispose(); stopServer(); }
   const ensureInstalledServer = () => begin('start');
   return { getState, inspect, installChatModel: () => begin('install'), ensureInstalledServer,
     startInstalledServer: ensureInstalledServer, cancel, dispose };

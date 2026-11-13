@@ -348,7 +348,7 @@ test('a write failure after the first chunk is still storage, even if the stream
   t.mock.method(fs.promises, 'open', async (...args) => {
     const handle = await realOpen(...args);
     if (args[0] !== f.partial) return handle;
-    return { close: () => handle.close(), writeFile: async () => { throw Object.assign(new Error('disk full'), { code: 'ENOSPC' }); } };
+    return { stat: options => handle.stat(options), close: () => handle.close(), writeFile: async () => { throw Object.assign(new Error('disk full'), { code: 'ENOSPC' }); } };
   });
   await assert.rejects(downloadResource(f.options(() => f.response())), error => error.setupCode === 'storage' && error.diagnosticKind === 'storage-space');
   assert.equal(f.calls.length, 1);
@@ -372,4 +372,155 @@ test('cancelling while headers are pending is not presented as a timeout or conn
     assert.equal(error.name, 'AbortError'); assert.equal(error.diagnosticKind, undefined); assert.equal(error.httpStatus, undefined); return true;
   });
   assert.equal(f.calls.length, 1); assert.equal(fs.existsSync(f.destination), false);
+});
+
+test('a same-sized partial replaced while headers arrive is preserved without appending or retrying', async t => {
+  const f = fixture(t), replacement = Buffer.from('other');
+  fs.writeFileSync(f.partial, f.bytes.subarray(0, replacement.length));
+  await assert.rejects(downloadResource(f.options(() => {
+    fs.renameSync(f.partial, path.join(f.directory, 'saved-prefix'));
+    fs.writeFileSync(f.partial, replacement);
+    return f.response(replacement.length);
+  })), error => error.setupCode === 'storage' && error.diagnosticKind === 'storage-busy');
+  assert.deepEqual(fs.readFileSync(f.partial), replacement);
+  assert.equal(f.calls.length, 1);
+  assert.equal(fs.existsSync(f.destination), false);
+});
+
+test('a destination created at publication is never overwritten', async t => {
+  const f = fixture(t), replacement = Buffer.from('user imported content');
+  for (const operation of ['rename', 'link']) {
+    const original = fs.promises[operation].bind(fs.promises);
+    t.mock.method(fs.promises, operation, async (source, target, ...options) => {
+      if (source === f.partial && target === f.destination) fs.writeFileSync(target, replacement, { flag: 'wx' });
+      return original(source, target, ...options);
+    });
+  }
+  await assert.rejects(downloadResource(f.options(() => f.response())), error => error.setupCode === 'storage' && error.diagnosticKind === 'storage-busy');
+  assert.deepEqual(fs.readFileSync(f.destination), replacement);
+  assert.deepEqual(fs.readFileSync(f.partial), f.bytes);
+  assert.equal(f.calls.length, 1);
+});
+
+test('an existing partial swapped just before open is not truncated by a server ignoring Range', async t => {
+  const f = fixture(t), replacement = Buffer.from('other'), original = fs.promises.open.bind(fs.promises);
+  fs.writeFileSync(f.partial, f.bytes.subarray(0, replacement.length));
+  t.mock.method(fs.promises, 'open', async (file, flags, ...options) => {
+    if (file === f.partial && (flags & fs.constants.O_RDWR)) {
+      fs.renameSync(file, path.join(f.directory, 'saved-prefix'));
+      fs.writeFileSync(file, replacement);
+    }
+    return original(file, flags, ...options);
+  });
+  await assert.rejects(downloadResource(f.options(() => f.response())), error => error.diagnosticKind === 'storage-busy');
+  assert.deepEqual(fs.readFileSync(f.partial), replacement);
+  assert.equal(f.calls.length, 1);
+});
+
+test('a new partial created just before open is preserved even when it is empty', async t => {
+  const f = fixture(t), original = fs.promises.open.bind(fs.promises);
+  t.mock.method(fs.promises, 'open', async (file, flags, ...options) => {
+    if (file === f.partial && (flags & fs.constants.O_CREAT)) fs.writeFileSync(file, '', { flag: 'wx' });
+    return original(file, flags, ...options);
+  });
+  await assert.rejects(downloadResource(f.options(() => f.response())), error => error.diagnosticKind === 'storage-busy');
+  assert.equal(fs.statSync(f.partial).size, 0);
+  assert.equal(f.calls.length, 1);
+});
+
+test('verification rejects a path replaced during hashing and leaves the replacement intact', async t => {
+  const f = fixture(t), replacement = Buffer.alloc(f.bytes.length, 0x58), original = fs.createReadStream.bind(fs);
+  fs.writeFileSync(f.partial, f.bytes);
+  t.mock.method(fs, 'createReadStream', (file, options) => {
+    const stream = original(file, options);
+    if (file === f.partial) stream.once('data', () => {
+      fs.renameSync(file, path.join(f.directory, 'saved-complete'));
+      fs.writeFileSync(file, replacement);
+    });
+    return stream;
+  });
+  await assert.rejects(downloadResource(f.options(() => assert.fail('must not fetch'))), error => error.diagnosticKind === 'storage-busy');
+  assert.deepEqual(fs.readFileSync(f.partial), replacement);
+  assert.equal(fs.existsSync(f.destination), false);
+});
+
+test('overflow cleanup cannot delete a partial that was replaced while streaming', async t => {
+  const f = fixture(t), replacement = Buffer.from('user content');
+  let reads = 0;
+  const body = new ReadableStream({ pull(controller) {
+    if (++reads === 1) controller.enqueue(f.bytes.subarray(0, 3));
+    else {
+      fs.renameSync(f.partial, path.join(f.directory, 'saved-prefix'));
+      fs.writeFileSync(f.partial, replacement);
+      controller.enqueue(Buffer.alloc(f.bytes.length + 1)); controller.close();
+    }
+  } }, { highWaterMark: 0 });
+  await assert.rejects(downloadResource(f.options(() => new Response(body))), error => error.diagnosticKind === 'storage-busy');
+  assert.deepEqual(fs.readFileSync(f.partial), replacement);
+  assert.equal(f.calls.length, 1);
+});
+
+test('unsupported hardlinks use the Windows no-replace move without copying verified bytes', { skip: process.platform !== 'win32' }, async t => {
+  const f = fixture(t);
+  t.mock.method(fs.promises, 'link', async () => { throw Object.assign(new Error('unsupported filesystem'), { code: 'ENOTSUP' }); });
+  t.mock.method(fs.promises, 'copyFile', () => assert.fail('large resources must never be duplicated'));
+  await downloadResource(f.options(() => f.response()));
+  assert.deepEqual(fs.readFileSync(f.destination), f.bytes);
+  assert.equal(fs.existsSync(f.partial), false);
+  assert.equal(f.calls.length, 1);
+});
+
+test('Windows publication fallback handles Unicode paths and preserves a concurrently created destination', { skip: process.platform !== 'win32' }, async t => {
+  const f = fixture(t), folder = path.join(f.directory, '资源 東京 Ω # [files] &'); fs.mkdirSync(folder);
+  const destination = path.join(folder, '模型 # &.gguf');
+  t.mock.method(fs.promises, 'link', async () => { throw Object.assign(new Error('unsupported'), { code: 'ENOSYS' }); });
+  await downloadResource(f.options(() => f.response(), { destination }));
+  assert.deepEqual(fs.readFileSync(destination), f.bytes);
+  fs.unlinkSync(destination);
+  await assert.rejects(downloadResource(f.options(() => f.response(), { destination,
+    onVerify: () => { fs.writeFileSync(destination, 'external data', { flag: 'wx' }); },
+  })), error => error.diagnosticKind === 'storage-busy');
+  assert.equal(fs.readFileSync(destination, 'utf8'), 'external data');
+  assert.deepEqual(fs.readFileSync(destination + '.part'), f.bytes);
+});
+
+test('hardlink permission failures are not bypassed using native move', async t => {
+  const f = fixture(t);
+  t.mock.method(fs.promises, 'link', async () => { throw Object.assign(new Error('denied'), { code: 'EACCES' }); });
+  await assert.rejects(downloadResource(f.options(() => f.response())), error => error.diagnosticKind === 'storage-permission');
+  assert.deepEqual(fs.readFileSync(f.partial), f.bytes); assert.equal(fs.existsSync(f.destination), false);
+});
+
+test('Windows ERROR_INVALID_FUNCTION translation falls back only when EISDIR came from link', { skip: process.platform !== 'win32' }, async t => {
+  for (const syscall of ['link', 'open']) await t.test(syscall, async t => {
+    const f = fixture(t);
+    t.mock.method(fs.promises, 'link', async () => { throw Object.assign(new Error('illegal operation on a directory'), { code: 'EISDIR', syscall }); });
+    if (syscall === 'link') {
+      await downloadResource(f.options(() => f.response()));
+      assert.deepEqual(fs.readFileSync(f.destination), f.bytes); assert.equal(fs.existsSync(f.partial), false);
+    } else {
+      await assert.rejects(downloadResource(f.options(() => f.response())), error => error.diagnosticKind === 'storage-path');
+      assert.deepEqual(fs.readFileSync(f.partial), f.bytes); assert.equal(fs.existsSync(f.destination), false);
+    }
+  });
+});
+
+test('region-specific DNS, TLS, proxy, HTTP and timeout failures fall back while retaining the same pinned prefix', async t => {
+  const cases = [
+    ['dns', () => { throw new TypeError('fetch failed', { cause: Object.assign(new Error('lookup'), { code: 'ENOTFOUND' }) }); }],
+    ['tls', () => { throw Object.assign(new Error('certificate'), { code: 'CERT_HAS_EXPIRED' }); }],
+    ['proxy-connect', () => { throw Object.assign(new Error('connect'), { code: 'ECONNREFUSED' }); }],
+    ...[401, 403, 404, 407, 410, 416, 429, 500, 503].map(status => [String(status), () => new Response('', { status })]),
+    ['timeout', () => new Promise(() => {})],
+  ];
+  for (const [label, unavailable] of cases) await t.test(label, async t => {
+    const f = fixture(t); fs.writeFileSync(f.partial, f.bytes.subarray(0, 5));
+    const switches = [];
+    await downloadResource(f.options(url => url === sources[0] ? unavailable() : f.response(5), {
+      requestTimeoutMs: 8, onSourceChange: event => switches.push(event.index),
+    }));
+    assert.deepEqual(fs.readFileSync(f.destination), f.bytes);
+    assert.deepEqual(f.calls.map(call => call.request.headers.Range), ['bytes=5-', 'bytes=5-']);
+    assert.deepEqual(switches, [1]); assert.equal(fs.existsSync(f.partial), false);
+  });
 });

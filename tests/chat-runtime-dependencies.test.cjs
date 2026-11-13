@@ -159,3 +159,110 @@ test('dependency helpers preserve launch, timeout, unsafe archive and storage fa
     assert.equal(fs.readdirSync(f.root).some(name => name.startsWith('chat-dependencies-staging-')), false);
   }
 });
+
+test('unconfirmed dependency extraction preserves staging, refuses retry, and clears only after late exit', async t => {
+  const f = fixture(t); let child, stage, spawns = 0;
+  const dependencies = createRuntimeDependencies({ manifest: f.manifest, assetDirectory: f.assets,
+    extractionTimeoutMs: 5, processStopTimeoutMs: 5, spawnImpl: (file, args, options) => {
+      spawns++; stage = options.env.ELYSIA_CHAT_DEPENDENCY_STAGE;
+      fs.writeFileSync(path.join(stage, 'in-progress'), 'partial');
+      child = new EventEmitter(); child.pid = 123; child.kill = () => { throw new Error('refused'); }; return child;
+    } });
+  await assert.rejects(dependencies.prepare(f.directory, new AbortController().signal), error => error.diagnosticKind === 'extraction-timeout' && error.preserveStage);
+  assert.equal(dependencies.pending(), true); assert.equal(fs.existsSync(stage), true);
+  await assert.rejects(dependencies.prepare(f.directory, new AbortController().signal), { diagnosticKind: 'storage-busy' });
+  assert.equal(spawns, 1); assert.deepEqual(fs.readdirSync(f.directory), []);
+  child.emit('exit', 1); await Promise.resolve(); assert.equal(dependencies.pending(), false);
+  for (let i = 0; i < 100 && fs.existsSync(stage); i++) await new Promise(resolve => setTimeout(resolve, 2));
+  assert.equal(fs.existsSync(stage), false);
+});
+
+test('real PowerShell extraction supports Unicode, spaces, hash signs and shell metacharacters in paths', { skip: process.platform !== 'win32' }, async t => {
+  const f = fixture(t), directory = path.join(f.root, '聊天 東京 Ω # [runtime] &'), assets = path.join(f.root, '资源 # [assets] &');
+  fs.renameSync(f.directory, directory); fs.renameSync(f.assets, assets);
+  const dependencies = createRuntimeDependencies({ manifest: f.manifest, assetDirectory: assets });
+  await dependencies.prepare(directory, new AbortController().signal);
+  assert.equal(dependencies.ready(directory), true);
+  for (const [file, bytes] of f.files) assert.deepEqual(fs.readFileSync(path.join(directory, file)), bytes);
+});
+
+test('dependency preparation cannot modify a runtime directory replaced while extraction is pending', async t => {
+  const f = fixture(t), replacement = Buffer.from('new directory content');
+  const dependencies = createRuntimeDependencies({ manifest: f.manifest, assetDirectory: f.assets,
+    spawnImpl: (file, args, options) => {
+      fs.renameSync(f.directory, path.join(f.root, 'old-runtime')); fs.mkdirSync(f.directory);
+      fs.writeFileSync(path.join(f.directory, f.manifest.files[0].file), replacement);
+      for (const [name, bytes] of f.files) fs.writeFileSync(path.join(options.env.ELYSIA_CHAT_DEPENDENCY_STAGE, name), bytes);
+      const child = new EventEmitter(); process.nextTick(() => child.emit('exit', 0)); return child;
+    } });
+  await assert.rejects(dependencies.prepare(f.directory, new AbortController().signal), { diagnosticKind: 'storage-busy' });
+  assert.deepEqual(fs.readdirSync(f.directory), [f.manifest.files[0].file]);
+  assert.deepEqual(fs.readFileSync(path.join(f.directory, f.manifest.files[0].file)), replacement);
+  assert.deepEqual(fs.readdirSync(path.join(f.root, 'old-runtime')), []);
+});
+
+test('a dependency child error keeps its late-exit cleanup across the public error wrapper', async t => {
+  const f = fixture(t); let child, stage;
+  const dependencies = createRuntimeDependencies({ manifest: f.manifest, assetDirectory: f.assets, processStopTimeoutMs: 5,
+    spawnImpl: (file, args, options) => {
+      stage = options.env.ELYSIA_CHAT_DEPENDENCY_STAGE; fs.writeFileSync(path.join(stage, 'partial'), 'owned');
+      child = new EventEmitter(); child.pid = 123; child.kill = () => false;
+      queueMicrotask(() => child.emit('error', Object.assign(new Error('IO failure'), { code: 'EIO' }))); return child;
+    } });
+  await assert.rejects(dependencies.prepare(f.directory, new AbortController().signal), error =>
+    error.diagnosticKind === 'storage-io' && error.preserveStage && error.setupProcessExit instanceof Promise);
+  assert.equal(fs.existsSync(stage), true); assert.equal(dependencies.pending(), true);
+  child.emit('exit', 1);
+  for (let i = 0; i < 100 && fs.existsSync(stage); i++) await new Promise(resolve => setTimeout(resolve, 2));
+  assert.equal(fs.existsSync(stage), false); assert.equal(dependencies.pending(), false);
+});
+
+test('dependency publication cannot overwrite a target created immediately before its atomic link', async t => {
+  const f = fixture(t), realLink = fs.promises.link.bind(fs.promises), target = path.join(f.directory, f.manifest.files[0].file);
+  t.mock.method(fs.promises, 'link', async (source, destination) => {
+    if (destination === target) fs.writeFileSync(target, 'new user file', { flag: 'wx' });
+    return realLink(source, destination);
+  });
+  const dependencies = createRuntimeDependencies({ manifest: f.manifest, assetDirectory: f.assets,
+    spawnImpl: (file, args, options) => {
+      for (const [name, bytes] of f.files) fs.writeFileSync(path.join(options.env.ELYSIA_CHAT_DEPENDENCY_STAGE, name), bytes);
+      const child = new EventEmitter(); process.nextTick(() => child.emit('exit', 0)); return child;
+    } });
+  await assert.rejects(dependencies.prepare(f.directory, new AbortController().signal), { diagnosticKind: 'storage-busy' });
+  assert.equal(fs.readFileSync(target, 'utf8'), 'new user file'); assert.deepEqual(fs.readdirSync(f.directory), [f.manifest.files[0].file]);
+});
+
+test('dependency publication supports volumes without hardlinks using verified same-volume native moves', { skip: process.platform !== 'win32' }, async t => {
+  const f = fixture(t);
+  let calls = 0;
+  t.mock.method(fs.promises, 'link', async () => { throw Object.assign(new Error('unsupported'), ++calls % 2
+    ? { code: 'EISDIR', syscall: 'link' } : { code: 'ENOTSUP' }); });
+  t.mock.method(fs.promises, 'copyFile', () => assert.fail('publication does not duplicate bytes'));
+  const dependencies = createRuntimeDependencies({ manifest: f.manifest, assetDirectory: f.assets,
+    spawnImpl: (file, args, options) => {
+      for (const [name, bytes] of f.files) fs.writeFileSync(path.join(options.env.ELYSIA_CHAT_DEPENDENCY_STAGE, name), bytes);
+      const child = new EventEmitter(); process.nextTick(() => child.emit('exit', 0)); return child;
+    } });
+  await dependencies.prepare(f.directory, new AbortController().signal);
+  assert.equal(dependencies.ready(f.directory), true);
+  assert.deepEqual(fs.readdirSync(f.directory).sort(), [...f.files.keys()].sort());
+});
+
+test('dependency publication preserves a source replaced while its verified inode is being linked', async t => {
+  const f = fixture(t), realLink = fs.promises.link.bind(fs.promises); let replaced, stage;
+  t.mock.method(fs.promises, 'link', async (source, destination) => {
+    await realLink(source, destination);
+    if (!replaced) {
+      replaced = source; stage = path.dirname(source);
+      fs.renameSync(source, source + '.saved'); fs.writeFileSync(source, 'unrelated replacement');
+    }
+  });
+  const dependencies = createRuntimeDependencies({ manifest: f.manifest, assetDirectory: f.assets,
+    spawnImpl: (file, args, options) => {
+      for (const [name, bytes] of f.files) fs.writeFileSync(path.join(options.env.ELYSIA_CHAT_DEPENDENCY_STAGE, name), bytes);
+      const child = new EventEmitter(); process.nextTick(() => child.emit('exit', 0)); return child;
+    } });
+  await assert.rejects(dependencies.prepare(f.directory, new AbortController().signal), error => error.diagnosticKind === 'storage-busy' && error.preserveStage);
+  assert.equal(fs.readFileSync(replaced, 'utf8'), 'unrelated replacement'); assert.equal(fs.existsSync(stage), true);
+  assert.deepEqual(fs.readFileSync(path.join(f.directory, f.manifest.files[0].file)), f.files.get(f.manifest.files[0].file));
+});

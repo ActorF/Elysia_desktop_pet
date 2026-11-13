@@ -31,10 +31,11 @@ test('release applies final native position once and stops further movement',()=
  assert.deepEqual([s.bounds.x,s.bounds.y],[830,-750]);assert.equal(s.saves,1);
 });
 test('stationary cursor events are suppressed but changed window bounds are transmitted',()=>{
- const s=setup();s.pointer.sample();s.pointer.acknowledge(s.events[0].sequence);s.pointer.sample();assert.equal(s.events.length,1);
- s.pointer.startDrag();s.cursor({x:101,y:100});s.pointer.sample();assert.equal(s.events.length,2);
- s.pointer.acknowledge(-1);s.cursor({x:102,y:100});s.pointer.sample();assert.equal(s.events.length,2);
- s.pointer.acknowledge(s.events[1].sequence);s.pointer.sample();assert.equal(s.events.length,3);
+ const s=setup();s.pointer.sample();s.pointer.acknowledge(s.events[0].sequence);s.pointer.sample();assert.equal(s.events.length,2,'one fresh sample follows initial synchronization');
+ s.pointer.acknowledge(s.events[1].sequence);s.pointer.sample();assert.equal(s.events.length,2,'stationary suppression resumes after synchronization');
+ s.pointer.startDrag();s.cursor({x:101,y:100});s.pointer.sample();assert.equal(s.events.length,3);
+ s.pointer.acknowledge(-1);s.cursor({x:102,y:100});s.pointer.sample();assert.equal(s.events.length,3);
+ s.pointer.acknowledge(s.events[2].sequence);s.pointer.sample();assert.equal(s.events.length,4);
 });
 test('invalid coordinates, canceled drags and renderer reloads remain recoverable without a stalled queue',()=>{
  const s=setup();s.pointer.startDrag({x:Infinity,y:0});assert.equal(s.pointer.dragging,false);

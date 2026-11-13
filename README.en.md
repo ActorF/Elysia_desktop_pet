@@ -7,14 +7,14 @@
 
 A chibi Elysia companion for Windows, with a transparent full-body character, mouse-following eyes, and gentle motion. Mix expressions, cat mode, glasses, and four actions, with little clouds that respond to your typing. Includes local chat, optional read-aloud replies, automatic model setup, conversation history management, and body-region interactions.
 
-**Current stable version: 1.4.5.** Adds a transparent quick input window with a customizable shortcut, clearer resource errors, and voice environment repair. See the [1.4.5 release page](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.4.5) and [release notes](docs/releases/v1.4.5.md).
+**Current stable version: 1.4.6.** Fixes speech resource extraction and repeated drive-letter creation, and improves chat input, settings saves, window recovery, and shutdown cleanup. See the [1.4.6 release page](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.4.6) and [release notes](docs/releases/v1.4.6.md).
 
 ## Download
 
 | Edition | Program | Features | Checksum |
 | --- | --- | --- | --- |
-| **1.4.5 Windows installer** | [Download installer](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.4.5/Elysia_desktop_pet-1.4.5-setup.exe) | Includes chat and optional read-aloud replies | [SHA256](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.4.5/Elysia_desktop_pet-1.4.5-setup.exe.sha256) |
-| **1.4.5 Windows portable** | [Download EXE](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.4.5/Elysia_desktop_pet-1.4.5.exe) | Same features; double-click to run | [SHA256](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.4.5/Elysia_desktop_pet-1.4.5.exe.sha256) |
+| **1.4.6 Windows installer** | [Download installer](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.4.6/Elysia_desktop_pet-1.4.6-setup.exe) | Includes chat and optional read-aloud replies | [SHA256](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.4.6/Elysia_desktop_pet-1.4.6-setup.exe.sha256) |
+| **1.4.6 Windows portable** | [Download EXE](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.4.6/Elysia_desktop_pet-1.4.6.exe) | Same features; double-click to run | [SHA256](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.4.6/Elysia_desktop_pet-1.4.6.exe.sha256) |
 | 1.3.0 Windows portable | [Download older EXE](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.3.0/Elysia_desktop_pet-1.3.0.exe) | **No chat or read-aloud replies**; daily and interaction recordings remain included | [SHA256](https://github.com/ActorF/Elysia_desktop_pet/releases/download/v1.3.0/Elysia_desktop_pet-1.3.0.exe.sha256) |
 
 For **Windows x64**. Follow the installer or double-click the portable EXE; Git, Git LFS, and Node.js are not needed. Version 1.3.0 does not download chat or speech synthesis models.
@@ -23,7 +23,7 @@ Quit the old version from its tray before installing or opening the new one. Pos
 
 The app is unsigned. Once the installer or portable EXE has finished downloading, use its SHA256 file to check integrity.
 
-[1.4.5 release page](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.4.5) · [1.3.0 release page](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.3.0) · [Run from source](#run-from-source)
+[1.4.6 release page](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.4.6) · [1.3.0 release page](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.3.0) · [Run from source](#run-from-source)
 
 ## Character gallery
 
@@ -76,6 +76,8 @@ Typing creates pale pink-and-white character clouds, with illustrated sound wave
 
 Transparent space around the character lets clicks pass through to the windows behind her. Scrolling alone does not resize her, and right-clicking the character does not open Settings.
 
+If the character display fails, use **Bring back (`找回桌宠`)** to restore it while keeping her current appearance. Settings and Chat can be reopened from their usual entry points after a window failure.
+
 ### Settings window
 
 Settings and the pet stay on screen together, and you can move or resize the window independently. Drag its empty header area to move it. The three standard icons at the top right minimize, maximize/restore, and close the window. Closing Settings leaves the pet running. There are seven tabs: **Appearance, Animation, Desktop, Interaction, Voice, Chat, and Chat history**.
@@ -107,6 +109,8 @@ Click a screenshot to view it at full size. The app currently uses Chinese label
 - **Chat (`聊天`):** change your username, toggle automatic read-aloud, edit the quick input shortcut, and view model and speech setup progress, error details, and repair controls. Advanced options support a compatible chat service or speech environment.
 - **Chat history (`聊天记录`):** select a conversation in the left list and read its messages on the right. Continue chatting, delete one conversation, or clear history after confirmation.
 
+A failed settings save shows an error while retaining your current changes and unsaved input. If an existing configuration file cannot be read, the app preserves the original and explains what to do next.
+
 | Animation parameter | Range | Default |
 | --- | --- | --- |
 | Eye follow strength (`眼睛跟随幅度`) | 0–200% | 100% |
@@ -125,7 +129,7 @@ The chat model is about **5.8 GB**, and the speech runtime download is about **5
 
 Choose **Open chat (打开聊天框)** from the tray. Enter sends a message; Shift + Enter adds a line. Set your preferred name in **Settings → Chat**. The default local chat answers with **1–3 short bubbles, one complete sentence each**, usually just one unless there is more to add. Consecutive replies are grouped closely together, and each message can be copied individually.
 
-Automatic read-aloud is **off by default**. Choose **Read Aloud / 朗读** under a bubble to read only that message without changing the setting. When enabled in chat settings, automatic reading waits for the completed reply and reads all its bubbles together in order. The first speech model load may take a while; subsequent requests within a short interval reuse the loaded model.
+Automatic read-aloud is **off by default**. Choose **Read Aloud / 朗读** under a bubble to read only that message without changing the setting. When enabled in chat settings, automatic reading waits for the completed reply and reads all its bubbles together in order. The first speech model load may take a while; the preparation state is visible and can be stopped. Subsequent requests within a short interval reuse the loaded model.
 
 Manual reading is not blocked by ordinary fullscreen or Windows busy-state detection. It still respects Do not disturb, mute, screen lock, and sleep, with specific failure messages. Automatic reading and daily greetings retain screen-state restrictions. Sending a new message, stopping, or closing chat cancels the current reading.
 
@@ -137,7 +141,7 @@ Press **`Ctrl + Alt + E`** to open a transparent input box centered near the bot
 
 The input box stays open after sending so you can draft your next message. Press **Esc**, use the same shortcut again, or choose **Hide (`收起`)** to tuck it away. Unsent drafts are retained.
 
-In **Settings → Chat → Quick input (`快捷输入`)**, choose **Change shortcut (`更换快捷键`)**, press your new key combination, and choose **Save shortcut (`保存快捷键`)**. You can also restore the default or open the input box from Settings. Esc cancels shortcut editing.
+In **Settings → Chat → Quick input (`快捷输入`)**, choose **Change shortcut (`更换快捷键`)**, press your new key combination, and choose **Save shortcut (`保存快捷键`)**. You can also restore the default or open the input box from Settings. Esc cancels shortcut editing. If the combination is already in use or cannot be saved, the window explains the problem.
 
 Quick input uses your existing chat model, speech environment, and automatic read-aloud setting. When reading is enabled, the input box shows speech loading, synthesis, playback, or the reason reading is blocked. Stop ends the current reply or reading.
 
@@ -148,6 +152,8 @@ Quick input uses your existing chat model, speech environment, and automatic rea
 If an existing voice directory has a missing installation record, mismatched resource version, or missing files after an upgrade, choose **Repair voice environment (`修复语音环境`)**. The app first reuses downloaded archives that pass integrity checks, prepares a complete environment separately, and switches over after checking it. The old directory is retained as a backup. Complete cached archives avoid another download, and available space is checked before downloading and extracting.
 
 Original resources are preserved if repair fails or is cancelled. If the app exits during the directory switch, the next setup or repair action recovers the unfinished operation. **Recheck (`重新检测`)** only inspects the current state. It keeps the last failure reason while the same problem remains and clears it once recovery is confirmed.
+
+If the chat model is intact and only its installation record is missing or outdated, retrying checks the existing file and rebuilds the record without downloading the model again.
 
 ### Daily voices and speech bubbles
 

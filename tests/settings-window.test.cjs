@@ -59,6 +59,18 @@ function fixture(isSmokeTest=false){
   return {controller,windows,snapshot};
 }
 
+test('settings renderer crashes discard the failed document while preserving normal window bounds',async t=>{
+  const f=fixture();t.after(()=>f.controller.dispose());
+  const previous=await f.controller.open();
+  previous.bounds={x:20,y:30,width:700,height:800};previous.maximize();
+  previous.webContents.emit('render-process-gone',{}, {reason:'crashed'});
+  assert.equal(f.controller.getWindow(),null);assert.equal(previous.destroyed,true);
+  const next=await f.controller.open();
+  assert.notEqual(next,previous);assert.deepEqual(next.getNormalBounds(),{x:20,y:30,width:700,height:800});
+  previous.webContents.emit('render-process-gone',{}, {reason:'crashed'});
+  assert.equal(f.controller.getWindow(),next);
+});
+
 test('settings window is a sandboxed, frameless, independent singleton and can close and reopen without another app window',async()=>{
   const f=fixture();
   const [first,second]=await Promise.all([f.controller.open(),f.controller.open()]);

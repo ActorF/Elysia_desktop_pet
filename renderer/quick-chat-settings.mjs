@@ -57,7 +57,7 @@ if (section && supported) {
       const value = await desktop.setQuickChatCapture(false);
       if (token === captureToken && valid(value)) receive(value);
       if (value === false || value?.error) throw new Error('restore');
-    } catch { localError = '快捷键暂时未能恢复，请重新编辑或保存。'; }
+    } catch { if (token === captureToken) localError = '快捷键暂时未能恢复，请重新编辑或保存。'; }
     finally { if (token === captureToken) captureEnding = false; render(); }
   }
   async function beginCapture() {
@@ -67,9 +67,12 @@ if (section && supported) {
     captureStarting = true; captureHint = ''; localError = ''; render();
     try {
       const value = await desktop.setQuickChatCapture(true);
-      // Blur can happen before the suspension request returns. Restore again in
-      // that case, so a late result cannot leave the global shortcut suspended.
-      if (token !== captureToken) { await desktop.setQuickChatCapture(false); return; }
+      // Blur can happen before this reply returns. A newer edit owns its own
+      // suspension; restoring this old request must not interrupt that edit.
+      if (token !== captureToken) {
+        if (!capturing && !captureStarting) await desktop.setQuickChatCapture(false);
+        return;
+      }
       if (value === false || value?.error) throw new Error('capture');
       captureStarting = false; capturing = true;
       record.focus({ preventScroll: true }); render();
@@ -97,9 +100,11 @@ if (section && supported) {
   function acceleratorFor(event) {
     if (!(event.ctrlKey || event.altKey || event.metaKey)) return null;
     let value = '';
-    if (/^Key[A-Z]$/.test(event.code)) value = event.code.slice(3);
+    // Latin letters follow the active layout (AZERTY A is code KeyQ). Keep a
+    // physical fallback for non-Latin input methods and shifted number keys.
+    if (/^[a-z0-9]$/i.test(event.key)) value = event.key.toUpperCase();
+    else if (/^Key[A-Z]$/.test(event.code)) value = event.code.slice(3);
     else if (/^Digit[0-9]$/.test(event.code)) value = event.code.slice(5);
-    else if (/^[a-z0-9]$/i.test(event.key)) value = event.key.toUpperCase();
     else if (/^F(?:[1-9]|1[0-9]|2[0-4])$/.test(event.key)) value = event.key;
     else value = ({ ' ': 'Space', Spacebar: 'Space', Enter: 'Enter', ArrowUp: 'Up', ArrowDown: 'Down', ArrowLeft: 'Left', ArrowRight: 'Right', Backspace: 'Backspace', Delete: 'Delete', Tab: 'Tab' })[event.key] || '';
     return value ? [event.ctrlKey && 'Control', event.altKey && 'Alt', event.shiftKey && 'Shift', event.metaKey && 'Super', value].filter(Boolean).join('+') : null;

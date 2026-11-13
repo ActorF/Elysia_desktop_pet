@@ -3,7 +3,9 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
+const { setTimeout: delay } = require('node:timers/promises');
 const { classifySetupFailure } = require('./setup-diagnostics.cjs');
+const { moveFileNoReplace, isUnsupportedHardLink } = require('./windows-file-move.cjs');
 
 const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
 const uuidPattern = new RegExp(`^${UUID}$`, 'i');
@@ -12,6 +14,7 @@ const layouts = Object.freeze({
   chat: { target: 'chat-runtime', stage: /^chat-staging-[a-z0-9]{6}$/i, child: null, backup: 'chat-runtime.unverified-', validation: 'runtime-invalid' },
 });
 const locks = new Set();
+const pendingPublications = new Map();
 const record = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const sameIdentity = (left, right) => Boolean(left && right && left.dev === right.dev && left.ino === right.ino);
 const validIdentity = value => record(value) && Object.keys(value).sort().join(',') === 'dev,ino'
@@ -21,6 +24,11 @@ function repairFailure(reason, kind = 'installation-conflict', cause) {
   error.voiceRepairCode = reason;
   error.runtimeRepairCode = reason;
   error.diagnosticKind = cause ? classifySetupFailure(cause, kind) : kind;
+  if (cause?.preserveStage) {
+    error.preserveStage = true;
+    error.voiceRepairPending = true;
+    error.runtimeRepairPending = true;
+  }
   return error;
 }
 
@@ -29,12 +37,13 @@ function repairFailure(reason, kind = 'installation-conflict', cause) {
  * commit() accepts only userData/voice-staging-UUID/project and verifies it before moving anything.
  * A pending error has preserveStage=true: its journal and staging directory must survive cleanup.
  */
-function createRuntimeRepair({ kind, userData, verifyInstallation, fsImpl = fs, randomUUIDImpl = randomUUID }) {
+function createRuntimeRepair({ kind, userData, verifyInstallation, beforeChange = () => {}, fsImpl = fs, randomUUIDImpl = randomUUID, moveFileNoReplaceImpl = moveFileNoReplace }) {
   function failure(reason, diagnosticKind = 'installation-conflict', cause) {
     const chatKinds = { 'installation-conflict': 'storage-busy', 'installation-linked-directory': 'storage-path', 'installation-invalid-directory': 'storage-path' };
     return repairFailure(reason, kind === 'chat' ? chatKinds[diagnosticKind] || diagnosticKind : diagnosticKind, cause);
   }
-  if (typeof kind !== 'string' || !Object.hasOwn(layouts, kind) || typeof userData !== 'string' || !path.isAbsolute(userData) || typeof verifyInstallation !== 'function') {
+  if (typeof kind !== 'string' || !Object.hasOwn(layouts, kind) || typeof userData !== 'string' || !path.isAbsolute(userData)
+    || typeof verifyInstallation !== 'function' || typeof beforeChange !== 'function') {
     throw failure('invalid-options', 'storage-path');
   }
   const layout = layouts[kind], root = path.resolve(userData), runtime = path.join(root, layout.target);
@@ -117,7 +126,7 @@ function createRuntimeRepair({ kind, userData, verifyInstallation, fsImpl = fs, 
     }
     throw failure('changed-transaction-directories');
   }
-  function writeJournal(transaction) {
+  async function writeJournal(transaction) {
     const temporary = path.join(root, `${kind}-repair-journal-${transaction.id}.tmp`);
     let descriptor;
     try {
@@ -128,7 +137,22 @@ function createRuntimeRepair({ kind, userData, verifyInstallation, fsImpl = fs, 
     // Creating a second link publishes the already flushed inode atomically and
     // fails if a different transaction appeared. Never rename over a journal.
     try { fsImpl.linkSync(temporary, journalPath); }
-    catch (error) { throw failure('journal-publish', 'storage-io', error); }
+    catch (error) {
+      if (process.platform !== 'win32' || !isUnsupportedHardLink(error)) throw failure('journal-publish', 'storage-io', error);
+      try {
+        await moveFileNoReplaceImpl(temporary, journalPath, { expected: fsImpl.lstatSync(temporary, { bigint: true }) });
+        return;
+      } catch (cause) {
+        if (cause.setupProcessExit) {
+          const pending = cause.setupProcessExit;
+          pendingPublications.set(key, pending);
+          void pending.then(() => { if (pendingPublications.get(key) === pending) pendingPublications.delete(key); }, () => {});
+        }
+        // Preserve a possibly publishing transaction. Its stage must not use
+        // extraction's late-exit cleanup: a valid journal may appear at exit.
+        throw failure('journal-publish', 'storage-io', cause);
+      }
+    }
     fsImpl.unlinkSync(temporary);
   }
   function checkJournal(transaction) {
@@ -144,17 +168,37 @@ function createRuntimeRepair({ kind, userData, verifyInstallation, fsImpl = fs, 
     catch (error) { throw failure('verification-failed', layout.validation, error); }
     if (!(result === true || (record(result) && result.ready === true))) throw failure('verification-failed', layout.validation);
   }
-  function rollback(transaction) {
+  async function moveDirectory(transaction, source, destination, before, after) {
+    const waits = process.platform === 'win32' ? [25, 75, 150, 250] : [];
+    for (let attempt = 0; ; attempt++) {
+      checkJournal(transaction);
+      if (scan(transaction) !== before) throw failure('changed-transaction-directories');
+      try { fsImpl.renameSync(source, destination); }
+      catch (error) {
+        // Windows can briefly refuse a directory rename even after all of our
+        // handles have closed. Retry only the same immutable transaction; an
+        // intervening directory or journal change must never be overwritten.
+        checkJournal(transaction);
+        if (scan(transaction) !== before) throw failure('changed-transaction-directories');
+        if (attempt >= waits.length || !['EPERM', 'EACCES', 'EBUSY'].includes(error.code)) throw error;
+        await delay(waits[attempt]);
+        continue;
+      }
+      if (scan(transaction) !== after) throw failure('changed-transaction-directories');
+      return;
+    }
+  }
+  async function rollback(transaction) {
     checkJournal(transaction);
     const target = paths(transaction);
     let phase = scan(transaction);
     if (phase === 'installed') {
       if (layout.child && !sameIdentity(directory(target.stagingDirectory), transaction.stageIdentity)) throw failure('missing-rollback-directory');
-      fsImpl.renameSync(runtime, target.project);
+      await moveDirectory(transaction, runtime, target.project, 'installed', transaction.previous ? 'backed-up' : 'prepared');
       phase = scan(transaction);
     }
     if (phase === 'backed-up') {
-      fsImpl.renameSync(target.backup, runtime);
+      await moveDirectory(transaction, target.backup, runtime, 'backed-up', 'prepared');
       phase = scan(transaction);
     }
     if (phase !== 'prepared') throw failure('rollback-conflict');
@@ -162,19 +206,28 @@ function createRuntimeRepair({ kind, userData, verifyInstallation, fsImpl = fs, 
   }
   async function finish(transaction, recovered) {
     const target = paths(transaction);
+    let mayRollback = false;
     try {
       checkJournal(transaction);
       let phase = scan(transaction);
+      // Recovery can also replace/roll back resources already in use. Await
+      // the owner's confirmed shutdown before any move, including rollback.
+      if (transaction.previous || phase === 'installed') {
+        try { await beforeChange(); }
+        catch (cause) { throw failure('replacement-not-ready', 'storage-busy', cause); }
+      }
+      mayRollback = true;
+      checkJournal(transaction); phase = scan(transaction);
       if (phase !== 'installed') {
         await verified(target.project);
         checkJournal(transaction);
         phase = scan(transaction);
         if (phase === 'prepared' && transaction.previous) {
-          fsImpl.renameSync(runtime, target.backup);
+          await moveDirectory(transaction, runtime, target.backup, 'prepared', 'backed-up');
           phase = scan(transaction);
         }
         if (phase !== 'backed-up' && !(phase === 'prepared' && !transaction.previous)) throw failure('commit-conflict');
-        fsImpl.renameSync(target.project, runtime);
+        await moveDirectory(transaction, target.project, runtime, phase, 'installed');
       }
       if (scan(transaction) !== 'installed') throw failure('commit-conflict');
       await verified(runtime);
@@ -185,7 +238,11 @@ function createRuntimeRepair({ kind, userData, verifyInstallation, fsImpl = fs, 
         backupDirectory: transaction.previous ? target.backup : null };
     } catch (cause) {
       const error = cause.voiceRepairCode ? cause : failure('commit-failed', 'storage-io', cause);
-      try { rollback(transaction); error.rolledBack = true; }
+      if (!mayRollback) {
+        error.voiceRepairPending = true; error.runtimeRepairPending = true; error.preserveStage = true;
+        throw error;
+      }
+      try { await rollback(transaction); error.rolledBack = true; }
       catch (rollbackError) {
         error.voiceRepairPending = true; error.runtimeRepairPending = true; error.preserveStage = true;
         Object.defineProperty(error, 'rollbackError', { value: rollbackError });
@@ -195,6 +252,11 @@ function createRuntimeRepair({ kind, userData, verifyInstallation, fsImpl = fs, 
   }
   async function exclusive(operation) {
     if (locks.has(key)) throw failure('repair-busy', 'storage-busy');
+    if (pendingPublications.has(key)) {
+      const error = failure('journal-publish-pending', 'storage-busy');
+      error.preserveStage = true; error.voiceRepairPending = true; error.runtimeRepairPending = true;
+      throw error;
+    }
     locks.add(key);
     try { return await operation(); }
     catch (cause) {
@@ -231,7 +293,7 @@ function createRuntimeRepair({ kind, userData, verifyInstallation, fsImpl = fs, 
       scan(transaction);
       await verified(absolute);
       scan(transaction);
-      writeJournal(transaction);
+      await writeJournal(transaction);
       return finish(transaction, false);
     });
   }

@@ -118,3 +118,30 @@ test('load rejection releases only its own window and permits a clean retry', as
   assert.equal(f.windows[0].destroyed, true); assert.equal(f.controller.getWindow(), null);
   assert.equal(await f.controller.toggle(), f.windows[1]);
 });
+
+test('a crashed quick renderer is discarded and an explicit reopen creates a working document', async t => {
+  const f = fixture(t), crashed = await f.controller.open();
+  crashed.webContents.emit('render-process-gone', {}, { reason: 'crashed' });
+  assert.equal(crashed.destroyed, true, 'A crashed document cannot be shown again');
+  assert.equal(f.controller.getWindow(), null);
+  const recovered = await f.controller.toggle();
+  assert.notEqual(recovered, crashed);
+  assert.equal(recovered.visible, true);
+  assert.equal(f.windows.length, 2);
+  assert.equal(f.hidden(), 1);
+  crashed.webContents.emit('render-process-gone', {}, { reason: 'crashed' });
+  assert.equal(f.controller.getWindow(), recovered, 'A stale crash cannot destroy the replacement');
+});
+
+test('a renderer crash during initial loading cannot revive the old window after a new open', async t => {
+  let finishOld;
+  const f = fixture(t, { load: () => finishOld ? Promise.resolve() : new Promise(resolve => { finishOld = resolve; }) });
+  const opening = f.controller.open(); await Promise.resolve();
+  const old = f.windows[0]; old.webContents.emit('render-process-gone', {}, { reason: 'crashed' });
+  const replacement = await f.controller.open();
+  finishOld();
+  assert.equal(await opening, null);
+  assert.equal(f.controller.getWindow(), replacement);
+  assert.equal(old.calls.includes('show'), false);
+  assert.equal(replacement.visible, true);
+});

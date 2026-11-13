@@ -2,31 +2,59 @@
 const desktop = window.elysiaSettings;
 const find = selector => document.querySelector(selector);
 const errorNode = find('#voice-error'), interactionError = find('#voice-interaction-error');
+const storageErrorNode = document.createElement('p');
+storageErrorNode.id = 'voice-storage-error'; storageErrorNode.className = 'voice-error';
+storageErrorNode.setAttribute('role', 'alert'); storageErrorNode.hidden = true; errorNode.before(storageErrorNode);
 const enabled = find('#voice-enabled'), dnd = find('#voice-dnd');
 const volume = find('#voice-volume'), volumeValue = find('#voice-volume-value');
 const birthdayMonth = find('#voice-birthday-month'), birthdayDay = find('#voice-birthday-day');
 const birthdayHint = find('#voice-birthday-hint');
 const status = find('#voice-playback-status'), subtitle = find('#voice-playback-line');
 const stopButton = find('#voice-stop');
-let snapshot = null, revision = 0, pending = Promise.resolve();
+let snapshot = null, revision = 0, pending = Promise.resolve(), localError = null;
+let birthdayDirty = false, birthdayRevision = 0;
+let birthdaySubmission = null;
 
 function fail(error) {
-  errorNode.textContent = error?.message || String(error || '语音操作未完成，请重试。');
-  errorNode.hidden = false;
+  localError = error?.message || String(error || '语音操作未完成，请重试。');
+  renderError();
+}
+function renderError() {
+  const message = localError || snapshot?.error || snapshot?.playback?.error || '';
+  errorNode.textContent = message;
+  errorNode.hidden = !message;
+  storageErrorNode.textContent = snapshot?.storageError || '';
+  storageErrorNode.hidden = !snapshot?.storageError;
 }
 function command(operation) {
-  errorNode.hidden = true;
   pending = pending.then(async () => {
+    // A previous queued operation can fail after this one was requested.
+    // Clear that result when this operation actually begins, not when queued.
+    localError = null; errorNode.hidden = true;
     const before = revision;
     const result = await operation();
     if (result === false || result?.ok === false) throw new Error(result?.error || '语音操作未完成，请重试。');
     // A state broadcast that arrived during this request is more current than its reply.
     if (before === revision && result?.settings) receive(result);
-    if (result?.error) fail(new Error(result.error));
+    // Persistence errors belong to host state so an automatic successful retry
+    // can clear them without erasing unrelated local validation errors.
+    if (result?.storageError) return null;
+    if (result?.error) throw new Error(result.error);
+    return result;
   }).catch(fail);
   return pending;
 }
 const patch = value => command(() => desktop.setVoiceSettings(value));
+async function saveBirthday(birthday) {
+  const submitted = birthdayRevision;
+  birthdaySubmission = { birthday, revision: submitted };
+  const result = await patch({ birthday });
+  if (result?.settings?.birthday === birthday && submitted === birthdayRevision) {
+    birthdayDirty = false;
+    if (snapshot) receive(snapshot);
+  }
+}
+for (const field of [birthdayMonth, birthdayDay]) field.addEventListener('input', () => { birthdayDirty = true; birthdayRevision++; });
 
 enabled.addEventListener('change', () => void patch({ enabled: enabled.checked }));
 dnd.addEventListener('change', () => void patch({ dnd: dnd.checked }));
@@ -34,17 +62,17 @@ volume.addEventListener('input', () => { volumeValue.value = volume.value + '%';
 volume.addEventListener('change', () => void patch({ volume: Number(volume.value) / 100 }));
 find('#voice-birthday-form').addEventListener('submit', event => {
   event.preventDefault();
-  if (!birthdayMonth.value && !birthdayDay.value) { void patch({ birthday: '' }); return; }
+  if (!birthdayMonth.value && !birthdayDay.value) { void saveBirthday(''); return; }
   const month = birthdayMonth.valueAsNumber, day = birthdayDay.valueAsNumber;
   const days = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
   if (!Number.isInteger(month) || !Number.isInteger(day) || month < 1 || month > 12 || day < 1 || day > days[month - 1]) {
     fail(new Error('请填写有效的生日月、日，例如 5 月 20 日。')); return;
   }
   birthdayMonth.blur(); birthdayDay.blur();
-  void patch({ birthday: String(month).padStart(2, '0') + '-' + String(day).padStart(2, '0') });
+  void saveBirthday(String(month).padStart(2, '0') + '-' + String(day).padStart(2, '0'));
 });
 find('#voice-clear-birthday').addEventListener('click', () => {
-  birthdayMonth.value = ''; birthdayDay.value = ''; void patch({ birthday: '' });
+  birthdayMonth.value = ''; birthdayDay.value = ''; birthdayDirty = true; birthdayRevision++; void saveBirthday('');
 });
 stopButton.addEventListener('click', () => void command(() => desktop.stopVoice()));
 
@@ -58,12 +86,16 @@ function receive(value) {
     volumeValue.value = volume.value + '%';
   }
   const birthday = typeof settings.birthday === 'string' ? settings.birthday : '';
+  if (!value.storageError && birthdaySubmission?.birthday === birthday && birthdaySubmission.revision === birthdayRevision) {
+    birthdayDirty = false; birthdaySubmission = null;
+  }
   const parts = birthday.split('-');
-  if (![birthdayMonth, birthdayDay].includes(document.activeElement)) {
+  if (!birthdayDirty && ![birthdayMonth, birthdayDay].includes(document.activeElement)) {
     birthdayMonth.value = parts[0] ? String(Number(parts[0])) : '';
     birthdayDay.value = parts[1] ? String(Number(parts[1])) : '';
   }
-  birthdayHint.textContent = birthday ? '已保存：' + Number(parts[0]) + ' 月 ' + Number(parts[1]) + ' 日。' + (birthday === '02-29' ? '仅在闰年的 2 月 29 日祝福。' : '每年生日当天自动祝福一次。') : '未设置生日。只在此电脑保存月、日。';
+  birthdayHint.textContent = value.storageError ? '语音设置尚未保存到本机，将自动重试；当前修改已保留。'
+    : birthday ? '已保存：' + Number(parts[0]) + ' 月 ' + Number(parts[1]) + ' 日。' + (birthday === '02-29' ? '仅在闰年的 2 月 29 日祝福。' : '每年生日当天自动祝福一次。') : '未设置生日。只在此电脑保存月、日。';
   interactionError.hidden = value.interactionAvailable !== false;
   interactionError.textContent = value.interactionAvailable === false ? (value.interactionError || '互动语音暂不可用，点击时仍可显示文字。请完整保留互动录音后重新启动。') : '';
   const playback = value.playback || {}, environment = value.environment || {};
@@ -90,7 +122,7 @@ function receive(value) {
     : settings.enabled !== false && !settings.dnd && environment.monitorReady === false ? '屏幕状态就绪后自动恢复；长时间未恢复可重新启动桌宠。'
     : '';
   stopButton.disabled = !playing && !queued;
-  if (value.error || playback.error) fail(new Error(value.error || playback.error));
+  renderError();
 }
 
 try {

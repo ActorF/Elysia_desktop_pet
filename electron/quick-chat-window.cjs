@@ -64,6 +64,12 @@ function createQuickChatWindow({ BrowserWindow, screen, root, icon, isSmokeTest 
         current = null;
         if (wantedVisible) { wantedVisible = false; intent++; onHide(); }
       });
+      window.webContents.on('render-process-gone', () => {
+        if (current?.window !== window) return;
+        // The native window survives a renderer crash, but its document cannot
+        // receive input. Discard it so the next explicit open can load again.
+        if (!window.isDestroyed()) window.destroy();
+      });
       const entry = { window, ready: null };
       current = entry;
       entry.ready = Promise.resolve().then(() => !window.isDestroyed() && !disposed ? window.loadURL(url) : undefined).catch(error => {

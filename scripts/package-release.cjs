@@ -4,7 +4,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 const builder = require('electron-builder');
 const { prepareChatBootstrap } = require('./prepare-chat-bootstrap.cjs');
+const { resolveReleaseOutput } = require('./release-output.cjs');
 const root = path.resolve(__dirname, '..');
+const output = resolveReleaseOutput({ root, manifest: require('../package.json'), requireFresh: true });
 const resources = path.join(root, 'build-resources', 'voice-bootstrap');
 for (const relative of ['Elysia-voice-assets-v1.zip', 'tools/7za.exe', 'tools/LICENSE.txt', 'tools/COPYING']) {
   if (!fs.existsSync(path.join(resources, relative))) throw new Error(`Missing local build resource ${relative}; run npm run prepare:voice first.`);
@@ -19,13 +21,13 @@ const localElectron = process.platform === 'win32' ? require('electron') : null;
 const config = localElectron && fs.existsSync(localElectron) ? {
   electronDist: path.dirname(localElectron),
   afterPack: async ({ appOutDir }) => {
-    const output = path.resolve(appOutDir), allowed = path.join(root, 'release');
-    const relative = path.relative(allowed, output);
+    const applicationOutput = path.resolve(appOutDir);
+    const relative = path.relative(output, applicationOutput);
     if (!relative || path.isAbsolute(relative) || relative.split(path.sep).includes('..')) throw new Error('Unexpected application output directory.');
     // Custom Electron distributions retain their demo app; remove it only from
     // the generated release tree, keeping the development runtime untouched.
     for (const name of ['resources/default_app.asar', 'version']) {
-      const file = path.join(output, name);
+      const file = path.join(applicationOutput, name);
       try {
         const stat = await fs.promises.lstat(file);
         if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('Unexpected generated Electron resource.');
@@ -34,5 +36,6 @@ const config = localElectron && fs.existsSync(localElectron) ? {
     }
   },
 } : {};
+config.directories = { output };
 prepareChatBootstrap().then(() => builder.build({ targets: builder.Platform.WINDOWS.createTarget(targets), config, publish: 'never' }))
   .catch(error => { console.error(error); process.exitCode = 1; });

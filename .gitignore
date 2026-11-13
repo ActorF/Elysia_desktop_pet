@@ -18,6 +18,10 @@ release/*
 !release/Elysia_desktop_pet-1.4.5.exe.sha256
 !release/Elysia_desktop_pet-1.4.5-setup.exe
 !release/Elysia_desktop_pet-1.4.5-setup.exe.sha256
+!release/Elysia_desktop_pet-1.4.6.exe
+!release/Elysia_desktop_pet-1.4.6.exe.sha256
+!release/Elysia_desktop_pet-1.4.6-setup.exe
+!release/Elysia_desktop_pet-1.4.6-setup.exe.sha256
 artifacts/
 build-resources/
 tmp/

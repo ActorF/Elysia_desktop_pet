@@ -11,10 +11,13 @@ function renderWindowState(state) {
   button.setAttribute('aria-label', maximized ? '还原' : '最大化');
   button.title = maximized ? '还原' : '最大化';
 }
-let snapshot = null, revision = 0, pending = 0, requests = Promise.resolve();
+let snapshot = null, revision = 0, pending = 0, requests = Promise.resolve(), localError = null;
 let patchFrame = 0, pendingPatch = {};
 const status = document.querySelector('#save-status');
 const errorMessage = document.querySelector('#error-message');
+const storageErrorMessage = document.createElement('p');
+storageErrorMessage.id = 'settings-storage-error'; storageErrorMessage.className = 'voice-error';
+storageErrorMessage.setAttribute('role', 'alert'); storageErrorMessage.hidden = true; errorMessage.before(storageErrorMessage);
 const controls = new Map(), rangeControls = new Map();
 const trailStyles = ['pink', 'ribbon', 'stardust'];
 const format = n => Number(n.toPrecision(7)).toString();
@@ -24,28 +27,40 @@ function element(tag, attributes = {}, text) {
   if (text !== undefined) node.textContent = text;
   return node;
 }
+function renderFeedback() {
+  errorMessage.textContent = localError || ''; errorMessage.hidden = !localError;
+  const storageError = snapshot?.storageError || '';
+  storageErrorMessage.textContent = storageError; storageErrorMessage.hidden = !storageError;
+  status.textContent = localError ? '未能应用' : storageError ? '未能保存' : pending ? '正在应用…' : '自动保存';
+  status.classList.toggle('error', Boolean(localError || storageError));
+}
 function fail(error) {
-  errorMessage.textContent = error?.message || '暂时无法保存，请重试。';
-  errorMessage.hidden = false; status.textContent = '未能应用'; status.classList.add('error');
+  localError = error?.message || '暂时无法保存，请重试。'; renderFeedback();
 }
 function command(operation) {
-  pending++; status.textContent = '正在应用…'; status.classList.remove('error'); errorMessage.hidden = true;
+  pending++; localError = null; renderFeedback();
   requests = requests.then(async () => {
+    // The preceding queued request may have failed since this one was queued.
+    localError = null; renderFeedback();
     const before = revision, result = await operation();
     // Broadcasts are authoritative: an older invoke reply cannot undo them.
     if (before === revision && result?.settings) receive(result);
   }).catch(fail).finally(() => {
-    pending--; if (!pending && errorMessage.hidden) status.textContent = '自动保存';
+    pending--; renderFeedback();
   });
   return requests;
 }
-function patch(key, value) { return command(() => desktop.setSettings({ [key]: value })); }
+function patch(key, value) {
+  // A later explicit value supersedes an older slider input not yet flushed.
+  delete pendingPatch[key];
+  return command(() => desktop.setSettings({ [key]: value }));
+}
 function schedulePatch(key, value) {
   pendingPatch[key] = value;
   if (patchFrame) return;
   patchFrame = requestAnimationFrame(() => {
     patchFrame = 0; const value = pendingPatch; pendingPatch = {};
-    void command(() => desktop.setSettings(value));
+    if (Object.keys(value).length) void command(() => desktop.setSettings(value));
   });
 }
 function appearanceAction(value) { return command(() => desktop.action(value)); }
@@ -142,7 +157,7 @@ function render() {
   document.querySelector('#taskbar-fieldset').disabled = !settings.alwaysOnTop;
   document.querySelector('#taskbar-hint').textContent = settings.alwaysOnTop ? '决定人物与任务栏重叠时的前后顺序。' : '开启“始终置顶”后可以选择。';
 }
-function receive(next) { if (!next?.settings) return; snapshot = next; revision++; render(); }
+function receive(next) { if (!next?.settings) return; snapshot = next; revision++; render(); renderFeedback(); }
 document.querySelector('#neutral-face').addEventListener('click', () => {
   if (snapshot?.appearance?.expression) void appearanceAction({ type: 'expression', id: snapshot.appearance.expression });
 });

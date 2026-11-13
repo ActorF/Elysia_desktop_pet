@@ -16,10 +16,11 @@ function createChatSpeechSmokeWorker() {
   function spawnImpl() {
     const child = new EventEmitter();
     child.stdout = new PassThrough(); child.stderr = new PassThrough(); child.stdin = new PassThrough();
-    const record = { killed: false, acknowledged: false, acknowledgements: 0, requests: 0, packets: [] }; calls.push(record);
+    const record = { killed: false, released: false, acknowledged: false, acknowledgements: 0, requests: 0, packets: [] }; calls.push(record);
     let exited = false, buffered = '';
     const close = code => { if (!exited) { exited = true; queueMicrotask(() => child.emit('close', code)); } };
     child.kill = () => { record.killed = true; close(1); };
+    child.stdin.on('finish', () => { record.released = true; close(0); });
     const send = value => { if (!exited) child.stdout.write(JSON.stringify(value) + '\n'); };
     child.stdin.on('data', chunk => {
       buffered += chunk.toString(); let newline;

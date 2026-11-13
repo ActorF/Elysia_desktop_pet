@@ -12,6 +12,12 @@ const MAX_FILE_BYTES = 32 * 1024 * 1024;
 const MAX_CONTEXT_CHARACTERS = 2000;
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const iso = () => new Date().toISOString();
+function titlePrefix(text, limit) {
+  // Keep the existing UTF-16 size budget without storing half of an emoji or
+  // supplementary-plane character at the title boundary.
+  const splitPair = /[\ud800-\udbff]/.test(text[limit - 1] || '') && /[\udc00-\udfff]/.test(text[limit] || '');
+  return text.slice(0, splitPair ? limit - 1 : limit);
+}
 
 function validateSettings(patch, previous = DEFAULT_CHAT_SETTINGS) {
   if (!object(patch)) throw new Error('聊天设置格式无效。');
@@ -52,8 +58,14 @@ function isPreviousDefault(settings) {
 
 function readSaved(file) {
   if (fs.statSync(file).size > MAX_FILE_BYTES) throw new Error('聊天记录文件超过读取上限。');
-  const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
-  if (!object(parsed) || !object(parsed.settings) || !Array.isArray(parsed.conversations)) throw new Error('聊天记录格式无效。');
+  const bytes = fs.readFileSync(file);
+  if (bytes.length > MAX_FILE_BYTES) throw new Error('聊天记录文件超过读取上限。');
+  // A replacement character from permissive decoding can leave damaged JSON
+  // syntactically valid. Reject damaged UTF-8 before any later save can replace
+  // those original bytes; a normal UTF-8 BOM remains compatible.
+  const parsed = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
+  if (!object(parsed) || (Object.hasOwn(parsed, 'version') && parsed.version !== 1)
+    || !object(parsed.settings) || !Array.isArray(parsed.conversations)) throw new Error('聊天记录格式无效。');
   const settings = validateSettings(parsed.settings);
   const migrated = isPreviousDefault(settings);
   if (migrated) { settings.baseUrl = DEFAULT_CHAT_SETTINGS.baseUrl; settings.model = DEFAULT_CHAT_SETTINGS.model; }
@@ -74,7 +86,7 @@ function readSaved(file) {
         status: message.status === 'streaming' ? 'cancelled' : message.status,
         ...(message.role === 'user' && message.username !== undefined ? { username: message.username } : {}) };
     });
-    return { id: conversation.id, title: conversation.title.slice(0, 100), createdAt: conversation.createdAt, updatedAt: conversation.updatedAt, messages };
+    return { id: conversation.id, title: titlePrefix(conversation.title, 100), createdAt: conversation.createdAt, updatedAt: conversation.updatedAt, messages };
   });
   return { migrated, settings, conversations, activeConversationId: ids.has(parsed.activeConversationId) ? parsed.activeConversationId : conversations.at(-1)?.id ?? null };
 }
@@ -106,7 +118,10 @@ function createChatService({ directory, personaPath = path.join(__dirname, 'chat
     if (protectedFile) return false;
     try {
       const payload = JSON.stringify({ version: 1, settings: state.settings, conversations: state.conversations, activeConversationId: state.activeConversationId });
-      if (Buffer.byteLength(payload) > MAX_FILE_BYTES) throw new Error('history-limit');
+      if (Buffer.byteLength(payload) > MAX_FILE_BYTES) {
+        state.storageError = '聊天记录已达到 32 MB 保存上限。请在设置中删除不需要的对话后重试，已有记录不会自动删除。';
+        return false;
+      }
       fs.mkdirSync(directory, { recursive: true });
       fs.writeFileSync(file + '.tmp', payload, { encoding: 'utf8', mode: 0o600 });
       fs.renameSync(file + '.tmp', file);
@@ -245,7 +260,7 @@ function createChatService({ directory, personaPath = path.join(__dirname, 'chat
       if (!response.body) throw new Error('invalid-stream');
       reader = response.body.getReader();
       const decoder = new TextDecoder('utf-8', { fatal: true });
-      let buffer = '', bytes = 0, done = false, truncated = false, eventData = [];
+      let buffer = '', bytes = 0, done = false, truncated = false, eventData = [], skipLF = false;
       const consumeEvent = () => {
         const data = eventData.join('\n'); eventData = [];
         if (!data.trim() || active !== job || done) return;
@@ -276,15 +291,27 @@ function createChatService({ directory, personaPath = path.join(__dirname, 'chat
         if (value.startsWith(' ')) value = value.slice(1);
         if (field === 'data') eventData.push(value);
       };
-      while (!done && active === job) {
-        const packet = await Promise.race([reader.read(), abort]);
-        if (packet.done) { buffer += decoder.decode(); break; }
-        bytes += packet.value.byteLength;
-        if (bytes > 2 * 1024 * 1024) throw new Error('reply-limit');
-        buffer += decoder.decode(packet.value, { stream: true });
+      const consumeText = text => {
+        // SSE permits LF, CRLF and lone CR, including CRLF split between
+        // packets: https://html.spec.whatwg.org/multipage/server-sent-events.html#parsing-an-event-stream
+        if (skipLF && text.length) { if (text[0] === '\n') text = text.slice(1); skipLF = false; }
+        buffer += text;
         if (buffer.length > 1024 * 1024) throw new Error('reply-limit');
         let newline;
-        while ((newline = buffer.indexOf('\n')) !== -1 && !done) { const line = buffer.slice(0, newline); buffer = buffer.slice(newline + 1); consumeLine(line); }
+        while (!done && (newline = buffer.search(/[\r\n]/)) !== -1) {
+          const line = buffer.slice(0, newline), cr = buffer[newline] === '\r';
+          const width = cr && buffer[newline + 1] === '\n' ? 2 : 1;
+          skipLF = cr && newline + 1 === buffer.length;
+          buffer = buffer.slice(newline + width);
+          consumeLine(line);
+        }
+      };
+      while (!done && active === job) {
+        const packet = await Promise.race([reader.read(), abort]);
+        if (packet.done) { consumeText(decoder.decode()); break; }
+        bytes += packet.value.byteLength;
+        if (bytes > 2 * 1024 * 1024) throw new Error('reply-limit');
+        consumeText(decoder.decode(packet.value, { stream: true }));
       }
       if (active !== job) return;
       if (!done) throw new Error('incomplete-stream');
@@ -319,7 +346,7 @@ function createChatService({ directory, personaPath = path.join(__dirname, 'chat
     const now = iso();
     const user = { id: randomUUID(), role: 'user', content: text.trim(), createdAt: now, username: state.settings.username, status: 'complete' };
     const reply = { id: randomUUID(), role: 'assistant', content: '', createdAt: now, status: 'streaming' };
-    if (!conversation.messages.length) conversation.title = text.trim().replace(/\s+/g, ' ').slice(0, 40);
+    if (!conversation.messages.length) conversation.title = titlePrefix(text.trim().replace(/\s+/g, ' '), 40);
     conversation.messages.push(user, reply); conversation.updatedAt = now;
     state.error = null;
     if (!persist()) { const storageError = state.storageError; state = { ...before, storageError }; return fail('消息未发送：聊天记录暂时无法保存。'); }
@@ -332,7 +359,7 @@ function createChatService({ directory, personaPath = path.join(__dirname, 'chat
     publish(); return getState();
   }
   function cancel() { if (active) finish(active, 'cancelled'); return getState(); }
-  function dispose() { if (disposed) return; cancel(); disposed = true; clearTimeout(publishTimer); }
+  function dispose() { if (disposed) return; disposed = true; cancel(); clearTimeout(publishTimer); }
   return { getState, setSettings, send, cancel, newConversation, selectConversation, getMessage, deleteConversation, clearHistory, dispose };
 }
 

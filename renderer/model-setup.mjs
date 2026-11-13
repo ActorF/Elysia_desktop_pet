@@ -69,7 +69,7 @@ if (desktop && required.every(method => typeof desktop[method] === 'function')) 
   const voiceNote = element('p', 'hint model-setup-voice', '聊天模型就绪后可以文字聊天，语音环境单独配置。');
   card.append(heading, description, status, meter, error, diagnosticPanel.panel, actions, voiceNote);
   document.querySelector('#chat-settings-form').before(card);
-  let state = null, chatState = null, revision = 0, pending = false, localError = null, localDiagnostic = null;
+  let state = null, chatState = null, revision = 0, chatRevision = 0, pending = false, localError = null, localDiagnostic = null;
   const labels = { idle: '待检测', checking: '正在检测', 'needs-install': '待安装', 'needs-model': '待下载', 'downloading-installer': '正在下载', 'verifying-installer': '正在校验', installing: '正在安装', starting: '正在启动', 'pulling-model': '正在下载', ready: '已就绪', cancelled: '已取消', error: '未完成' };
   const messages = {
     idle: '检查这台电脑上的聊天环境。', checking: '正在检查聊天环境…', 'needs-install': '本地聊天环境尚未准备好，可以重新开始配置。',
@@ -122,13 +122,15 @@ if (desktop && required.every(method => typeof desktop[method] === 'function')) 
   cancel.addEventListener('click', () => void run(() => desktop.cancelModelSetup()));
   inspect.addEventListener('click', () => void run(() => desktop.inspectModelSetup()));
   useLocal.addEventListener('click', () => void run(async () => {
+    const before = chatRevision;
     const result = await desktop.setChatSettings(LOCAL_SETTINGS);
     if (!result?.settings || result.error || result.storageError) throw new Error(result?.storageError || result?.error || '暂时无法保存聊天设置，请重试。');
-    chatState = result; return result;
+    if (before === chatRevision) chatState = result;
+    return result;
   }));
   try {
     const stopSetup = desktop.onModelSetup(receive);
-    const stopChat = desktop.onChatState?.(value => { chatState = value; render(); });
+    const stopChat = desktop.onChatState?.(value => { chatState = value; chatRevision++; render(); });
     const before = revision;
     const [initial, initialChat] = await Promise.all([desktop.getModelSetup(), desktop.getChatState?.()]);
     if (!chatState && initialChat?.settings) chatState = initialChat;

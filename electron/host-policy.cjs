@@ -124,4 +124,15 @@ function isLocalResource(url, root) {
   } catch { return false; }
 }
 
-module.exports = { DEFAULT_SETTINGS, EXPRESSION_KEYS, SKIN_KEYS, POSE_KEYS, sanitizeAppearance, sanitizeSettings, dimensions, freeBounds, fitBounds, restoreBounds, recoverBounds, pointerPayload, actionForKey, isLocalResource };
+/** Compare Windows directory spellings without probing or following user paths. */
+function sameWindowsDirectory(left, right) {
+  const canonical = value => {
+    if (typeof value !== 'string' || !value || /[\u0000-\u001f]/.test(value) || !path.win32.isAbsolute(value)) return null;
+    const ordinary = value.replace(/^\\\\\?\\UNC\\/i, '\\\\').replace(/^\\\\[?.]\\(?=[A-Za-z]:\\)/, '');
+    return path.win32.resolve(ordinary).replace(/\\+$/, '').toLowerCase();
+  };
+  const a = canonical(left), b = canonical(right);
+  return a !== null && b !== null && a === b;
+}
+
+module.exports = { DEFAULT_SETTINGS, EXPRESSION_KEYS, SKIN_KEYS, POSE_KEYS, sanitizeAppearance, sanitizeSettings, dimensions, freeBounds, fitBounds, restoreBounds, recoverBounds, pointerPayload, actionForKey, isLocalResource, sameWindowsDirectory };

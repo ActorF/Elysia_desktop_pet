@@ -1,7 +1,7 @@
 {
   "name": "elysia_desktop_pet",
   "productName": "爱莉希雅桌宠",
-  "version": "1.4.5",
+  "version": "1.4.6",
   "private": true,
   "description": "独立爱莉希雅桌面伙伴",
   "author": "ActorF",
@@ -29,6 +29,7 @@
     "test:chat-native": "node scripts/launch.cjs --chat-smoke-test",
     "test:quick-chat": "node scripts/check-quick-chat-ui.mjs",
     "test:quick-chat-native": "node scripts/launch.cjs --quick-chat-smoke-test",
+    "test:ui-integration": "node scripts/deep-renderer-check.cjs",
     "test:chat-model": "node scripts/chat-model-check.cjs",
     "test:chat-runtime": "node scripts/chat-runtime-check.cjs",
     "test:chat-tts": "node scripts/chat-tts-check.cjs",
@@ -105,6 +106,7 @@
     "asarUnpack": [
       "electron/chat-runtime-host.ps1",
       "electron/chat-tts-worker.py",
+      "electron/windows-file-move.ps1",
       "electron/legacy-hotkeys.ps1",
       "electron/typed-keys.ps1",
       "electron/taskbar-order.ps1",

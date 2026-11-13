@@ -4,11 +4,15 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { createHash, randomUUID } = require('node:crypto');
 const { spawn } = require('node:child_process');
+const { performance } = require('node:perf_hooks');
 const { StringDecoder } = require('node:string_decoder');
+const { setTimeout: delay } = require('node:timers/promises');
 const { downloadResource } = require('./resource-download.cjs');
 const { REQUIRED, inspectVoiceInstallation } = require('./voice-installation.cjs');
 const { createVoiceRepair } = require('./voice-repair.cjs');
 const { createSetupDiagnostic, classifySetupFailure } = require('./setup-diagnostics.cjs');
+const { createSetupProcessTracker } = require('./setup-child-process.cjs');
+const { isHuggingFaceDownloadHost } = require('./resource-download-hosts.cjs');
 
 const RUNTIME_NAME = 'GPT-SoVITS-v2-240821';
 const MESSAGES = Object.freeze({
@@ -55,7 +59,7 @@ function allowedUrl(value, sourceValue, asset) {
   if (['release-assets.githubusercontent.com', 'objects.githubusercontent.com'].includes(url.hostname)) {
     return /^\/github-production-release-asset(?:-2e65be)?\//.test(url.pathname);
   }
-  return ['cdn-lfs.huggingface.co', 'cdn-lfs-us-1.hf.co', 'cdn-lfs.hf.co', 'cas-bridge.xethub.hf.co', 'us.aws.cdn.hf.co'].includes(url.hostname);
+  return isHuggingFaceDownloadHost(url.hostname);
 }
 
 function allowedSource(value, kind, item) {
@@ -78,7 +82,8 @@ function validManifest(value) {
 }
 
 function safeEntry(name) {
-  if (typeof name !== 'string' || !name || name.length > 240 || /[\u0000-\u001f\u007f:?*<>"|#]/.test(name) || /^[\\/]/.test(name)) return false;
+  // These are filesystem paths, not URLs; the pinned runtime includes GH#42345.pkl.
+  if (typeof name !== 'string' || !name || name.length > 240 || /[\u0000-\u001f\u007f:?*<>"|]/.test(name) || /^[\\/]/.test(name)) return false;
   const parts = name.replace(/\\/g, '/').split('/');
   return parts.every(part => part && !['.', '..'].includes(part) && !/[. ]$/.test(part)
     && !/^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(part));
@@ -87,12 +92,13 @@ function safeEntry(name) {
 /** Create a lazy installer. No model or interpreter is launched during setup. */
 function createVoiceSetup({ userData, onChange = () => {}, resourcesPath = process.resourcesPath, allowDownloads = true,
   assetDirectory, fetchImpl = globalThis.fetch, spawnImpl = spawn, env = process.env,
-  statfsImpl = fs.promises.statfs, beforeRepair = () => {},
+  statfsImpl = fs.promises.statfs, beforeRepair = () => {}, renameRuntimeImpl = fs.promises.rename,
   manifest: suppliedManifest, manifestPath = path.join(__dirname, 'voice-bootstrap-manifest.json'),
   downloadTimeoutMs = 4 * 60 * 60 * 1000, requestTimeoutMs = 15000, idleTimeoutMs = 30000,
-  extractionTimeoutMs = 45 * 60 * 1000 } = {}) {
+  extractionTimeoutMs = 45 * 60 * 1000, processStopTimeoutMs = 2000 } = {}) {
   if (typeof userData !== 'string' || !path.isAbsolute(userData)) throw new TypeError('userData must be absolute.');
   if (typeof allowDownloads !== 'boolean') throw new TypeError('allowDownloads must be a boolean.');
+  const helperProcesses = createSetupProcessTracker({ stopTimeoutMs: processStopTimeoutMs });
   const projectRoot = path.join(userData, 'voice-runtime');
   let manifest;
   try { manifest = suppliedManifest || JSON.parse(fs.readFileSync(manifestPath, 'utf8')); } catch {}
@@ -103,13 +109,14 @@ function createVoiceSetup({ userData, onChange = () => {}, resourcesPath = proce
     expectedBytes: manifest ? manifest.assets.bytes + manifest.runtime.bytes : 0, message: '准备独立的本地语音环境。',
     allowDownloads, installation: null, diagnostic: null, repairAvailable: false, backupPreserved: false };
   const repairTransaction = createVoiceRepair({ userData,
-    verifyInstallation: directory => inspectVoiceInstallation(directory, manifest).ready });
+    verifyInstallation: directory => inspectVoiceInstallation(directory, manifest).ready, beforeChange: beforeRepair });
   const getState = () => structuredClone(state);
   const getProjectRoot = () => projectRoot;
   function update(patch, throttle = false) {
     Object.assign(state, patch);
-    if (disposed || (throttle && Date.now() - lastNotice < 150)) return;
-    lastNotice = Date.now(); onChange(getState());
+    const now = performance.now();
+    if (disposed || (throttle && now - lastNotice < 150)) return;
+    lastNotice = now; onChange(getState());
   }
   function phase(name, message) { update({ phase: name, message, busy: true, canCancel: true,
     completedBytes: 0, totalBytes: 0, progress: null, error: null, diagnostic: null }); }
@@ -189,7 +196,51 @@ function createVoiceSetup({ userData, onChange = () => {}, resourcesPath = proce
   }
   async function storeFile(operation) {
     try { return await operation(); }
-    catch (error) { throw failure('storage', classifySetupFailure(error, 'storage-io'), error, { diagnosticStage: 'storage' }); }
+    catch (error) {
+      if (error.voiceSetupCode === 'conflict' && error.preserveStage === true) throw error;
+      throw failure('storage', classifySetupFailure(error, 'storage-io'), error, {
+        diagnosticStage: 'storage', preserveStage: error.preserveStage === true });
+    }
+  }
+  async function placeRuntime(source, target, stage, signal) {
+    // Windows may briefly refuse a directory move immediately after extraction.
+    // Retry only this private staging move, never the live-runtime transaction.
+    const conflict = () => failure('conflict', 'installation-conflict', undefined, { preserveStage: true, diagnosticStage: 'storage' });
+    const directories = [...new Set([stage, path.dirname(source), source, path.dirname(target)])].map(directory => {
+      const relative = path.relative(stage, directory), stat = fs.lstatSync(directory, { bigint: true });
+      if (path.isAbsolute(relative) || relative === '..' || relative.startsWith(`..${path.sep}`)
+        || !stat.isDirectory() || stat.isSymbolicLink()) throw conflict();
+      return { directory, dev: stat.dev, ino: stat.ino, real: fs.realpathSync(directory) };
+    });
+    if (directories.some(entry => entry.dev !== directories[0].dev)) throw conflict();
+    function assertUnchanged() {
+      for (const entry of directories) {
+        let stat;
+        try { stat = fs.lstatSync(entry.directory, { bigint: true }); }
+        catch (error) { if (['ENOENT', 'ENOTDIR'].includes(error.code)) throw conflict(); throw error; }
+        if (!stat.isDirectory() || stat.isSymbolicLink() || stat.dev !== entry.dev || stat.ino !== entry.ino
+          || fs.realpathSync(entry.directory) !== entry.real) throw conflict();
+      }
+      try { fs.lstatSync(target); throw conflict(); }
+      catch (error) { if (error.code !== 'ENOENT') throw error; }
+    }
+    const waits = process.platform === 'win32' ? [25, 75, 150, 250] : [];
+    try {
+      for (let attempt = 0; ; attempt++) {
+        aborted(signal); assertUnchanged();
+        try { await renameRuntimeImpl(source, target); return; }
+        catch (error) {
+          if (attempt >= waits.length || !['EPERM', 'EACCES', 'EBUSY'].includes(error.code)) throw error;
+        }
+        await delay(waits[attempt], undefined, { signal });
+      }
+    } catch (error) {
+      // A final failure or cancellation has no next attempt to check for a
+      // replacement. Never let stage cleanup remove newly appeared files.
+      try { assertUnchanged(); }
+      catch (changed) { changed.preserveStage = true; throw changed; }
+      throw error;
+    }
   }
   async function ensureSpace(bytes) {
     const requiredBytes = Math.ceil(bytes) + 64 * 1024 ** 2;
@@ -213,15 +264,16 @@ function createVoiceSetup({ userData, onChange = () => {}, resourcesPath = proce
     aborted(signal);
     const sources = item.sources || (item.url ? [item.url] : []);
     if (!sources.length) throw failure('unavailable');
-    let partialBytes = 0;
-    if (ordinaryFile(cached + '.part')) partialBytes = Math.min(fs.statSync(cached + '.part').size, item.bytes);
-    await ensureSpace(item.bytes - partialBytes);
     phase('downloading', `正在下载${kind}，完成后会自动配置…`);
     update({ totalBytes: item.bytes });
     try {
       return await downloadResource({ asset: item, destination: cached, sources, fetchImpl, signal,
         isAllowedUrl: (url, source) => allowedUrl(url, source, item),
         preserveInvalidDestination: false, downloadTimeoutMs, requestTimeoutMs, idleTimeoutMs,
+        beforeDownload: async ({ remainingBytes }) => {
+          try { await ensureSpace(remainingBytes); }
+          catch (error) { error.setupCode = 'storage'; throw error; }
+        },
         onProgress: (completedBytes, totalBytes) => update({ phase: 'downloading',
           message: `正在下载${kind}，完成后会自动配置…`, completedBytes, totalBytes, progress: completedBytes / totalBytes }, true),
         onVerify: () => phase('verifying', `正在校验${kind}下载内容…`),
@@ -235,8 +287,7 @@ function createVoiceSetup({ userData, onChange = () => {}, resourcesPath = proce
       throw failure(legacyCode, classifySetupFailure(error, FAILURE_KINDS[legacyCode] || 'unknown'), error);
     }
   }
-  function runExtractor(executable, args, signal, kind = 'extract') {
-    return new Promise((resolve, reject) => {
+  async function runExtractor(executable, args, signal, kind = 'extract') {
       aborted(signal);
       const validating = kind === 'validate';
       const detail = (suffix, cause, exitCode) => failure(validating || suffix !== 'launch' ? 'archive' : 'extractor',
@@ -244,29 +295,28 @@ function createVoiceSetup({ userData, onChange = () => {}, resourcesPath = proce
         { diagnosticStage: kind, ...(Number.isInteger(exitCode) ? { exitCode } : {}) });
       let child;
       try { child = spawnImpl(executable, args, { windowsHide: true, shell: false, stdio: ['ignore', 'pipe', 'ignore'] }); }
-      catch (error) { reject(detail('launch', error)); return; }
+      catch (error) { throw detail('launch', error); }
       const operation = active; operation.child = child;
       const decoder = new StringDecoder('utf8');
-      let output = '', failed = false, finished = false, timedOut = false, outputTooLarge = false;
-      const stop = () => { failed = true; child.kill(); };
-      const timer = setTimeout(() => { timedOut = true; stop(); }, extractionTimeoutMs);
-      signal.addEventListener('abort', stop, { once: true });
-      child.stdout?.on('data', chunk => {
-        if (output.length + chunk.length > 64 * 1024 * 1024) { outputTooLarge = true; stop(); return; }
+      let output = '';
+      const read = chunk => {
+        if (output.length + chunk.length > 64 * 1024 * 1024) { helperProcesses.stopChild(child, detail('output')); return; }
         output += decoder.write(chunk);
-      });
-      const finish = (error, code) => {
-        if (finished) return;
-        finished = true; clearTimeout(timer); signal.removeEventListener('abort', stop);
-        operation.child = null;
-        if (error) reject(detail('launch', error));
-        else if (timedOut) reject(detail('timeout'));
-        else if (outputTooLarge) reject(detail('output'));
-        else if (failed || code !== 0) reject(detail('exit', undefined, code));
-        else resolve(output + decoder.end());
       };
-      child.once('error', error => finish(error)); child.once('close', code => finish(null, code));
-    });
+      child.stdout?.on('data', read);
+      try {
+        const code = await helperProcesses.wait(child, { signal, timeoutMs: extractionTimeoutMs, completionEvent: 'close', timeoutError: () => detail('timeout') });
+        if (code !== 0) throw detail('exit', undefined, code);
+        return output + decoder.end();
+      } catch (error) {
+        if (error.setupProcessExit) void error.setupProcessExit.then(() => { if (operation.child === child) operation.child = null; });
+        if (error.voiceSetupCode || error.name === 'AbortError') throw error;
+        throw Object.assign(detail('launch', error), { preserveStage: error.preserveStage === true,
+          ...(error.setupProcessExit ? { setupProcessExit: error.setupProcessExit } : {}) });
+      } finally {
+        child.stdout?.removeListener('data', read);
+        if (!helperProcesses.owns(child)) operation.child = null;
+      }
   }
   async function unpack(executable, archive, destination, signal) {
     phase('extracting', '正在解压语音资源，请保持足够的可用磁盘空间…');
@@ -298,22 +348,26 @@ function createVoiceSetup({ userData, onChange = () => {}, resourcesPath = proce
     aborted(signal);
     if (fs.lstatSync(directory).isSymbolicLink()) throw failure('archive', 'archive-unsafe');
     for (const entry of await fs.promises.readdir(directory, { withFileTypes: true })) {
+      aborted(signal);
       const file = path.join(directory, entry.name), stat = await fs.promises.lstat(file);
+      aborted(signal);
       if (stat.isSymbolicLink()) throw failure('archive', 'archive-unsafe');
       if (stat.isDirectory()) await rejectLinks(file, signal);
       else if (!stat.isFile()) throw failure('archive');
     }
+    aborted(signal);
   }
-  async function removeStage(directory) {
+  async function removeStage(directory, expectedIdentity) {
     if (!directory || !fs.existsSync(directory)) return;
-    const realParent = await fs.promises.realpath(userData), stat = await fs.promises.lstat(directory);
+    const realParent = await fs.promises.realpath(userData), stat = await fs.promises.lstat(directory, { bigint: true });
     if (stat.isSymbolicLink()) return;
+    if (expectedIdentity && (stat.dev !== expectedIdentity.dev || stat.ino !== expectedIdentity.ino)) return;
     const actual = await fs.promises.realpath(directory), relative = path.relative(realParent, actual);
     if (!relative || path.isAbsolute(relative) || relative.includes(path.sep) || !/^voice-staging-[0-9a-f-]{36}$/.test(relative)) return;
     await fs.promises.rm(actual, { recursive: true, force: true });
   }
   async function deploy(operation, repairing = false) {
-    const signal = operation.controller.signal; let stage, terminal;
+    const signal = operation.controller.signal; let stage, stageIdentity, terminal;
     try {
       if (!manifest) throw failure('manifest');
       aborted(signal);
@@ -347,6 +401,7 @@ function createVoiceSetup({ userData, onChange = () => {}, resourcesPath = proce
       const runtime = await verifiedArchive(manifest.runtime, '语音运行环境', signal);
       stage = path.join(userData, `voice-staging-${randomUUID()}`);
       await ensureDirectory(stage);
+      stageIdentity = fs.lstatSync(stage, { bigint: true });
       const project = path.join(stage, 'project'), runtimeExtraction = path.join(stage, 'runtime');
       await ensureDirectory(project);
       await unpack(executable, runtime, runtimeExtraction, signal);
@@ -356,7 +411,7 @@ function createVoiceSetup({ userData, onChange = () => {}, resourcesPath = proce
         if (!ordinaryFile(path.join(runtimeSource, 'runtime', 'python.exe'))) throw failure('archive');
       }
       const cache = path.join(project, 'models', 'cache'); await ensureDirectory(cache);
-      await storeFile(() => fs.promises.rename(runtimeSource, path.join(cache, RUNTIME_NAME)));
+      await storeFile(() => placeRuntime(runtimeSource, path.join(cache, RUNTIME_NAME), stage, signal));
       // The small asset archive also carries pronunciation-data overlays absent
       // from the original upstream runtime. Apply it only after runtime placement.
       await unpack(executable, assets, project, signal);
@@ -404,13 +459,14 @@ function createVoiceSetup({ userData, onChange = () => {}, resourcesPath = proce
         message: committed?.backupDirectory ? '语音环境已修复，原目录已保留为备份。' : '本地语音环境已就绪，可以朗读聊天回答。' };
     } catch (error) {
       operation.preserveStage = error.preserveStage === true;
+      if (stage && error.setupProcessExit) void error.setupProcessExit.then(() => removeStage(stage, stageIdentity)).catch(() => {});
       const cancelled = signal.aborted;
       terminal = { phase: cancelled ? 'cancelled' : 'error', ready: false,
         diagnostic: cancelled ? null : errorDiagnostic(error),
         error: cancelled ? null : MESSAGES[error.voiceSetupCode] || MESSAGES.unknown,
         message: cancelled ? '已取消语音配置，重试时会继续下载并复用已校验的文件。' : MESSAGES[error.voiceSetupCode] || MESSAGES.unknown };
     } finally {
-      if (!operation.child && !operation.preserveStage) await removeStage(stage).catch(() => {});
+      if (!operation.child && !operation.preserveStage) await removeStage(stage, stageIdentity).catch(() => {});
       if (active === operation) active = null;
       const current = installation();
       repairFailure = repairing && terminal?.phase === 'error' ? JSON.stringify(current) : null;
@@ -422,6 +478,10 @@ function createVoiceSetup({ userData, onChange = () => {}, resourcesPath = proce
     if (!allowDownloads) return { ok: false, code: 'downloads-disabled', error: MESSAGES['downloads-disabled'],
       diagnostic: createSetupDiagnostic('voice', 'preview-disabled', { stage: 'inspection' }), state: getState() };
     if (active) return { ok: false, error: '语音配置正在进行。' };
+    if (helperProcesses.pending()) {
+      const diagnostic = createSetupDiagnostic('voice', 'storage-busy', { stage: 'extract' });
+      return { ok: false, error: diagnostic.summary, diagnostic, state: getState() };
+    }
     repairFailure = null;
     const operation = { controller: new AbortController(), child: null }; active = operation;
     phase('checking', repairing ? '正在检查可复用的语音资源，原环境会保留…' : '正在检查本地语音环境…'); void deploy(operation, repairing);
@@ -429,7 +489,7 @@ function createVoiceSetup({ userData, onChange = () => {}, resourcesPath = proce
   }
   const install = () => begin(false), repair = () => begin(true);
   function cancel() { if (!active || !state.canCancel) return { ok: false, state: getState() }; active.controller.abort(); return { ok: true, state: getState() }; }
-  function dispose() { disposed = true; active?.controller.abort(); }
+  function dispose() { disposed = true; active?.controller.abort(); helperProcesses.stop(); }
   return { getState, inspect, install, repair, cancel, dispose, getProjectRoot };
 }
 

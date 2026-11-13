@@ -2,6 +2,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
+const { performance } = require('node:perf_hooks');
 const { createTaskbarOrderer } = require('../electron/taskbar-order.cjs');
 
 function fixture(options = {}) {
@@ -103,4 +104,57 @@ test('32-bit HWNDs are passed without truncating or changing their numeric repre
   f.window.getNativeWindowHandle = () => Buffer.from([0xfe, 0xdc, 0xba, 0x98]);
   f.orderer.start(); const args = f.children[0].args;
   assert.equal(args[args.indexOf('-TargetHwnd') + 1], '0x98badcfe'); f.orderer.dispose();
+});
+
+test('native helper retry delay is independent of wall-clock corrections', t => {
+  let elapsed = 0, wall = 1_800_000_000_000;
+  t.mock.method(performance, 'now', () => elapsed); t.mock.method(Date, 'now', () => wall);
+  const f = fixture({ now: undefined, retryDelayMs: 1000 });
+  f.orderer.start(); f.children[0].emit('exit', 1);
+  wall -= 60 * 60 * 1000; elapsed += 1000;
+  f.orderer.start(); assert.equal(f.children.length, 2);
+  f.orderer.dispose();
+});
+
+test('explicit stop retries a previously failed helper kill without releasing its owner early', () => {
+  const f = fixture(); f.orderer.start(); const old = f.children[0];
+  old.kill = () => { old.kills++; if (old.kills === 1) throw new Error('first kill failed'); };
+  old.emit('error', new Error('native helper error'));
+  assert.equal(old.kills, 1); assert.equal(f.orderer.running, false);
+  f.orderer.stop(); assert.equal(old.kills, 2);
+  f.orderer.start(); assert.equal(f.children.length, 1);
+  old.emit('exit', 0); f.orderer.start(); assert.equal(f.children.length, 2);
+  f.orderer.dispose();
+});
+
+test('a refused ordinary stop is retried on the next stop or disposal without releasing the live owner', async t => {
+  for (const failure of ['throw', 'false']) for (const nextAction of ['stop', 'dispose']) await t.test(`${failure}: ${nextAction}`, () => {
+    const f = fixture(); f.orderer.start(); const child = f.children[0];
+    child.stdout.emit('data', 'READY\n');
+    child.kill = () => {
+      child.kills++;
+      if (child.kills === 1) {
+        if (failure === 'throw') throw new Error('temporary termination refusal');
+        return false;
+      }
+      return true;
+    };
+    f.orderer.stop(); assert.equal(child.kills, 1); assert.equal(f.orderer.running, false);
+    f.orderer[nextAction](); assert.equal(child.kills, 2);
+    f.orderer.stop(); assert.equal(child.kills, 2, 'a successful kill request is not repeated');
+    f.orderer.start(); assert.equal(f.children.length, 1, 'confirmation of exit is still required');
+    child.emit('exit', 0);
+    f.orderer.start(); assert.equal(f.children.length, nextAction === 'dispose' ? 1 : 2);
+    f.orderer.dispose();
+  });
+});
+
+test('repeated late native errors do not become unhandled events or disturb a new helper', () => {
+  const f = fixture(); f.orderer.start(); const old = f.children[0];
+  old.emit('error', new Error('first failure'));
+  assert.doesNotThrow(() => old.emit('error', new Error('kill failure')));
+  old.emit('exit', 1); f.advance(3000); f.orderer.start();
+  f.children[1].stdout.emit('data', 'READY\n');
+  assert.doesNotThrow(() => old.emit('error', new Error('late failure')));
+  assert.equal(f.orderer.running, true); f.orderer.dispose();
 });

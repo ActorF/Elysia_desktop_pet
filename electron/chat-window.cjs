@@ -40,6 +40,11 @@ function createChatWindow({ BrowserWindow, screen, root, icon, isSmokeTest = fal
       for (const event of ['maximize', 'unmaximize', 'restore']) window.on(event, publishWindowState);
       window.on('close', () => { if (!window.isDestroyed()) lastBounds = window.getNormalBounds(); });
       window.on('closed', () => { if (current?.window === window) { current = null; onClosed(); } });
+      window.webContents.on('render-process-gone', () => {
+        if (current?.window !== window || window.isDestroyed()) return;
+        lastBounds = window.getNormalBounds();
+        window.destroy();
+      });
       const entry = { window, ready: null };
       current = entry;
       entry.ready = window.loadURL(url).catch(error => {

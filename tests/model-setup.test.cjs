@@ -40,9 +40,10 @@ function fixture(t, options = {}) {
     const actualArgs = args;
     if (spawnOptions.env?.ELYSIA_CHAT_ARGS) args = JSON.parse(spawnOptions.env.ELYSIA_CHAT_ARGS);
     const child = new EventEmitter(); child.stdout = new PassThrough();
+    child.once('exit', code => { if (child.autoClose !== false) process.nextTick(() => child.emit('close', code)); });
     child.kill = () => { child.killed = true; if (args.includes('--model')) f.online = false; process.nextTick(() => child.emit('exit', 1)); return true; };
     const record = { file, args, actualArgs, options: spawnOptions, child }; processes.push(record);
-    if (options.spawn) { options.spawn(record, f); return child; }
+    if (options.spawn && options.spawn(record, f) !== false) return child;
     if (spawnOptions.env?.ELYSIA_CHAT_SERVER) f.online = true;
     else if (spawnOptions.env?.ELYSIA_CHAT_DEPENDENCY_STAGE) {
       assert.equal(Buffer.from(args.at(-1), 'base64').toString('utf16le'), DEPENDENCIES_EXTRACT_SCRIPT);
@@ -104,6 +105,56 @@ function interruptedRuntime(f, phase) {
   if (phase === 'installed') fs.renameSync(stage, runtime);
   return { runtime, stage, backup, journal };
 }
+
+test('explicit chat recovery stops an already running old runtime before replacing its directories', async t => {
+  const f = fixture(t), pending = interruptedRuntime(f, 'prepared');
+  f.service.ensureInstalledServer(); assert.equal((await settled(f.service)).phase, 'ready');
+  const running = servers(f)[0].child;
+  let exited = false; running.once('exit', () => { exited = true; });
+  const rename = fs.renameSync, observations = [];
+  fs.renameSync = (source, destination) => {
+    if (source === pending.runtime || source === pending.stage) observations.push(exited);
+    return rename(source, destination);
+  };
+  try {
+    f.service.installChatModel(); assert.equal((await settled(f.service)).phase, 'ready');
+  } finally { fs.renameSync = rename; }
+  assert.deepEqual(observations, [true, true], 'the old model host must confirm exit before either transaction move');
+  assert.equal(fs.existsSync(pending.journal), false); assert.equal(servers(f).length, 2);
+});
+
+test('chat recovery retains its journal and resources when the old model host has not confirmed exit', async t => {
+  const f = fixture(t, { service: { processStopTimeoutMs: 8 } }), pending = interruptedRuntime(f, 'prepared');
+  f.service.ensureInstalledServer(); assert.equal((await settled(f.service)).phase, 'ready');
+  const running = servers(f)[0].child;
+  running.pid = 12345; running.kill = () => false;
+  f.service.installChatModel(); const failed = await settled(f.service);
+  assert.equal(failed.diagnostic?.code, 'FS-103');
+  assert.equal(fs.existsSync(pending.journal), true); assert.equal(fs.existsSync(pending.stage), true);
+  assert.equal(fs.existsSync(pending.backup), false);
+  assert.equal(fs.readFileSync(path.join(pending.runtime, 'old.dll'), 'utf8'), 'preserved original runtime');
+  assert.equal(f.service.installChatModel().ok, false); assert.equal(servers(f).length, 1);
+  f.online = false; running.emit('exit', 1);
+  f.service.installChatModel(); assert.equal((await settled(f.service)).phase, 'ready');
+  assert.equal(fs.existsSync(pending.journal), false); assert.equal(servers(f).length, 2);
+});
+
+test('a ready health reply cannot resurrect an owned host that failed while its probe was pending', async t => {
+  let failingHost;
+  const f = fixture(t, { fetch: (url, request, item) => {
+    if (failingHost && url.endsWith('/health')) {
+      const child = failingHost; failingHost = null;
+      child.emit('error', Object.assign(new Error('host failure during health response'), { code: 'EIO' }));
+    }
+    return readyResponse(url, item);
+  } });
+  installed(f); f.service.ensureInstalledServer(); assert.equal((await settled(f.service)).phase, 'ready');
+  const host = servers(f)[0].child; host.pid = 12345; host.kill = () => false; failingHost = host;
+  f.service.ensureInstalledServer(); const state = await settled(f.service);
+  assert.equal(state.serverReady, false); assert.equal(state.phase, 'error');
+  assert.equal(f.service.ensureInstalledServer().ok, false, 'the unconfirmed host must keep its ownership');
+  assert.equal(servers(f).length, 1); f.online = false; host.emit('exit', 1);
+});
 const downloads = f => f.calls.filter(call => !call.url.startsWith(SETUP_BASE_URL));
 const servers = f => f.processes.filter(child => child.args.includes('--model'));
 const readyResponse = (url, item) => { if (!item.online) throw new Error('offline'); return url.endsWith('/health') ? json({ status: 'ok' }) : json({ data: [{ id: SETUP_MODEL }] }); };
@@ -516,6 +567,34 @@ test('complete existing GGUF repairs missing, invalid and outdated markers witho
   }
 });
 
+test('model marker write or publication failure preserves verified bytes and the old marker for a local retry', async t => {
+  for (const mode of ['write', 'publish']) await t.test(mode, async t => {
+    const f = fixture(t, { fetch: (url, request, item) => {
+      assert.ok(url.startsWith(SETUP_BASE_URL), 'marker retry must reuse the existing model'); return readyResponse(url, item);
+    } }); installed(f);
+    const directory = path.join(f.root, 'chat-models'), model = path.join(directory, f.manifest.model.file);
+    const marker = path.join(directory, 'elysia-model.json'), oldMarker = '{incomplete old marker';
+    fs.writeFileSync(marker, oldMarker); const before = fs.statSync(model, { bigint: true });
+    const writeFile = fs.promises.writeFile, rename = fs.promises.rename;
+    fs.promises.writeFile = async (file, ...args) => {
+      if (mode === 'write' && String(file).startsWith(`${marker}.`)) throw Object.assign(new Error('fixture disk full'), { code: 'ENOSPC' });
+      return writeFile(file, ...args);
+    };
+    fs.promises.rename = async (source, destination) => {
+      if (mode === 'publish' && destination === marker) throw Object.assign(new Error('fixture marker denied'), { code: 'EACCES' });
+      return rename(source, destination);
+    };
+    let state;
+    try { f.service.installChatModel(); state = await settled(f.service); }
+    finally { fs.promises.writeFile = writeFile; fs.promises.rename = rename; }
+    assert.equal(state.diagnostic?.code, mode === 'write' ? 'FS-101' : 'FS-102');
+    assert.equal(fs.readFileSync(marker, 'utf8'), oldMarker); assert.equal(fs.statSync(model, { bigint: true }).ino, before.ino);
+    assert.deepEqual(fs.readFileSync(model), f.model); assert.equal(servers(f).length, 0);
+    assert.deepEqual(fs.readdirSync(directory).sort(), ['elysia-model.json', f.manifest.model.file].sort());
+    f.service.installChatModel(); assert.equal((await settled(f.service)).phase, 'ready'); assert.equal(downloads(f).length, 0);
+  });
+});
+
 test('preview does not regenerate a missing model marker or repair an incomplete runtime', async t => {
   const f = fixture(t, { service: { allowDownloads: false } }); installed(f);
   const runtime = path.join(f.root, 'chat-runtime'), marker = path.join(f.root, 'chat-models', 'elysia-model.json');
@@ -555,6 +634,39 @@ test('pinned Hugging Face model follows the official CDN redirect used by the li
     assert.equal(url, 'https://us.aws.cdn.hf.co/model-blob'); return new Response(item.model);
   } });
   f.service.installChatModel(); assert.equal((await settled(f.service)).phase, 'ready');
+});
+
+test('chat models share the official European, GCP and LFS download host policy', async t => {
+  for (const host of ['cdn-lfs.hf.co', 'transfer.xethub.hf.co', 'transfer.xethub-eu.hf.co',
+    'eu-west-3.aws.cdn.hf.co', 'asia-southeast1.us.gcp.cdn.hf.co']) await t.test(host, async t => {
+    const f = fixture(t, { fetch: async (url, request, item) => {
+      if (url.startsWith(SETUP_BASE_URL)) return readyResponse(url, item);
+      if (url === item.manifest.runtime.url) return new Response(item.runtime);
+      if (url === item.manifest.model.url) return new Response(null, { status: 302, headers: { location: `https://${host}/pinned-blob?signature=opaque` } });
+      assert.equal(new URL(url).hostname, host); return new Response(item.model);
+    } });
+    f.service.installChatModel(); assert.equal((await settled(f.service)).phase, 'ready');
+  });
+});
+
+test('chat regional hosts remain an exact HTTPS allowlist with a separate ModelScope policy', async t => {
+  for (const location of ['https://us.gcp.cdn.hf.co.evil.example/asset', 'https://fake-us.gcp.cdn.hf.co/asset',
+    'https://unlisted.cdn.hf.co/asset', 'https://user:password@us.gcp.cdn.hf.co/asset',
+    'https://us.gcp.cdn.hf.co:8443/asset', 'http://us.gcp.cdn.hf.co/asset', 'https://s3.us-east-1.amazonaws.com/arbitrary/asset']) {
+    const f = fixture(t, { fetch: async (url, request, item) => {
+      if (url.startsWith(SETUP_BASE_URL)) return readyResponse(url, item);
+      if (url === item.manifest.runtime.url) return new Response(item.runtime);
+      assert.equal(url, item.manifest.model.url); return new Response(null, { status: 302, headers: { location } });
+    } });
+    f.service.installChatModel(); assert.equal((await settled(f.service)).diagnostic.code, 'NET-112');
+    assert.equal(f.calls.some(call => call.url === location), false);
+  }
+  const f = fixture(t, { domesticSources: true, fetch: async (url, request, item) => {
+    if (url === item.manifest.runtime.url) return new Response(item.runtime);
+    assert.equal(url, item.manifest.model.sources[0]); return new Response(null, { status: 302, headers: { location: 'https://eu-west-3.aws.cdn.hf.co/asset' } });
+  } });
+  f.manifest.model.sources = [f.manifest.model.sources[0]];
+  f.service.installChatModel(); assert.equal((await settled(f.service)).diagnostic.code, 'NET-112');
 });
 
 test('bundled llama.cpp and an existing model configure without external downloads', async t => {
@@ -721,6 +833,49 @@ test('server launch, premature exit, readiness timeout and protocol errors stay 
   }
 });
 
+test('owned model startup retries transient health or model-list transport failures without killing its host', async t => {
+  for (const mode of ['model-headers', 'health-body', 'models-body']) await t.test(mode, async t => {
+    let faulted = false;
+    const f = fixture(t, { service: { startTimeoutMs: 1000 }, fetch: (url, request, item) => {
+      if (!item.online) throw new Error('offline fixture');
+      const target = mode === 'health-body' ? '/health' : '/v1/models';
+      if (!faulted && url.endsWith(target)) {
+        faulted = true;
+        if (mode === 'model-headers') throw new TypeError('transport failed', { cause: Object.assign(new Error('socket'), { code: 'UND_ERR_SOCKET' }) });
+        return new Response(new ReadableStream({ start(controller) {
+          controller.enqueue(Buffer.from('{'));
+          queueMicrotask(() => controller.error(new TypeError('response connection interrupted')));
+        } }));
+      }
+      return readyResponse(url, item);
+    } });
+    installed(f); f.service.ensureInstalledServer(); const state = await settled(f.service);
+    assert.equal(faulted, true); assert.equal(state.phase, 'ready');
+    assert.equal(servers(f).length, 1); assert.notEqual(servers(f)[0].child.killed, true);
+  });
+});
+
+test('an unowned service with a failing model-list response still occupies the chat port', async t => {
+  const f = fixture(t, { fetch: url => url.endsWith('/health') ? json({ status: 'ok' })
+    : Promise.reject(new TypeError('temporary socket failure')) });
+  installed(f); f.service.ensureInstalledServer(); const state = await settled(f.service);
+  assert.equal(state.diagnostic?.code, 'RUN-201'); assert.equal(servers(f).length, 0);
+});
+
+test('persistent model-list transport failure reaches the startup deadline while complete invalid protocol data fails immediately', async t => {
+  for (const mode of ['transport', 'json', 'shape', 'size']) await t.test(mode, async t => {
+    const f = fixture(t, { service: { startTimeoutMs: 20 }, fetch: (url, request, item) => {
+      if (!item.online) throw new Error('offline fixture');
+      if (url.endsWith('/health')) return json({ status: 'ok' });
+      if (mode === 'transport') throw new TypeError('persistent socket failure');
+      return mode === 'json' ? new Response('{broken') : mode === 'shape' ? json({ data: [null] }) : new Response('x'.repeat(65537));
+    } }); installed(f);
+    f.service.ensureInstalledServer(); const state = await settled(f.service);
+    assert.equal(state.diagnostic?.code, mode === 'transport' ? 'RUN-204' : 'RUN-205');
+    assert.equal(servers(f).length, 1); assert.equal(servers(f)[0].child.killed, true);
+  });
+});
+
 test('a recovered port clears its prior conflict while an unexpected owned-server exit stays visible', async t => {
   const f = fixture(t); installed(f); f.online = true;
   f.service.ensureInstalledServer(); assert.equal((await settled(f.service)).diagnostic.code, 'RUN-201');
@@ -743,4 +898,102 @@ test('unidentified and filesystem failures do not become generic download failur
     if (systemCode) assert.equal(state.diagnostic.details.systemCode, systemCode);
     assert.equal(downloads(f).length, 0); assert.equal(f.processes.length, 0);
   }
+});
+
+test('unconfirmed device-enumerator termination settles and blocks a second process until late exit', async t => {
+  for (const mode of ['timeout', 'cancel']) await t.test(mode, async t => {
+    let stuck = true, enumerator;
+    const f = fixture(t, { service: { deviceTimeoutMs: 8, processStopTimeoutMs: 5 }, spawn: record => {
+      if (!stuck || !record.args.includes('--list-devices')) return false;
+      enumerator = record.child; enumerator.pid = 123;
+      enumerator.kill = () => { if (mode === 'cancel') throw new Error('kill refused'); return false; };
+      if (mode === 'cancel') queueMicrotask(() => f.service.cancel());
+    } }); installed(f);
+    f.service.ensureInstalledServer(); const state = await settled(f.service);
+    assert.equal(state.phase, mode === 'cancel' ? 'cancelled' : 'error');
+    assert.equal(state.diagnostic?.code || null, mode === 'cancel' ? null : 'RUN-204');
+    assert.equal(servers(f).length, 0);
+    assert.equal(f.service.ensureInstalledServer().ok, false);
+    assert.equal(f.service.installChatModel().ok, false);
+    assert.equal(f.processes.length, 1);
+    stuck = false; enumerator.emit('exit', 1);
+    assert.equal(f.service.ensureInstalledServer().ok, true);
+    assert.equal((await settled(f.service)).phase, 'ready');
+    assert.equal(servers(f).length, 1);
+  });
+});
+
+test('a chat extractor that will not terminate retains its stage and blocks retry until confirmed exit', async t => {
+  let stuck = true, extractor, stage;
+  const f = fixture(t, { service: { extractionTimeoutMs: 8, processStopTimeoutMs: 5 }, spawn: record => {
+    if (!stuck || !record.options.env?.ELYSIA_CHAT_STAGE) return false;
+    extractor = record.child; extractor.pid = 123; extractor.kill = () => false;
+    stage = record.options.env.ELYSIA_CHAT_STAGE; fs.writeFileSync(path.join(stage, 'in-progress'), 'owned partial');
+  } });
+  f.service.installChatModel(); const state = await settled(f.service);
+  assert.equal(state.diagnostic.code, 'EXT-103');
+  assert.equal(fs.readFileSync(path.join(stage, 'in-progress'), 'utf8'), 'owned partial');
+  assert.equal(fs.existsSync(path.join(f.root, 'chat-runtime')), false);
+  assert.equal(f.service.installChatModel().ok, false); assert.equal(f.processes.length, 1);
+  stuck = false; extractor.emit('exit', 1);
+  for (let i = 0; i < 100 && fs.existsSync(stage); i++) await new Promise(resolve => setTimeout(resolve, 2));
+  assert.equal(fs.existsSync(stage), false);
+  assert.equal(f.service.installChatModel().ok, true); assert.equal((await settled(f.service)).phase, 'ready');
+});
+
+test('a stopped host keeps ownership until exit and cannot race a new model while its port is still offline', async t => {
+  for (const mode of ['timeout', 'cancel', 'kill-error']) await t.test(mode, async t => {
+    let stuck = true, host;
+    const f = fixture(t, { service: { startTimeoutMs: 8 }, spawn: record => {
+      if (!stuck || !record.args.includes('--model')) return false;
+      host = record.child; host.pid = 123;
+      host.kill = () => {
+        if (mode === 'cancel') throw new Error('kill refused');
+        if (mode === 'kill-error') host.emit('error', Object.assign(new Error('kill failed'), { code: 'EPERM' }));
+        return false;
+      };
+      if (mode === 'cancel') queueMicrotask(() => f.service.cancel());
+    } }); installed(f);
+    f.service.ensureInstalledServer(); const state = await settled(f.service);
+    assert.equal(state.phase, mode === 'cancel' ? 'cancelled' : 'error');
+    assert.equal(f.service.ensureInstalledServer().ok, false); assert.equal(servers(f).length, 1);
+    // Even if the unconfirmed host becomes reachable later, inspection must
+    // not advertise it as a usable owned server during shutdown.
+    f.online = true; assert.equal((await f.service.inspect()).serverReady, false);
+    f.online = false; stuck = false; host.emit('exit', 1);
+    assert.equal(f.service.ensureInstalledServer().ok, true); assert.equal((await settled(f.service)).phase, 'ready');
+    assert.equal(servers(f).length, 2);
+  });
+});
+
+test('a live extractor error retains its exit confirmation through wrapping and cleans staging after late exit', async t => {
+  let child, stage;
+  const f = fixture(t, { service: { processStopTimeoutMs: 5 }, spawn: record => {
+    if (!record.options.env?.ELYSIA_CHAT_STAGE) return false;
+    stage = record.options.env.ELYSIA_CHAT_STAGE; child = record.child; child.pid = 123; child.kill = () => false;
+    fs.writeFileSync(path.join(stage, 'partial'), 'owned');
+    queueMicrotask(() => child.emit('error', Object.assign(new Error('runtime IO failure'), { code: 'EIO' })));
+  } });
+  f.service.installChatModel(); const state = await settled(f.service);
+  assert.equal(state.diagnostic.code, 'FS-105'); assert.equal(fs.existsSync(stage), true);
+  assert.equal(f.service.installChatModel().ok, false);
+  child.emit('exit', 1);
+  for (let i = 0; i < 100 && fs.existsSync(stage); i++) await new Promise(resolve => setTimeout(resolve, 2));
+  assert.equal(fs.existsSync(stage), false);
+});
+
+test('device enumeration waits for stdout to finish after process exit before choosing the GPU', async t => {
+  const f = fixture(t, { spawn: record => {
+    if (!record.args.includes('--list-devices')) return false;
+    record.child.autoClose = false;
+    process.nextTick(() => {
+      record.child.emit('exit', 0);
+      setImmediate(() => {
+        record.child.stdout.end('Available devices:\n  Vulkan3: NVIDIA GeForce Test (8192 MiB)\n');
+        record.child.emit('close', 0);
+      });
+    });
+  } }); installed(f);
+  f.service.ensureInstalledServer(); assert.equal((await settled(f.service)).phase, 'ready');
+  const args = servers(f)[0].args; assert.equal(args[args.indexOf('--device') + 1], 'Vulkan3');
 });

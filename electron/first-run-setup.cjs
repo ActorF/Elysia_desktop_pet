@@ -12,9 +12,10 @@ function managedChatEndpoint(value) {
 }
 
 /** Remember unfinished automatic preparation without touching chat preferences. */
-function createFirstRunSetup({ directory, firstRun, enabled = true }) {
+function createFirstRunSetup({ directory, firstRun, enabled = true, onError = code => console.error('Could not save automatic setup state:', code) }) {
   const file = path.join(directory, 'automatic-setup.json');
   let pending = { chat: false, voice: false, chatBackend: null };
+  let dirty = false;
   if (enabled) {
     try {
       const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -23,13 +24,24 @@ function createFirstRunSetup({ directory, firstRun, enabled = true }) {
   }
   function save() {
     if (!enabled) return;
-    fs.mkdirSync(directory, { recursive: true });
-    fs.writeFileSync(file + '.tmp', JSON.stringify(pending)); fs.renameSync(file + '.tmp', file);
+    dirty = true;
+    try {
+      fs.mkdirSync(directory, { recursive: true });
+      fs.writeFileSync(file + '.tmp', JSON.stringify(pending)); fs.renameSync(file + '.tmp', file);
+      dirty = false;
+    } catch (error) {
+      // This small resume marker must not abort app startup or throw from a
+      // resource's completion callback. Keep the decision for the next save.
+      try { onError(typeof error.code === 'string' && /^[A-Z0-9_]+$/.test(error.code) ? error.code : 'UNKNOWN'); } catch {}
+    }
   }
   if (enabled && (pending.chat || pending.voice)) save();
   function update(kind, state) {
-    if (!enabled || !['chat', 'voice'].includes(kind) || !pending[kind]) return;
-    if (state.phase === 'ready' || state.phase === 'cancelled') { pending[kind] = false; save(); }
+    if (!enabled || !['chat', 'voice'].includes(kind)) return;
+    if (state.phase === 'ready' || state.phase === 'cancelled') {
+      if (pending[kind]) { pending[kind] = false; dirty = true; }
+      if (dirty) save();
+    }
   }
   function start({ chat, voice, chatBaseUrl = 'http://127.0.0.1:18434' }) {
     if (!enabled) return false;
@@ -38,7 +50,7 @@ function createFirstRunSetup({ directory, firstRun, enabled = true }) {
     // Ollama setup was already completed. Cancellation remains durable.
     if (localChat && pending.chatBackend !== CHAT_BACKEND) {
       pending.chatBackend = CHAT_BACKEND; pending.chat = true; save();
-    }
+    } else if (dirty) save();
     // Called before opening the setup window: its read-only inspection cannot
     // race with startup and accidentally suppress the initial installation.
     const showSetup = (localChat && pending.chat) || pending.voice;

@@ -3,6 +3,8 @@ const find = selector => document.querySelector(selector);
 const transcript = find('#chat-transcript'), messages = find('#chat-messages'), input = find('#chat-input');
 const errorNode = find('#chat-error'), storageErrorNode = find('#chat-storage-error'), speechErrorNode = find('#chat-speech-error');
 let snapshot = null, revision = 0, pending = false, composing = false, submittedText = null;
+let draftRevision = 0, submittedRevision = 0;
+let localError = null;
 let lastConversationId = null;
 const messageNodes = new Map();
 let messageActionPending = false;
@@ -21,6 +23,7 @@ async function messageAction(node, action) {
   if (action === 'read-aloud' && (node.message.status === 'streaming' || snapshot.busy || messageActionPending)) return;
   const isCopy = action === 'copy', control = isCopy ? node.copy : node.read;
   const target = { conversationId: node.conversationId, messageId: node.message.id };
+  localError = null; renderError();
   node.actionPending = true;
   if (!isCopy) messageActionPending = true;
   renderMessages();
@@ -41,15 +44,19 @@ const time = value => {
   return Number.isFinite(date.getTime()) ? date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : '';
 };
 function fail(error) {
-  errorNode.textContent = error?.message || '操作暂未完成，请重试。'; errorNode.hidden = false;
+  localError = error?.message || '操作暂未完成，请重试。'; renderError();
+}
+function renderError() {
+  const message = localError || snapshot?.error || '';
+  errorNode.textContent = message; errorNode.hidden = !message;
 }
 function restoreDraft() {
-  if (submittedText && !input.value) input.value = submittedText;
+  if (submittedText && submittedRevision === draftRevision && !input.value) input.value = submittedText;
   submittedText = null;
 }
 function controls() {
   const busy = snapshot?.busy === true;
-  const speaking = ['starting', 'synthesizing', 'playing'].includes(snapshot?.speech?.status);
+  const speaking = ['warming', 'starting', 'synthesizing', 'playing'].includes(snapshot?.speech?.status);
   input.disabled = !snapshot || !!snapshot.storageError;
   find('#chat-send').disabled = !snapshot || busy || pending || !!snapshot.storageError || !input.value.trim();
   find('#chat-send').hidden = busy;
@@ -118,7 +125,7 @@ function renderMessages() {
 function receive(value) {
   if (!value?.settings || !Array.isArray(value.conversations)) return;
   snapshot = value; revision++;
-  errorNode.hidden = !value.error; errorNode.textContent = value.error || '';
+  renderError();
   storageErrorNode.hidden = !value.storageError; storageErrorNode.textContent = value.storageError || '';
   speechErrorNode.hidden = !value.speech?.error; speechErrorNode.textContent = value.speech?.error || '';
   if (!value.busy && value.error) restoreDraft();
@@ -126,12 +133,12 @@ function receive(value) {
   renderMessages(); controls();
 }
 async function command(operation) {
-  pending = true; controls(); errorNode.hidden = true;
+  pending = true; localError = null; controls(); renderError();
   try {
     const before = revision, result = await operation();
     if (before === revision && result?.settings) receive(result);
     if (result === false || result?.ok === false) throw new Error(result?.error || '操作暂未完成，请重试。');
-    if (result?.error) fail(new Error(result.error));
+    if (result?.error && !result.settings) fail(new Error(result.error));
     return result;
   } catch (error) { fail(error); return null; }
   finally { pending = false; controls(); }
@@ -140,13 +147,13 @@ find('#chat-form').addEventListener('submit', async event => {
   event.preventDefault();
   const text = input.value.trim();
   if (!text || !snapshot || snapshot.busy || pending || snapshot.storageError || composing) return;
-  submittedText = input.value; input.value = ''; controls();
+  submittedText = input.value; submittedRevision = draftRevision; input.value = ''; controls();
   const result = await command(() => desktop.send(text));
   if (!result || result.error || result.storageError) restoreDraft();
   else if (!snapshot.busy) submittedText = null;
   controls(); input.focus();
 });
-input.addEventListener('input', controls);
+input.addEventListener('input', () => { draftRevision++; controls(); });
 input.addEventListener('compositionstart', () => { composing = true; });
 input.addEventListener('compositionend', () => { composing = false; });
 input.addEventListener('keydown', event => {
@@ -157,6 +164,7 @@ input.addEventListener('keydown', event => {
 find('#chat-stop').addEventListener('click', () => void command(() => desktop.cancel()));
 find('#chat-new').addEventListener('click', () => void command(() => desktop.newConversation()));
 find('#chat-settings').addEventListener('click', async () => {
+  localError = null; renderError();
   try { await desktop.openSettings(); } catch (error) { fail(error); }
 });
 for (const button of document.querySelectorAll('[data-window-control]')) button.addEventListener('click', () => desktop?.windowControl(button.dataset.windowControl));

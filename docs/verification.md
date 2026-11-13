@@ -1,46 +1,85 @@
 # 验证说明
 
-本文件说明 **1.4.4 正式版** 的研发检查与构建流程。安装版、便携版与 SHA256 对应 [GitHub Release v1.4.4](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.4.4)，源码和 `release/` 中的程序包同步保留在 `main` 分支。产品变化与下载入口见 [1.4.4 更新说明](releases/v1.4.4.md)。报告保存在本地忽略的 `artifacts/`，不写入 Release 正文。
+本文件说明 **1.4.6 正式版** 的研发检查与构建流程，当前源码维护在 `main`。产品变化与下载入口见 [1.4.6 更新说明](releases/v1.4.6.md)和 [GitHub Release v1.4.6](https://github.com/ActorF/Elysia_desktop_pet/releases/tag/v1.4.6)。报告保存在本地忽略的 `artifacts/`，不写入 Release 正文。历史版本的结果单独标注，不能代替当前源码与最终程序包的检查。
 
-1.4.4 加入短消息聊天，沿用 1.4.3 的固定模型与语音资源、国内下载来源、随包附带的 llama.cpp 和共用续传下载器。此前已检查匿名魔搭下载、取消和 `206` 续传；来源、摘要及下载记录见[模型下载说明](model-downloads.md)。本次正式构建检查保存在 `artifacts/validation-v1.4.4/`。
+## 1.4.6 累计审查与发布检查
 
-正式 1.4.4 构建通过 506 项单元测试、9 次包内运行和安装版比对，核对源码字节、72 项资源、54 条原录音、聊天运行库摘要，以及桌面、语音、互动、聊天和便携程序重复启动。最终结果分别保存在 `unit-tests-final.log`、`release-check.json` 和 `setup-check.json`，没有遗留检查进程。
+1.4.6 汇总三轮源码审查与修复。审查时的报告仍记录基线版本 1.4.5；它们用于追溯修复依据，不表示已检查后来构建的 1.4.6 EXE。第三轮结束时的源码基线为 **963 项单元测试通过**；最终 1.4.6 全量测试为 **970 项通过、0 失败、0 跳过**，日志为 `artifacts/release-v1.4.6/unit-tests-final.log`。
 
-本次首轮语音下载模拟用例出现过一次未复现的 `error` 终态，原记录在 `unit-tests.log`；已补充该断言的 `phase/error/message` 诊断，没有修改业务行为或超时。独立语音测试及后续完整单元测试均通过，不能把这次失败归因于未经证实的网络、PowerShell 或 CPU 原因。
+最终 `npm run test:ui-integration` 完成 **19 项界面检查**，页面错误列表为空，结果为 `artifacts/renderer-lifecycle-check/renderer-results.json`，启动日志为 `artifacts/release-v1.4.6/ui-integration.log`。
+
+正式便携包完成 **11 次包内原生运行**，核对 116 项应用运行文件及 54 条原录音；安装器的 **73 项资源**与已验证便携版一致。两个命令均正常退出，报告中的新增遗留进程列表均为空。便携结果为 `artifacts/validation-v1.4.6/release-check.json`，安装器结果为同目录的 `setup-check.json`；报告保留验收时的 `release/build-v1.4.6/` 原始路径，正式文件同步到 `release/` 时须保持下列字节与摘要一致。
+
+| 1.4.6 程序包 | 字节数 | SHA256 |
+| --- | ---: | --- |
+| `Elysia_desktop_pet-1.4.6.exe` | 398092502 | `a53ac01d10fb3ec1e9d960a210831d48ef8326af60712fba3098ff439fa151f6` |
+| `Elysia_desktop_pet-1.4.6-setup.exe` | 398521877 | `5c01c9a6f5d2bfdfc8f386b4a08c5fb0f85dc3bdd1bbd6ef3b7587b46c7aba4f` |
+
+| 审查记录 | 重点范围 |
+| --- | --- |
+| `artifacts/deep-audit/report.json` | 合法 `#` 文件名、语音盘符与进程释放、下载及目录身份保护、不同地区下载来源、窗口恢复、快捷键布局、草稿与系统校时 |
+| `artifacts/deep-audit-round2/report.json` | 修复与退出时的进程归属、缓存及中断恢复、设置保存错误、历史与界面清理、朗读预热停止、鼠标流光及原生监听生命周期 |
+| `artifacts/deep-audit-round3/report.json` | 下载末尾中断与启动重试、损坏配置保护、环境监测超时、快捷键迟到事件、页面销毁、取消 Windows 关机及异常退出清理 |
+
+三轮均使用独立小型夹具、模拟服务、浏览器页面和隐藏 Electron 窗口；没有重新下载或安装真实模型，也没有向用户窗口注入键鼠输入。地区检查包含中文、法文、阿拉伯文等浏览器语言、不同键盘布局和多个时区；真实网络请求仅代表本机网络，不等于逐国网络检查。报告还区分实际原生窗口结果、几何模拟和真实模型的历史记录。
 
 `npm run make:release` 同时生成便携版与安装版；`npm run verify:release` 校验完整文件清单、源码字节、原录音、语音资源包摘要、更新配置及隐藏窗口行为，并验证重复启动不会删除现有实例的临时文件。`npm run verify:release -- --chat-only` 只运行聊天相关包内检查与重复启动检查，不能替代完整命令。`npm run verify:setup` 核对安装器中的程序和资源与已验证的便携版完全一致。所需语音构建资源保留在被忽略的 `build-resources/voice-bootstrap/`，不依赖旧样本或草稿目录。
 
-`npm run test:chat` 验证消息复制、单条朗读、左右历史布局、删除确认及自动配置进度；`npm run test:chat-native` 使用独立用户配置和模拟推理服务核对真实 IPC、流式回答、语音复用、勿扰拦截、关闭释放和删除记录的持久化。`npm run test:chat-runtime` 使用已准备资源验证真实 llama.cpp 生命周期、中文回复、模型驻留时的真实语音合成与再次启动；`npm run test:chat-tts` 单独测量语音冷启动、暖模型、缓存和进程清理，两者均生成音频但不播放。关闭自动朗读时普通聊天不启动声音模型，用户主动点击朗读可以单独播放。
+`npm run test:chat` 验证消息复制、单条朗读、左右历史布局、删除确认及自动配置进度；`npm run test:quick-chat` 覆盖快捷输入持续显示、草稿、中文输入法、快捷键编辑及迟到状态；`npm run test:ui-integration` 检查真实页面中的保存失败恢复、跨窗口状态、历史 DOM 清理、音频与事件订阅销毁。`npm run test:chat-native` 和 `npm run test:quick-chat-native` 使用独立用户配置和模拟推理服务核对真实 IPC、流式回答、气泡、语音复用、勿扰拦截、关闭释放和删除记录的持久化。
+
+`npm run test:chat-runtime` 使用已准备资源验证真实 llama.cpp 生命周期、中文回复、模型驻留时的真实语音合成与再次启动；`npm run test:chat-tts` 单独测量语音冷启动、暖模型、缓存和进程清理，两者均生成音频但不播放。它们是需要单独安排的真实模型检查，不属于上述模拟审查。关闭自动朗读时普通聊天不启动声音模型，用户主动点击朗读可以单独播放。
 
 下载准备检查覆盖固定来源、SHA256、自动换源、取消与续传、错误范围、超时、损坏缓存和磁盘错误。聊天与语音各自就绪，聊天只有在模型加载并响应健康检查后才报告就绪。真实网络检查使用独立诊断目录，不向测试人员的正式用户配置安装模型；既有模型推理与语音合成的历史记录继续保留。
 
-## 短消息聊天检查
+## 历史记录：1.4.4 短消息聊天检查
+
+本节记录 **1.4.4 当时的检查结果**。1.4.4 加入短消息聊天，沿用 1.4.3 的固定模型与语音资源、国内下载来源、随包附带的 llama.cpp 和共用续传下载器。此前已检查匿名魔搭下载、取消和 `206` 续传；来源、摘要及下载记录见[模型下载说明](model-downloads.md)。历史正式构建报告保存在 `artifacts/validation-v1.4.4/`。
+
+1.4.4 正式构建当时通过 506 项单元测试、9 次包内运行和安装版比对，核对源码字节、72 项资源、54 条原录音、聊天运行库摘要，以及桌面、语音、互动、聊天和便携程序重复启动。结果分别保存在该目录的 `unit-tests-final.log`、`release-check.json` 和 `setup-check.json`，当次检查结束时没有遗留检查进程。
+
+该历史构建首轮语音下载模拟用例出现过一次未复现的 `error` 终态，原记录在 `unit-tests.log`；当时补充了该断言的 `phase/error/message` 诊断，没有修改业务行为或超时。随后独立语音测试及完整单元测试通过，不能将这次失败归因于未经证实的网络、PowerShell 或 CPU 原因。
 
 1.4.4 使用精简人设和短句示例，引导每轮回复一到三条消息。默认本地 9B 请求附带 llama.cpp GBNF，约束换行与句末，不设置字符硬截止；硬卡字数曾在实机上产生“它因为贪玩跑进。”这样的悬空句，因此没有接入。语法接口依据固定 [llama.cpp b11669 服务文档](https://github.com/ggml-org/llama.cpp/blob/b11669/tools/server/README.md)，仅发送给默认本地服务和模型，自定义兼容服务继续使用普通请求。
 
 每条新回复保存独立消息 ID，同轮完成、取消或失败时统一状态；后续上下文合并本轮全部气泡，排除任何未完成的轮次。原有历史不拆分重写。自动朗读每轮只提交一次，各气泡保留独立复制与手动朗读入口。分句保护小数、版本、域名、缩写、引号和句尾表情，不删除生成的字词。
 
-本轮通过 506 项单元测试、25 项浏览器检查和隐藏 Electron 聊天检查，覆盖增量边界、停止后的迟到内容、重开窗口、保存和恢复、整轮上下文与朗读次数。`scripts/chat-model-check.cjs` 和 `scripts/chat-runtime-check.cjs` 同步收集整轮所有气泡，避免只记录最后一条。日志在 `artifacts/short-chat-tests/`，界面截图在 `artifacts/chat-window-check/`。
+1.4.4 短聊阶段通过 506 项单元测试、25 项浏览器检查和隐藏 Electron 聊天检查，覆盖增量边界、停止后的迟到内容、重开窗口、保存和恢复、整轮上下文与朗读次数。`scripts/chat-model-check.cjs` 和 `scripts/chat-runtime-check.cjs` 同步收集整轮所有气泡，避免只记录最后一条。历史日志在 `artifacts/short-chat-tests/`；当时的界面检查使用 `artifacts/chat-window-check/`，该通用输出目录可能被后续运行更新。
 
 使用已存在且 SHA256 匹配的 9B GGUF 原文件进行 20 轮最终实机试聊，未下载或复制模型；种子 42 和 7 的普通聊天、记忆、英文、短故事、小数、缩写与域名输入均正常结束并产生一到三条气泡。单次猫名回答仍额外臆测了猫所在的场景：格式约束不能保证语义事实正确，不能据此声称消除幻觉。原始回复和工程评价保存在 `artifacts/short-chat-tests/model-eval/`，临时服务已退出。
 
-已确认的便携预览 `1.4.4-preview.1` 是本次正式版的功能基线；研发阶段三次包内运行报告保留在 `artifacts/validation-v1.4.4-preview.1/`，预览 EXE 由正式版取代。
+已确认的便携预览 `1.4.4-preview.1` 是 1.4.4 正式版的功能基线；该阶段三次包内运行报告保留在 `artifacts/validation-v1.4.4-preview.1/`，预览 EXE 已由正式版取代。
 
 ## GitHub Actions
 
 [CI 工作流](../.github/workflows/ci.yml) 在推送到 `main`、`version-control` 或提交面向这两个分支的 Pull Request 时自动运行，也可在 [Actions 页面](https://github.com/ActorF/Elysia_desktop_pet/actions/workflows/ci.yml) 手动触发。
 
 - Windows 上分别使用 Node.js 22、24 运行 `npm test`，并配置 Python 3.13，覆盖语音工作脚本和 Windows 键盘监听器的自检。
-- Windows + Edge 运行设置、聊天及点击互动浏览器回归。结果和截图作为 `browser-test-reports` 附件保留 7 天；上传范围仅限三个测试专用目录。
+- Windows + Edge 运行设置、聊天、点击互动、快捷输入及界面生命周期检查。结果和截图作为 `browser-test-reports` 附件保留 7 天；上传范围仅限下表五类测试专用目录。
 - 通过 `npm ci --ignore-scripts` 按锁文件安装测试依赖，不下载 Electron 二进制、LFS 安装包或运行模型。完整 EXE 打包、真实 Electron 窗口层级、模型推理和语音合成仍按下文进行本地验证，CI 通过不代表这些项目已经验收。
+
+| CI 检查命令 | 上传目录 |
+| --- | --- |
+| `npm run test:settings` | `artifacts/settings-window-check/` |
+| `npm run test:chat` | `artifacts/chat-window-check/` |
+| `npm run test:interactions` | `artifacts/validation-v*/interaction-browser/` |
+| `npm run test:quick-chat` | `artifacts/quick-chat-ui/` |
+| `npm run test:ui-integration` | `artifacts/renderer-lifecycle-check/` |
 
 `main` 的 [Protect main 规则](https://github.com/ActorF/Elysia_desktop_pet/rules/25894047) 禁止强制推送和删除，没有豁免用户。普通推送仍可使用；当前未强制 Pull Request 审批或将 CI 设为合并门槛。
 
 ## 环境与命令
 
-需要 Windows、Node.js 22 或更新版本；浏览器检查使用 Microsoft Edge。1.4.3 正式版源码取自 `main`；通过克隆获取完整 EXE 时需安装 Git LFS 并执行 `git lfs pull`。先执行 `npm ci` 安装开发依赖。Windows 上需要 Python 的测试可使用已部署的 `voice-runtime/python`，或安装 Python；Windows Store 的占位命令不等于可运行的 Python。
+需要 Windows、Node.js 22 或更新版本；浏览器检查使用 Microsoft Edge。当前 1.4.6 源码取自 `main`；通过克隆获取完整 EXE 时需安装 Git LFS 并执行 `git lfs pull`。先执行 `npm ci` 安装开发依赖。Windows 上需要 Python 的测试可使用已部署的 `voice-runtime/python`，或安装 Python；Windows Store 的占位命令不等于可运行的 Python。
+
+本机仓库位于 D 盘。测试与构建前，在当前 PowerShell 进程中将 `TEMP`、`TMP` 指向仓库内的专用临时目录，避免将大型解包副本写入系统 C 盘；这不会修改系统环境变量或用户配置。构建使用全新的 `release/build-v1.4.6`，不复用旧版 `win-unpacked`，也不删除现有正式包。显式构建目录已非空时，构建脚本会拒绝继续并保留原文件，应先核对其中内容，不要直接清空重试。
 
 ```powershell
+$verificationTemp = Join-Path (Get-Location).Path 'artifacts\validation-v1.4.6\temp'
+New-Item -ItemType Directory -Force -Path $verificationTemp | Out-Null
+$env:TEMP = $verificationTemp
+$env:TMP = $verificationTemp
+$env:ELYSIA_RELEASE_OUTPUT = 'release/build-v1.4.6'
+
 npm test
 npm run test:smoke
 npm run test:visual
@@ -54,6 +93,9 @@ npm run test:interactions
 npm run test:interaction-settings
 npm run test:chat
 npm run test:chat-native
+npm run test:quick-chat
+npm run test:quick-chat-native
+npm run test:ui-integration
 node scripts/hit-region-check.cjs
 node scripts/drag-interaction-check.cjs
 node scripts/key-cloud-check.cjs
@@ -63,6 +105,8 @@ npm run make:release
 npm run verify:release
 npm run verify:setup
 ```
+
+构建与两个包验证命令须使用同一个 `ELYSIA_RELEASE_OUTPUT`。完整便携验证运行五种模式（桌面、语音、互动、聊天、快捷输入），分别检查目录应用和便携 EXE，再检查便携重复启动，共 **11 次原生运行**；实际完成次数和状态以 `release-check.json` 为准。安装版只解包比对，不安装覆盖用户已有程序。全部验收完成后，才将本轮 EXE 与 SHA256 同步至 `release/` 的正式文件位置，并保留 1.3.0 便携版。
 
 `npm test` 只运行 `tests/` 下的测试。浏览器和原生自动化检查使用隔离测试状态；语音整机检查隐藏且静音，模拟输入只用于测试页面，不向用户窗口注入鼠标或键盘输入。正式设置页面不提供试听或模拟触发入口，规则模拟由测试脚本完成。
 
@@ -171,4 +215,4 @@ Windows 的原生窗口有最小尺寸限制；1% 人物仍按约 4.2×5.6 DIP �
 
 `verify-package.cjs` 从最终 EXE 提取应用内容，核对文件清单、源码与素材字节、54 条录音及其校验清单、代码许可证和版权说明。随后运行目录应用和便携程序的验收，检查启动、桌面交互、缩放、独立设置窗口及语音资源。具体执行项目和通过状态以脚本输出为准。
 
-验收会核对运行前后的原有桌宠进程，保留用户正在使用的实例。结果与 SHA256 写入 `artifacts/validation-v1.4.3/release-check.json`，校验文件生成在 `release/`。报告、真实环境日志与测试音频保留本地，不随发布包上传。
+验收会核对运行前后的原有桌宠进程，保留用户正在使用的实例。1.4.6 便携验收写入 `artifacts/validation-v1.4.6/release-check.json`，安装器比对写入同目录的 `setup-check.json`；SHA256 文件生成在本轮 `ELYSIA_RELEASE_OUTPUT` 指定目录，随后与确认通过的 EXE 一同同步到 `release/`。报告、真实环境日志与测试音频保留本地，不随发布包上传。

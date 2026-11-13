@@ -10,8 +10,9 @@ const { createServer } = require('node:http');
 const { chromium } = require('playwright');
 const { DEFAULT_SETTINGS, sanitizeSettings } = require('../electron/host-policy.cjs');
 const root = path.resolve(__dirname, '..');
-const output = path.join(root, 'artifacts', 'settings-window-check');
-const report = { passed: false, kind: 'browser UI with mock host; native lifecycle tested separately', checks: [], screenshots: [] };
+const output = process.env.ELYSIA_UI_OUTPUT ? path.resolve(process.env.ELYSIA_UI_OUTPUT) : path.join(root, 'artifacts', 'settings-window-check');
+const browserRegion = { locale: process.env.ELYSIA_UI_LOCALE || 'zh-CN', timezoneId: process.env.ELYSIA_UI_TIMEZONE || 'Asia/Shanghai' };
+const report = { passed: false, ...browserRegion, kind: 'browser UI with mock host; native lifecycle tested separately', checks: [], screenshots: [] };
 const server = createServer(async (request, response) => {
   try {
     const filename = path.resolve(root, `.${decodeURIComponent(new URL(request.url, 'http://localhost').pathname)}`);
@@ -33,7 +34,7 @@ async function main() {
   let browser;
   try {
     browser = await chromium.launch({ channel: 'msedge', headless: true });
-    const page = await browser.newPage({ viewport: { width: 600, height: 741 }, deviceScaleFactor: 1 });
+    const page = await browser.newPage({ ...browserRegion, viewport: { width: 600, height: 741 }, deviceScaleFactor: 1 });
     page.on('pageerror', error => errors.push(error.message));
     await page.exposeFunction('__mockSettingsHost', async (method, value) => {
       calls.push({ method, value });
@@ -49,7 +50,7 @@ async function main() {
     });
     await page.addInitScript(() => {
       const listeners = new Set(), windowListeners = new Set(), windowControls = [], voiceListeners = new Set(), voiceCalls = [];
-      let windowState = { maximized: false }, lastSettingsState = null;
+      let windowState = { maximized: false }, lastSettingsState = null, holdVoice = false, releaseVoice, rejectVoice = false, holdVoiceFailure = false;
       let voiceState = { settings: { enabled: true, dnd: false, volume: .8, birthday: '' }, playback: { status: 'idle' },
         available: true, interactionAvailable: true, error: null, interactionError: null, queuedInteraction: null,
         environment: { monitorReady: true, locked: false, suspended: false, fullscreen: false } };
@@ -71,7 +72,9 @@ async function main() {
         if (method !== 'getState') publish(state);
         return method === 'action' ? true : state;
       };
-      window.__settingsQA = { publish, snapshot: () => structuredClone(lastSettingsState), windowControls, publishWindowState, publishVoice, voiceCalls, voiceSnapshot: () => structuredClone(voiceState) };
+      window.__settingsQA = { publish, snapshot: () => structuredClone(lastSettingsState), windowControls, publishWindowState, publishVoice, voiceCalls, voiceSnapshot: () => structuredClone(voiceState),
+        holdVoice: () => { holdVoice = true; }, releaseVoice: () => releaseVoice(), rejectVoice: () => { rejectVoice = true; },
+        holdVoiceFailure: () => { holdVoiceFailure = true; } };
       window.elysiaSettings = Object.freeze({
         getState: () => invoke('getState'), setSettings: patch => invoke('setSettings', patch),
         action: action => invoke('action', action), resize: scale => invoke('resize', scale),
@@ -85,7 +88,14 @@ async function main() {
         onWindowState: callback => { windowListeners.add(callback); return () => windowListeners.delete(callback); },
         onState: callback => { listeners.add(callback); return () => listeners.delete(callback); },
         getVoiceState: async () => structuredClone(voiceState),
-        setVoiceSettings: async patch => { voiceCalls.push(['settings', patch]); return publishVoice({ settings: { ...voiceState.settings, ...patch } }); },
+        setVoiceSettings: async patch => {
+          voiceCalls.push(['settings', patch]);
+          if (holdVoiceFailure) { holdVoiceFailure = false; return new Promise((resolve, reject) => { releaseVoice = () => reject(new Error('QA delayed save failure')); }); }
+          if (rejectVoice) { rejectVoice = false; throw new Error('QA voice save refused'); }
+          const result = publishVoice({ settings: { ...voiceState.settings, ...patch } });
+          if (holdVoice) { holdVoice = false; return new Promise(resolve => { releaseVoice = () => resolve(result); }); }
+          return result;
+        },
         stopVoice: async () => { voiceCalls.push(['stop']); return publishVoice({ playback: { status: 'idle' }, queuedInteraction: null }); },
         onVoiceState: callback => { voiceListeners.add(callback); return () => voiceListeners.delete(callback); },
       });
@@ -317,11 +327,55 @@ async function main() {
     await page.waitForFunction(()=>window.__settingsQA.voiceSnapshot().settings.volume===.37);
     assert.equal(await page.locator('#voice-volume-value').textContent(),'37%');
     check('normal automatic greeting, DND and volume controls save independently');
+    await page.locator('#voice-birthday-month').fill('5');
+    await page.locator('#voice-birthday-day').fill('20');
+    await page.locator('#voice-volume').focus();
+    await page.evaluate(() => window.__settingsQA.publishVoice({ playback: { kind: 'automatic', status: 'playing', text: '隔离测试问候。' } }));
+    assert.equal(await page.locator('#voice-birthday-month').inputValue(), '5', 'Unrelated voice events must preserve an unsaved birthday after focus moves away');
+    assert.equal(await page.locator('#voice-birthday-day').inputValue(), '20');
+    assert.equal(await page.evaluate(() => window.__settingsQA.voiceSnapshot().settings.birthday), '');
+    check('Unrelated playback broadcasts preserve the unsaved birthday draft after blur');
+    await page.evaluate(() => window.__settingsQA.holdVoice());
+    await page.locator('#voice-birthday-form [type=submit]').click();
+    await page.waitForFunction(() => window.__settingsQA.voiceSnapshot().settings.birthday === '05-20');
+    await page.locator('#voice-birthday-month').fill('7');
+    await page.locator('#voice-birthday-day').fill('22');
+    await page.locator('#voice-volume').focus();
+    await page.evaluate(() => window.__settingsQA.releaseVoice());
+    await page.evaluate(() => window.__settingsQA.publishVoice({ playback: { status: 'idle' } }));
+    assert.equal(await page.locator('#voice-birthday-month').inputValue(), '7');
+    assert.equal(await page.locator('#voice-birthday-day').inputValue(), '22');
+    await page.evaluate(() => window.__settingsQA.rejectVoice());
+    await page.locator('#voice-birthday-form [type=submit]').click();
+    await page.waitForFunction(() => document.querySelector('#voice-error').textContent === 'QA voice save refused');
+    await page.evaluate(() => window.__settingsQA.publishVoice({ playback: { status: 'idle' } }));
+    assert.equal(await page.locator('#voice-birthday-day').inputValue(), '22');
+    assert.equal(await page.evaluate(() => window.__settingsQA.voiceSnapshot().settings.birthday), '05-20');
+    await page.locator('#voice-birthday-form [type=submit]').click();
+    await page.waitForFunction(() => window.__settingsQA.voiceSnapshot().settings.birthday === '07-22');
+    await page.evaluate(() => window.__settingsQA.publishVoice({ settings: { ...window.__settingsQA.voiceSnapshot().settings, birthday: '08-13' } }));
+    assert.equal(await page.locator('#voice-birthday-month').inputValue(), '8');
+    assert.equal(await page.locator('#voice-birthday-day').inputValue(), '13');
+    check('Birthday save responses preserve newer edits, failed saves retain the draft, and a clean form accepts external changes');
+    await page.evaluate(() => window.__settingsQA.holdVoiceFailure());
+    await page.locator('#voice-birthday-month').fill('9');
+    await page.locator('#voice-birthday-day').fill('8');
+    await page.locator('#voice-birthday-form [type=submit]').click();
+    await page.waitForFunction(() => window.__settingsQA.voiceCalls.at(-1)?.[1]?.birthday === '09-08');
+    await page.locator('#voice-birthday-month').fill('10');
+    await page.locator('#voice-birthday-day').fill('9');
+    await page.locator('#voice-birthday-form [type=submit]').click();
+    await page.evaluate(() => window.__settingsQA.releaseVoice());
+    await page.waitForFunction(() => window.__settingsQA.voiceSnapshot().settings.birthday === '10-09');
+    assert.equal(await page.locator('#voice-error').isHidden(), true, 'An older queued save failure cannot survive a newer successful save');
+    check('Queued voice settings apply in order and a newer successful save clears an older failure');
     await page.locator('#voice-birthday-month').fill('2');await page.locator('#voice-birthday-day').fill('29');
     await page.locator('#voice-birthday-form [type=submit]').click();await page.waitForFunction(()=>window.__settingsQA.voiceSnapshot().settings.birthday==='02-29');
     assert.match(await page.locator('#voice-birthday-hint').textContent(),/闰年/);
     await page.locator('#voice-birthday-day').fill('30');await page.locator('#voice-birthday-form [type=submit]').click();
     assert.equal(await page.locator('#voice-error').isVisible(),true);assert.equal(await page.evaluate(()=>window.__settingsQA.voiceSnapshot().settings.birthday),'02-29');
+    await page.evaluate(() => window.__settingsQA.publishVoice({ playback: { status: 'idle', error: null }, error: null }));
+    assert.equal(await page.locator('#voice-error').isVisible(), true, 'A playback update cannot clear an unresolved local birthday validation error');
     await page.locator('#voice-clear-birthday').click();await page.waitForFunction(()=>window.__settingsQA.voiceSnapshot().settings.birthday==='');
     assert.equal(await page.locator('#voice-error').isHidden(),true);
     check('birthday accepts leap day, rejects invalid dates without saving, and can be cleared');
@@ -338,6 +392,12 @@ async function main() {
     assert.match(await page.locator('#voice-playback-status').textContent(),/稍后回应/);assert.equal(await page.locator('#voice-stop').isEnabled(),true);
     await page.locator('#voice-stop').click();await page.waitForFunction(()=>window.__settingsQA.voiceSnapshot().queuedInteraction===null);
     check('normal playback displays host text without a catalog; stopping clears active speech and queued interactions');
+    await page.evaluate(() => window.__settingsQA.publishVoice({ playback: { status: 'error', error: 'QA playback interrupted' } }));
+    assert.equal(await page.locator('#voice-error').textContent(), 'QA playback interrupted');
+    await page.evaluate(() => window.__settingsQA.publishVoice({ playback: { status: 'playing', kind: 'automatic', text: '已经恢复播放。', error: null }, error: null }));
+    assert.equal(await page.locator('#voice-error').isHidden(), true, 'A recovered playback must not keep displaying its previous host error');
+    await page.evaluate(() => window.__settingsQA.publishVoice({ playback: { status: 'idle', error: null } }));
+    check('Recovered voice playback clears its stale host error');
     await page.evaluate(()=>window.__settingsQA.publishVoice({settings:{enabled:true,dnd:false,volume:.8,birthday:''},interactionAvailable:false,interactionError:'互动录音暂不可用，文字回应保留。'}));
     assert.equal(await page.locator('#voice-interaction-error').isVisible(),true);
     await page.evaluate(()=>window.__settingsQA.publishVoice({interactionAvailable:true,interactionError:null,environment:{monitorReady:false}}));

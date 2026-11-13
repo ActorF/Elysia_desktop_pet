@@ -1,6 +1,8 @@
 'use strict';
 const fs = require('node:fs');
 const path = require('node:path');
+const { performance } = require('node:perf_hooks');
+const { TextDecoder } = require('node:util');
 const { createVoiceEngine } = require('./voice-engine.cjs');
 const { loadVoiceAssets, loadInteractionAssets } = require('./voice-assets.cjs');
 const { createSpeechWindow } = require('./speech-window.cjs');
@@ -26,32 +28,49 @@ function sanitizeVoiceSettings(patch, previous = DEFAULT_VOICE_SETTINGS) {
 }
 
 function createVoiceController({ BrowserWindow, screen, ipcMain, powerMonitor, root, assetDirectory, interactionAssetDirectory, userData,
-  getCharacterBounds, getPreferences, publish = () => {}, isSmokeTest = false, isPackaged = false, quit, testHooks }) {
+  getCharacterBounds, getPreferences, publish = () => {}, isSmokeTest = false, isPackaged = false, quit, testHooks, clock = () => performance.now() }) {
   const assets = loadVoiceAssets(root, assetDirectory);
   const interactionAssets = loadInteractionAssets(root, interactionAssetDirectory);
   const file = path.join(userData, 'voice-state.json');
-  let saved = {};
+  let saved = {}, protectedFile = false, storageError = null;
   try {
-    const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) saved = parsed;
-  } catch {}
+    const parsed = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(fs.readFileSync(file)));
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('invalid-settings');
+    for (const key of ['settings', 'history']) {
+      if (Object.hasOwn(parsed, key) && (!parsed[key] || typeof parsed[key] !== 'object' || Array.isArray(parsed[key]))) throw new Error('invalid-settings');
+    }
+    if (parsed.history && Object.hasOwn(parsed.history, 'version') && parsed.history.version !== 1) throw new Error('unsupported-history');
+    saved = parsed;
+  } catch (error) {
+    if (error.code !== 'ENOENT') {
+      protectedFile = true;
+      storageError = '语音设置和记录读取失败，原文件已保留且不会覆盖。当前调整仅本次生效；请修复用户目录中的 voice-state.json 后重新启动。';
+    }
+  }
   let settings = sanitizeVoiceSettings(saved.settings);
   const engine = createVoiceEngine({ saved: saved.history, now: Date.now() });
   const interactionReplies = createInteractionReplies();
   let timer = null, sequence = 0, pending = null, disposed = false, farewellPending = false, quitTimer = null;
   let quitRequested = false;
   let externalSpeechBusy = false;
-  let lastPlaybackEndedAt = 0, retryAt = 0, lastPersistedAt = 0;
+  let lastPlaybackEndedAt = null, retryAt = -Infinity, lastPersistedAt = -Infinity;
   let environmentKey = '';
   let lastInteractionAt = -Infinity;
-  let audioQuietUntil = 0, lastAudioKind = null, interactionTimer = null, queuedInteraction = null;
+  let audioQuietUntil = -Infinity, lastAudioKind = null, interactionTimer = null, queuedInteraction = null;
   let playback = { status: 'idle', lineId: null, kind: null, error: null };
   function persist() {
+    // Throttle failed writes too; a full disk must not cause a write every tick.
+    lastPersistedAt = clock();
+    if (protectedFile) return false;
     try {
       fs.mkdirSync(userData, { recursive: true });
       fs.writeFileSync(file + '.tmp', JSON.stringify({ settings, history: engine.exportState() }, null, 2));
-      fs.renameSync(file + '.tmp', file); lastPersistedAt = Date.now();
-    } catch (error) { console.error('Could not save voice history:', error.message); }
+      fs.renameSync(file + '.tmp', file); storageError = null;
+      return true;
+    } catch {
+      storageError = '语音设置和记录未能保存，请检查磁盘空间与用户目录权限；当前设置仍然生效，恢复后会重试保存。';
+      return false;
+    }
   }
   const speech = createSpeechWindow({ BrowserWindow, screen, ipcMain, root, getCharacterBounds, getPreferences, isSmokeTest, isPackaged,
     onStarted(event) {
@@ -67,7 +86,7 @@ function createVoiceController({ BrowserWindow, screen, ipcMain, powerMonitor, r
       if (disposed || pending?.token !== event.token) return;
       const previous = pending;
       if (!previous.textOnly) {
-        lastPlaybackEndedAt = Date.now();
+        lastPlaybackEndedAt = clock();
         lastAudioKind = previous.kind;
         audioQuietUntil = lastPlaybackEndedAt + SPEECH_GAP_MS;
       }
@@ -75,7 +94,7 @@ function createVoiceController({ BrowserWindow, screen, ipcMain, powerMonitor, r
       pending = null;
       previous.resolve?.(event.status);
       if (event.status !== 'ended' || externalSpeechBusy) clearInteractionQueue();
-      if (event.status === 'error') retryAt = Date.now() + 30000;
+      if (event.status === 'error') retryAt = clock() + 30000;
       scheduleInteraction();
       notify();
       if (farewellPending && event.kind === 'farewell') finishQuit();
@@ -89,10 +108,10 @@ function createVoiceController({ BrowserWindow, screen, ipcMain, powerMonitor, r
     notify();
   } });
   function getState() {
-    return { settings: { ...settings }, available: assets.available, error: assets.error,
+    return { settings: { ...settings }, available: assets.available, error: assets.error, storageError,
       externalSpeechBusy,
       interactionAvailable: interactionAssets.available, interactionError: interactionAssets.error,
-      queuedInteraction: queuedInteraction ? { kind: queuedInteraction.kind, expiresAt: queuedInteraction.expiresAt } : null,
+      queuedInteraction: queuedInteraction ? { kind: queuedInteraction.kind, expiresAt: queuedInteraction.displayExpiresAt } : null,
       playback: { ...playback }, environment: environment.sample() };
   }
   function notify() { if (!disposed) publish(getState()); }
@@ -100,7 +119,7 @@ function createVoiceController({ BrowserWindow, screen, ipcMain, powerMonitor, r
     if (disposed || quitRequested || externalSpeechBusy || (farewellPending && kind !== 'farewell')) return getState();
     const line = assets.lines.get(lineId) ?? (kind === 'manual' ? interactionAssets.lines.get(lineId) : null), sample = environment.sample();
     if (!line || sample.locked || sample.suspended) return getState();
-    if (kind === 'automatic' && (pending || queuedInteraction || sample.now < audioQuietUntil)) return getState();
+    if (kind === 'automatic' && (pending || queuedInteraction || clock() < audioQuietUntil)) return getState();
     clearInteractionQueue();
     const token = `voice-${++sequence}`;
     // Stop before replacing the pending token, so old completion cannot clear a newer line.
@@ -111,13 +130,13 @@ function createVoiceController({ BrowserWindow, screen, ipcMain, powerMonitor, r
     try {
       const result = await speech.play(line, { token, kind, volume: settings.volume });
       if (!result?.ok && pending?.token === token) {
-        pending = null; retryAt = Date.now() + 30000;
+        pending = null; retryAt = clock() + 30000;
         playback = { ...playback, status: 'error', error: result?.error || '无法播放这句语音。' }; notify();
         if (farewellPending) finishQuit();
       }
     } catch (error) {
       if (pending?.token === token) {
-        pending = null; retryAt = Date.now() + 30000;
+        pending = null; retryAt = clock() + 30000;
         playback = { ...playback, status: 'error', error: error.message }; notify();
         if (farewellPending) finishQuit();
       }
@@ -135,14 +154,14 @@ function createVoiceController({ BrowserWindow, screen, ipcMain, powerMonitor, r
     clearTimeout(interactionTimer); interactionTimer = null;
     if (!queuedInteraction || pending || disposed || quitRequested || farewellPending || externalSpeechBusy) return;
     const request = queuedInteraction;
-    const delay = Math.max(0, request.dueAt - Date.now(), audioQuietUntil - Date.now());
+    const delay = Math.max(0, request.dueAt - clock(), audioQuietUntil - clock());
     interactionTimer = setTimeout(() => {
       if (queuedInteraction !== request || disposed) return;
       interactionTimer = null;
       const sample = environment.sample();
-      if (sample.now < Math.max(request.dueAt, audioQuietUntil)) { scheduleInteraction(); return; }
+      if (clock() < Math.max(request.dueAt, audioQuietUntil)) { scheduleInteraction(); return; }
       queuedInteraction = null;
-      if (sample.now > request.expiresAt || pending || quitRequested || farewellPending
+      if (clock() > request.expiresAt || pending || quitRequested || farewellPending
         || getPreferences().clickThrough || getPreferences().interactionsEnabled === false || !canSpeakInteraction(sample)) { notify(); return; }
       void presentInteraction(request.kind, true);
     }, delay);
@@ -152,7 +171,8 @@ function createVoiceController({ BrowserWindow, screen, ipcMain, powerMonitor, r
     // One slot only: an annoyed response may replace an unspoken gentle reply,
     // but repeated clicks never grow a playlist or extend its expiry.
     if (queuedInteraction?.kind === 'poke-annoyed') return false;
-    queuedInteraction = { kind, dueAt: now + INTERACTION_DEBOUNCE_MS, expiresAt: now + ANGRY_EXPIRY_MS };
+    queuedInteraction = { kind, dueAt: now + INTERACTION_DEBOUNCE_MS, expiresAt: now + ANGRY_EXPIRY_MS,
+      displayExpiresAt: Date.now() + ANGRY_EXPIRY_MS };
     scheduleInteraction(); notify(); return true;
   }
   async function interact(kind) {
@@ -162,27 +182,27 @@ function createVoiceController({ BrowserWindow, screen, ipcMain, powerMonitor, r
     if (sample.locked || sample.suspended || (pending && pending.kind !== 'interaction')) return false;
     if (pending && !pending.textOnly) {
       if (kind === 'poke-annoyed' && pending.interactionType !== kind && canSpeakInteraction(sample)) {
-        return queueInteraction(kind, sample.now);
+        return queueInteraction(kind, clock());
       }
       return false;
     }
     if (canSpeakInteraction(sample)) {
-      if (sample.now < audioQuietUntil && (kind !== 'poke-annoyed' || lastAudioKind !== 'interaction')) return false;
+      if (clock() < audioQuietUntil && (kind !== 'poke-annoyed' || lastAudioKind !== 'interaction')) return false;
       // If a muted caption is still visible, let it stay until the new line is
       // ready; it must not hold the audio debounce slot open indefinitely.
       if (pending?.textOnly) speech.stop('replaced');
-      return queueInteraction(kind, sample.now);
+      return queueInteraction(kind, clock());
     }
-    if (sample.now < audioQuietUntil && !externalSpeechBusy) return false;
+    if (clock() < audioQuietUntil && !externalSpeechBusy) return false;
     clearInteractionQueue();
     const escalatesReaction = kind === 'poke-annoyed' && pending?.interactionType !== kind;
-    if (!escalatesReaction && sample.now - lastInteractionAt < 250) return false;
+    if (!escalatesReaction && clock() - lastInteractionAt < 250) return false;
     return presentInteraction(kind, false);
   }
   async function presentInteraction(kind, audible) {
     if (disposed || quitRequested || farewellPending || getPreferences().interactionsEnabled === false) return false;
     const reply = interactionReplies.reserve(kind), token = `interaction-${++sequence}`;
-    lastInteractionAt = Date.now();
+    lastInteractionAt = clock();
     speech.stop('replaced');
     pending = { token, kind: 'interaction', interactionType: kind, interactionReply: reply, textOnly: !audible };
     playback = { lineId: reply.id, kind: 'interaction', text: reply.text, textOnly: !audible, status: 'loading', error: null };
@@ -193,14 +213,14 @@ function createVoiceController({ BrowserWindow, screen, ipcMain, powerMonitor, r
         : await speech.showText({ id: reply.id, text: reply.text }, { token, kind: 'interaction', duration: reply.duration });
       if (!result?.ok && pending?.token === token) {
         pending = null; clearInteractionQueue();
-        if (audible) audioQuietUntil = Date.now() + SPEECH_GAP_MS;
+        if (audible) audioQuietUntil = clock() + SPEECH_GAP_MS;
         playback = { ...playback, status: 'error', error: result?.error || '互动回应暂时无法播放。' }; notify();
       }
       return result?.ok === true;
     } catch (error) {
       if (pending?.token === token) {
         pending = null; clearInteractionQueue();
-        if (audible) audioQuietUntil = Date.now() + SPEECH_GAP_MS;
+        if (audible) audioQuietUntil = clock() + SPEECH_GAP_MS;
         playback = { ...playback, status: 'error', error: error.message }; notify();
       }
       return false;
@@ -212,8 +232,11 @@ function createVoiceController({ BrowserWindow, screen, ipcMain, powerMonitor, r
     const nextEnvironmentKey = JSON.stringify([sample.monitorReady, sample.locked, sample.suspended, sample.fullscreen]);
     if (nextEnvironmentKey !== environmentKey) { environmentKey = nextEnvironmentKey; notify(); }
     const candidate = engine.evaluate({ ...sample, ...settings, enabled: settings.enabled && settings.volume > 0,
-      busy: externalSpeechBusy || !!pending || !!queuedInteraction || !assets.available || sample.now < retryAt || sample.now < audioQuietUntil });
-    if (sample.now - lastPersistedAt >= 15000) persist();
+      busy: externalSpeechBusy || !!pending || !!queuedInteraction || !assets.available || clock() < retryAt || clock() < audioQuietUntil });
+    if (clock() - lastPersistedAt >= 15000) {
+      const previousError = storageError; persist();
+      if (storageError !== previousError) notify();
+    }
     if (candidate && !isSmokeTest) void play(candidate.lineId, 'automatic', candidate);
   }
   function setSettings(patch) {
@@ -274,12 +297,13 @@ function createVoiceController({ BrowserWindow, screen, ipcMain, powerMonitor, r
     clearTimeout(quitTimer); quitTimer = null;
     quit();
   }
-  function requestQuit() {
+  function requestQuit({ skipFarewell = false } = {}) {
     if (disposed || quitRequested) return;
     clearInteractionQueue();
     if (farewellPending) { speech.stop('skipped'); finishQuit(); return; }
     const sample = environment.sample();
-    const candidate = engine.farewell({ now: Date.now(), busy: !!pending, lastPlaybackEndedAt,
+    const candidate = engine.farewell({ now: Date.now(), busy: skipFarewell === true || externalSpeechBusy || !!pending
+      || (lastPlaybackEndedAt !== null && clock() - lastPlaybackEndedAt < 10000),
       enabled: assets.available && settings.enabled && settings.volume > 0 && !settings.dnd && !sample.locked && !sample.suspended && !sample.fullscreen });
     if (!candidate) { finishQuit(); return; }
     farewellPending = true;

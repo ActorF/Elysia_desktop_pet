@@ -102,7 +102,8 @@ async function checkChatRuntime({ chat, chatWindow, chatSpeech, chatSpeechTestHo
     assert.equal(chatSpeechTestHooks.calls.length, 1, 'The second fresh reply reuses the first worker');
     assert.equal(chatSpeechTestHooks.calls[0].requests, 2);
     await requestSettings(settings, 'setChatSettings', { readAloud: false });
-    assert.equal(chatSpeech.getState().status, 'idle'); assert.equal(chatSpeechTestHooks.calls[0].killed, true);
+    await chatSpeech.whenReleased();
+    assert.equal(chatSpeech.getState().status, 'idle'); assert.equal(chatSpeechTestHooks.calls[0].released, true); assert.equal(chatSpeechTestHooks.calls[0].killed, false);
     await requestChat(reopened, 'send', '关闭后只显示文字。');
     await poll('text after disabling speech', () => chat.getState(), value => !value.busy);
     assert.equal(chatSpeechTestHooks.calls.length, 1, 'Disabled speech does not start another worker');
@@ -112,7 +113,8 @@ async function checkChatRuntime({ chat, chatWindow, chatSpeech, chatSpeechTestHo
     assert.equal(chat.getState().settings.readAloud, false);
     assert.equal(chatSpeechTestHooks.calls.length, 2);
     await requestSettings(settings, 'setVoiceSettings', { dnd: true });
-    assert.equal(chatSpeech.getState().status, 'idle'); assert.equal(chatSpeechTestHooks.calls[1].killed, true);
+    await chatSpeech.whenReleased();
+    assert.equal(chatSpeech.getState().status, 'idle'); assert.equal(chatSpeechTestHooks.calls[1].released, true); assert.equal(chatSpeechTestHooks.calls[1].killed, false);
     const blockedManual = await requestChat(reopened, 'readAloud', { conversationId: selectedId, messageId: manualMessage.id });
     assert.equal(blockedManual.ok, false); assert.match(blockedManual.error, /勿扰已开启/);
     assert.equal(chatSpeechTestHooks.calls.length, 2, 'Denied manual requests cannot launch another worker');
@@ -123,7 +125,8 @@ async function checkChatRuntime({ chat, chatWindow, chatSpeech, chatSpeechTestHo
     assert.equal(reopened.isVisible(), false); assert.equal(settings.isVisible(), false); assert.equal(pet.isVisible(), false);
     await requestChat(reopened, 'windowControl', 'close');
     await poll('manual speech stops with closed chat', () => chatWindow.getWindow(), value => value === null);
-    assert.equal(chatSpeech.getState().status, 'idle'); assert.equal(chatSpeechTestHooks.calls[2].killed, true);
+    await chatSpeech.whenReleased();
+    assert.equal(chatSpeech.getState().status, 'idle'); assert.equal(chatSpeechTestHooks.calls[2].released, true); assert.equal(chatSpeechTestHooks.calls[2].killed, false);
     const originalSettings = chat.getState().settings;
     const remainingIds = chat.getState().conversations.filter(item => item.id !== selectedId).map(item => item.id);
     const deleted = await requestSettings(settings, 'deleteChatConversation', selectedId);

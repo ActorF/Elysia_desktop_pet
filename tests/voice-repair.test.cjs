@@ -256,14 +256,46 @@ test('journal publication cannot replace another transaction created concurrentl
   assert.deepEqual(f.renames, []);
 });
 
-test('a filesystem without hard-link publication fails clearly before moving any resources', async t => {
+test('a filesystem without hardlinks can publish its flushed journal with a Windows exclusive move', { skip: process.platform !== 'win32' }, async t => {
   const f = fixture(t);
-  await assert.rejects(f.service({ fsImpl: { ...f.fsImpl, linkSync() {
+  const result = await f.service({ fsImpl: { ...f.fsImpl, linkSync() {
     throw Object.assign(new Error('not supported'), { code: 'ENOTSUP' });
-  } } }).commit(f.project), error => error.voiceRepairCode === 'journal-publish' && error.diagnosticKind === 'storage-io');
-  assert.equal(fs.existsSync(f.journal), false); assert.equal(fs.existsSync(f.project), true);
-  assert.equal(fs.readFileSync(path.join(f.runtime, 'keep.fixture'), 'utf8'), 'old user resource');
-  assert.deepEqual(f.renames, []);
+  } } }).commit(f.project);
+  assert.equal(result.committed, true); assert.equal(fs.existsSync(f.journal), false); assert.equal(fs.existsSync(f.project), false);
+  assert.equal(fs.readFileSync(path.join(result.backupDirectory, 'keep.fixture'), 'utf8'), 'old user resource');
+  assert.equal(fs.existsSync(path.join(f.runtime, 'complete.fixture')), true);
+});
+
+test('an unconfirmed native journal publication blocks recovery and retains both prepared and old resources', { skip: process.platform !== 'win32' }, async t => {
+  const f = fixture(t); let finish, temporary;
+  const pendingExit = new Promise(resolve => { finish = resolve; });
+  const repair = f.service({ fsImpl: { ...f.fsImpl, linkSync() { throw Object.assign(new Error('unsupported'), { code: 'ENOTSUP' }); } },
+    moveFileNoReplaceImpl: async source => {
+      temporary = source;
+      throw Object.assign(new Error('unconfirmed'), { code: 'EBUSY', preserveStage: true, setupProcessPending: true, setupProcessExit: pendingExit });
+    } });
+  await assert.rejects(repair.commit(f.project), error => error.preserveStage && error.runtimeRepairPending && !error.setupProcessExit);
+  await assert.rejects(f.service().recover(), error => error.runtimeRepairCode === 'journal-publish-pending');
+  assert.equal(fs.existsSync(f.project), true); assert.equal(fs.existsSync(f.runtime), true); assert.deepEqual(f.renames, []);
+  // The helper completes after its bounded wait. The next explicit action
+  // must recover this exact journal, never delete or rebuild its valid stage.
+  fs.renameSync(temporary, f.journal); finish(); await pendingExit; await Promise.resolve();
+  const recovered = await f.service().recover(); assert.equal(recovered.committed, true);
+  assert.equal(fs.readFileSync(path.join(recovered.backupDirectory, 'keep.fixture'), 'utf8'), 'old user resource');
+});
+
+test('journal publication handles the Windows EISDIR link error without treating other EISDIR operations as unsupported', { skip: process.platform !== 'win32' }, async t => {
+  for (const syscall of ['link', 'open']) await t.test(syscall, async t => {
+    const f = chatFixture(t);
+    const repair = f.service({ fsImpl: { ...f.fsImpl, linkSync() { throw Object.assign(new Error('invalid function'), { code: 'EISDIR', syscall }); } } });
+    if (syscall === 'link') {
+      const result = await repair.commit(f.project); assert.equal(result.committed, true);
+      assert.equal(fs.readFileSync(path.join(result.backupDirectory, 'keep.fixture'), 'utf8'), 'old user resource');
+    } else {
+      await assert.rejects(repair.commit(f.project), error => error.runtimeRepairCode === 'journal-publish');
+      assert.equal(fs.existsSync(f.project), true); assert.equal(fs.existsSync(f.journal), false); assert.deepEqual(f.renames, []);
+    }
+  });
 });
 
 test('chat uses only its fixed runtime, direct mkdtemp stage, backup and journal names', async t => {

@@ -3,6 +3,20 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EXPRESSIONS, SKINS, POSES, createPetState, applyAction, actionForKey, advance, setGazeTarget } from '../renderer/state.mjs';
 import { createPointerTracking } from '../renderer/pointer-tracking.mjs';
+import { restoreAppearance } from '../renderer/state.mjs';
+
+test('renderer recovery restores supported faces and exclusive poses while preserving saved skin preferences', () => {
+  const state = createPetState();
+  restoreAppearance(state, { expression: 'blush', pose: 'tea', cat: false, glasses: false }, { cat: true, glasses: true });
+  assert.deepEqual([state.expression, state.pose, state.cat, state.glasses], ['blush', 'tea', true, true]);
+  applyAction(state, { type: 'expression', id: 'blush' });
+  assert.equal(state.expression, null, 'The restored face still toggles normally');
+  applyAction(state, { type: 'pose', id: 'cake' });
+  assert.equal(state.pose, 'cake');
+  restoreAppearance(state, { expression: '__proto__', pose: 'untrusted', target: { x: 999 }, cat: true }, { cat: 'true', glasses: false });
+  assert.deepEqual([state.expression, state.pose, state.cat, state.glasses], [null, 'idle', false, false]);
+  assert.deepEqual(state.target, { x: 0, y: 0 }, 'Restoring appearance cannot inject other renderer state');
+});
 import hostPolicy from '../electron/host-policy.cjs';
 
 test('number row and keypad map faces; F keys exclusively map skins and poses on both hosts', () => {

@@ -48,16 +48,20 @@ function renderHistory() {
   }
   const current = conversations.find(item => item.id === selectedId);
   find('#chat-history-detail').hidden = !current;
-  if (!current) return;
+  const entries = current?.messages || [];
+  const detail = find('#chat-history-messages'), messageIds = new Set(entries.map(message => message.id));
+  for (const [id, node] of historyMessageNodes) {
+    if (!messageIds.has(id)) { node.article.remove(); historyMessageNodes.delete(id); }
+  }
+  if (!current) {
+    setText(find('#chat-history-title'), ''); setText(find('#chat-history-date'), '');
+    return;
+  }
   setText(find('#chat-history-title'), current.title || '新对话');
   setText(find('#chat-history-date'), date(current.createdAt));
   find('#chat-history-continue').disabled = pending || !!snapshot.busy || !!snapshot.storageError;
   find('#chat-history-delete').disabled = pending || !!snapshot.busy || !!snapshot.storageError;
-  const detail = find('#chat-history-messages'), messageIds = new Set(current.messages.map(message => message.id));
-  for (const [id, node] of historyMessageNodes) {
-    if (!messageIds.has(id)) { node.article.remove(); historyMessageNodes.delete(id); }
-  }
-  for (const [index, message] of current.messages.entries()) {
+  for (const [index, message] of entries.entries()) {
     let node = historyMessageNodes.get(message.id);
     if (!node) {
       const article = document.createElement('article'); article.className = 'history-message';

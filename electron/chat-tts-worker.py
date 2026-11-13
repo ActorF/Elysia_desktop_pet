@@ -4,7 +4,9 @@ The desktop owns this bridge and releases it after a short idle period. A valid 
 the optional Elysia AI configuration and acquires its managed GPT-SoVITS lease.
 The lease's non-inherited, kill-on-close Windows Job owns the model process;
 terminating this bridge therefore releases its model without touching another
-application's service. Each clip waits for playback acknowledgement before the
+application's service. The compatibility adapter borrows an already mounted,
+verified volume letter and never creates a DOS drive mapping, including when
+the bridge is forcefully terminated. Each clip waits for playback acknowledgement before the
 next synthesis, so the bridge cannot build an unbounded audio queue.
 """
 
@@ -13,6 +15,7 @@ from __future__ import annotations
 import argparse
 import base64
 from contextlib import redirect_stderr, redirect_stdout
+from collections import deque
 from dataclasses import replace
 import json
 import os
@@ -20,7 +23,7 @@ from pathlib import Path
 import re
 import secrets
 import sys
-from threading import Thread
+from threading import Condition, RLock, Thread
 import unicodedata
 from typing import TextIO
 
@@ -31,9 +34,109 @@ MAX_CLIP_BYTES = 9 * 1024 * 1024
 MAX_SEGMENT_LENGTH = 150
 sys.dont_write_bytecode = True
 
+# Paths remain separate argv values. run_path reads the guarded source file,
+# not an unguarded __pycache__ entry. Its returned dictionary is a copy: update
+# the actual function globals so the independent Python 3.9 worker accepts C:.
+_EXISTING_DRIVE_WORKER_SHIM = r'''
+import re, runpy, sys
+if len(sys.argv) != 3:
+    raise SystemExit(1)
+worker_path, import_root = sys.argv[1:]
+namespace = runpy.run_path(worker_path, run_name="__elysia_guarded_voice__")
+main = namespace.get("_main")
+if not callable(main):
+    raise SystemExit(1)
+scope = main.__globals__
+pattern = scope.get("_MAPPED_DRIVE_PATTERN")
+if not isinstance(pattern, re.Pattern) or pattern.pattern not in (r"[D-Z]:", r"[C-Z]:") or pattern.flags != re.compile(r"[D-Z]:", re.IGNORECASE).flags:
+    raise SystemExit(1)
+scope["_MAPPED_DRIVE_PATTERN"] = re.compile(r"[C-Z]:", re.IGNORECASE)
+sys.argv = [worker_path, import_root]
+raise SystemExit(main())
+'''
+
 
 class _BridgeError(Exception):
     """Carry only a fixed public failure code, never an upstream exception."""
+
+
+def _use_existing_volume_drives(runtime: object) -> None:
+    """Adapt the pinned runtime without writing its files or owning drive letters.
+
+    Its CPython 3.9 extension loader needs a DOS spelling rather than a Volume
+    GUID spelling. A verified existing letter supplies exactly that spelling;
+    Unicode and long suffixes, source guards and native image checks remain the
+    upstream implementation's responsibility. Folder-only mounts, SUBST paths,
+    network mappings and mismatched volumes never cause a new mapping.
+    """
+    if getattr(runtime, "_elysia_existing_drive_adapter", None) is _use_existing_volume_drives:
+        return
+    try:
+        base = runtime._DosDeviceMapping
+        pattern = runtime._MAPPED_DRIVE_PATH_PATTERN
+        launcher = runtime.launch_windows_managed_process
+        if (
+            not isinstance(base, type)
+            or tuple(base.__slots__) != ("_active", "_drive", "_native_target", "_volume_root")
+            or not all(callable(getattr(base, name, None)) for name in ("path_for", "native_path_for", "verify", "close"))
+            or not isinstance(pattern, re.Pattern)
+            or pattern.pattern not in (r"[D-Z]:\\.+\Z", r"[C-Z]:\\.+\Z")
+            or pattern.flags != re.compile(r"[D-Z]:\\.+\Z", re.IGNORECASE).flags
+            or not all(callable(getattr(runtime, name, None)) for name in (
+                "_volume_mapping_identity", "_logical_drive_mask", "_query_dos_device", "_query_volume_name",
+                "_create_dos_device_mapping", "launch_windows_managed_process", "ManagedGptSovitsStartupError",
+            ))
+            or not hasattr(runtime._DOS_DEVICE_LOCK, "__enter__")
+        ):
+            raise _BridgeError("runtime_unavailable")
+    except (AttributeError, TypeError):
+        raise _BridgeError("runtime_unavailable") from None
+
+    class _ExistingVolumeMapping(base):
+        __slots__ = ()
+
+        def close(self) -> None:
+            # This mapping belongs to Windows/the user, not this bridge. In
+            # particular, never invoke the upstream DefineDosDevice remover.
+            with runtime._DOS_DEVICE_LOCK:
+                self._active = False
+
+    def borrow(path: Path) -> object:
+        volume_name, native_target = runtime._volume_mapping_identity(path)
+        expected_root = "\\\\?\\" + volume_name + "\\"
+        with runtime._DOS_DEVICE_LOCK:
+            occupied = runtime._logical_drive_mask()
+            for letter in "CDEFGHIJKLMNOPQRSTUVWXYZ":
+                if not occupied & (1 << (ord(letter) - ord("A"))):
+                    continue
+                drive = letter + ":"
+                try:
+                    if runtime._query_dos_device(drive) != (native_target,):
+                        continue
+                    if runtime._query_volume_name(drive + "\\").casefold() != expected_root.casefold():
+                        continue
+                    mapping = _ExistingVolumeMapping(drive, native_target, expected_root)
+                    mapping.verify()
+                    return mapping
+                except runtime.ManagedGptSovitsStartupError:
+                    continue
+        raise runtime.ManagedGptSovitsStartupError(runtime._STARTUP_MESSAGE)
+
+    def launch(argv: object, **options: object) -> object:
+        if (
+            type(argv) not in (list, tuple) or len(argv) != 6
+            or list(argv[1:4]) != ["-I", "-B", "-u"]
+            or not all(type(value) is str and "\x00" not in value for value in argv)
+        ):
+            raise _BridgeError("runtime_unavailable")
+        # Keep the original executable, guarded script, Job launcher, cwd,
+        # inherited protocol handles and closed environment unchanged.
+        return launcher([*argv[:4], "-c", _EXISTING_DRIVE_WORKER_SHIM, *argv[4:]], **options)
+
+    runtime._MAPPED_DRIVE_PATH_PATTERN = re.compile(r"[C-Z]:\\.+\Z", re.IGNORECASE)
+    runtime._create_dos_device_mapping = borrow
+    runtime.launch_windows_managed_process = launch
+    runtime._elysia_existing_drive_adapter = _use_existing_volume_drives
 
 
 def _strict_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -47,6 +150,10 @@ def _strict_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
 
 def _read_message(limit: int) -> dict[str, object] | None:
     raw = sys.stdin.buffer.readline(limit + 1)
+    return _parse_message(raw, limit)
+
+
+def _parse_message(raw: bytes, limit: int) -> dict[str, object] | None:
     if not raw:
         return None
     if len(raw) > limit or not raw.endswith(b"\n"):
@@ -58,6 +165,92 @@ def _read_message(limit: int) -> dict[str, object] | None:
     if type(value) is not dict:
         raise _BridgeError("invalid_request")
     return value
+
+
+class _PipeFrames:
+    """Read raw stdin without holding CPython's buffered-stdin finalizer lock."""
+
+    def __init__(self, descriptor: int) -> None:
+        self._descriptor = descriptor
+        self._buffer = bytearray()
+
+    def readline(self, limit: int) -> bytes:
+        while True:
+            newline = self._buffer.find(b"\n")
+            if newline >= 0 or len(self._buffer) >= limit:
+                end = min(newline + 1 if newline >= 0 else limit, limit)
+                raw = bytes(self._buffer[:end])
+                del self._buffer[:end]
+                return raw
+            chunk = os.read(self._descriptor, min(4096, limit - len(self._buffer)))
+            if not chunk:
+                raw = bytes(self._buffer)
+                self._buffer.clear()
+                return raw
+            self._buffer.extend(chunk)
+
+
+class _InputChannel:
+    """Observe EOF even while the main thread is blocked in model inference.
+
+    The desktop closes this private pipe to cancel. Only the registered runtime
+    owner is shut down; no files or processes are discovered by name. At most
+    warmup and one speak request may be waiting behind the active operation.
+    """
+
+    def __init__(self, stream: object) -> None:
+        self._condition = Condition(RLock())
+        self._pending: deque[bytes] = deque()
+        self._closed = False
+        self._error: _BridgeError | None = None
+        self._session = None
+        self._stream = stream
+        Thread(target=self._pump, name="pet-tts-input", daemon=True).start()
+
+    def attach(self, session: object) -> None:
+        with self._condition:
+            self._session = session
+            closed = self._closed
+        if closed:
+            session.cancel()
+
+    def _finish(self, error: _BridgeError | None = None) -> None:
+        with self._condition:
+            self._closed = True
+            self._error = error
+            self._pending.clear()
+            session = self._session
+            self._condition.notify_all()
+        if session is not None:
+            session.cancel()
+
+    def _pump(self) -> None:
+        try:
+            while True:
+                raw = self._stream.readline(MAX_INPUT_BYTES + 1)
+                if not raw:
+                    self._finish()
+                    return
+                # Reject malformed/oversized frames before they can accumulate.
+                _parse_message(raw, MAX_INPUT_BYTES)
+                with self._condition:
+                    if len(self._pending) >= 2:
+                        raise _BridgeError("invalid_request")
+                    self._pending.append(raw)
+                    self._condition.notify_all()
+        except Exception:
+            self._finish(_BridgeError("invalid_request"))
+
+    def read(self, limit: int) -> dict[str, object] | None:
+        with self._condition:
+            while not self._closed and not self._pending:
+                self._condition.wait()
+            if self._closed:
+                if self._error is not None:
+                    raise self._error
+                return None
+            raw = self._pending.popleft()
+        return _parse_message(raw, limit)
 
 
 def _emit(output: TextIO, value: dict[str, object]) -> None:
@@ -226,11 +419,17 @@ class _SpeechSession:
     def __init__(self, project_root: Path, device: str, output: TextIO) -> None:
         self.output = output
         self.pool: dict[str, tuple[object, object]] = {}
+        self.read_message = _read_message
+        self._runtime_lock = RLock()
+        self._runtimes: set[object] = set()
+        self._closing = False
         if not project_root.is_absolute() or not (project_root / "config" / "settings.py").is_file():
             raise _BridgeError("assets_unavailable")
         sys.path.insert(0, str(project_root))
         try:
             from config.settings import SETTINGS
+            from voice import managed_gpt_sovits
+            _use_existing_volume_drives(managed_gpt_sovits)
             from voice.managed_gpt_sovits import (
                 ManagedGptSovitsConfig, ManagedGptSovitsRuntime, wait_for_managed_cleanup,
             )
@@ -271,6 +470,23 @@ class _SpeechSession:
             runtime.shutdown()
         if not self.wait_cleanup(5.0):
             raise _BridgeError("cleanup_failed")
+        # Emotion changes replace the sole runtime. Keep failed cleanup owners
+        # reachable for cancellation, but release confirmed closed owners so a
+        # long conversation does not retain every historical runtime object.
+        with self._runtime_lock:
+            self._runtimes.discard(runtime)
+
+    def cancel(self) -> None:
+        # Upstream shutdown atomically detaches starting/active resources and
+        # performs process-first cleanup, including when synthesis is blocked.
+        with self._runtime_lock:
+            self._closing = True
+            runtimes = tuple(self._runtimes)
+        for runtime in runtimes:
+            try:
+                runtime.shutdown()
+            except Exception:
+                pass  # Main-thread close still checks the cleanup barrier.
 
     def close(self) -> None:
         entries, self.pool = list(self.pool.values()), {}
@@ -296,12 +512,21 @@ class _SpeechSession:
         except Exception:
             raise _BridgeError("assets_unavailable") from None
         runtime = self.runtime_factory(self.config)
+        with self._runtime_lock:
+            closing = self._closing
+            if not closing:
+                self._runtimes.add(runtime)
+        if closing:
+            runtime.shutdown()
+            raise EOFError()
         _emit(self.output, {"type": "starting", "emotion": emotion})
         try:
             lease = runtime.acquire_lease(selection)
         except Exception:
             runtime.shutdown()
-            self.wait_cleanup(5.0)
+            if self.wait_cleanup(5.0):
+                with self._runtime_lock:
+                    self._runtimes.discard(runtime)
             raise _BridgeError("runtime_unavailable") from None
         self.pool[emotion] = (runtime, lease)
         return lease
@@ -325,7 +550,7 @@ class _SpeechSession:
                 "type": "audio", "mime": "audio/wav", "emotion": emotion,
                 "base64": base64.b64encode(result.audio).decode("ascii"),
             })
-            message = _read_message(256)
+            message = self.read_message(256)
             if message is None:
                 return False
             if message != {"type": "next"}:
@@ -350,9 +575,10 @@ def main() -> int:
             except SystemExit:
                 raise _BridgeError("invalid_request") from None
             _watch_parents(args.parent_pid)
+            channel = _InputChannel(_PipeFrames(sys.stdin.fileno()))
             try:
                 while True:
-                    message = _read_message(MAX_INPUT_BYTES)
+                    message = channel.read(MAX_INPUT_BYTES)
                     if message is None:
                         break
                     warming = message == {"type": "warmup"}
@@ -367,6 +593,8 @@ def main() -> int:
                             raise _BridgeError("no_speech")
                     if session is None:
                         session = _SpeechSession(Path(args.project_root), args.device, output)
+                        session.read_message = channel.read
+                        channel.attach(session)
                     if warming:
                         session.warmup()
                     elif not session.speak(text, segments):

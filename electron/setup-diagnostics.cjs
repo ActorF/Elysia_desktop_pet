@@ -100,7 +100,7 @@ function classifySetupFailure(error, fallbackKind = 'unknown') {
   return Object.hasOwn(DEFINITIONS, fallbackKind) ? fallbackKind : 'unknown';
 }
 const relativeFile = value => typeof value === 'string' && value.length > 0 && value.length <= 240
-  && !/[\x00-\x1f\x7f:?*<>"|#]/.test(value) && !/^[\\/]/.test(value)
+  && !/[\x00-\x1f\x7f:?*<>"|]/.test(value) && !/^[\\/]/.test(value)
   && value.replace(/\\/g, '/').split('/').every(part => part && part !== '.' && part !== '..' && !/[. ]$/.test(part));
 function createSetupDiagnostic(scope, kind, context = {}) {
   if (!context || typeof context !== 'object' || Array.isArray(context)) context = {};

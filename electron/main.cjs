@@ -3,9 +3,10 @@
 const { app, BrowserWindow, Menu, Tray, nativeImage, screen, ipcMain, globalShortcut, session, powerMonitor, clipboard } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
+const { TextDecoder } = require('node:util');
 const { pathToFileURL } = require('node:url');
 const { spawn } = require('node:child_process');
-const { DEFAULT_SETTINGS, EXPRESSION_KEYS, SKIN_KEYS, POSE_KEYS, sanitizeAppearance, sanitizeSettings, freeBounds, restoreBounds, recoverBounds, actionForKey, isLocalResource } = require('./host-policy.cjs');
+const { DEFAULT_SETTINGS, EXPRESSION_KEYS, SKIN_KEYS, POSE_KEYS, sanitizeAppearance, sanitizeSettings, freeBounds, restoreBounds, recoverBounds, actionForKey, isLocalResource, sameWindowsDirectory } = require('./host-policy.cjs');
 const { createTrayImage, createAppImage } = require('./tray-icon.cjs');
 const {createDesktopPointer,POINTER_INTERVAL_MS,DRAG_INTERVAL_MS}=require('./desktop-pointer.cjs');
 const {createDragLifecycle}=require('./drag-lifecycle.cjs');
@@ -15,6 +16,7 @@ const {virtualBounds,planViewport,viewportSnapshot,zoomAt,zoomFromSteps,sanitize
 const {trayTemplate}=require('./tray-menu.cjs');
 const {createViewportChannel}=require('./viewport-channel.cjs');
 const {createTypedKeyListener}=require('./typed-key-listener.cjs');
+const {createLegacyHotkeyListener}=require('./legacy-hotkey-listener.cjs');
 const {createSettingsWindow}=require('./settings-window.cjs');
 const {settingsAction,isSettingsSender}=require('./settings-policy.cjs');
 const {createVoiceController}=require('./voice-controller.cjs');
@@ -32,6 +34,8 @@ const {createQuickChatWindow}=require('./quick-chat-window.cjs');
 const {createQuickChatShortcut}=require('./quick-chat-shortcut.cjs');
 const {createQuickChatController,ensureQuickChatReady}=require('./quick-chat-controller.cjs');
 const {registerQuickChatIpc}=require('./quick-chat-ipc.cjs');
+const {createQuitCoordinator}=require('./quit-coordinator.cjs');
+const {createRendererRecovery}=require('./renderer-recovery.cjs');
 
 const root = path.resolve(__dirname, '..');
 const rendererUrl = pathToFileURL(path.join(root, 'renderer', 'index.html')).href;
@@ -50,26 +54,27 @@ const voiceTestHooks = isSmokeTest ? {} : undefined;
 // Keep production preferences across upgrades; smoke tests use an isolated profile.
 app.setName('爱莉希雅桌宠');
 app.setAppUserModelId('io.actorf.elysia.standalonepet');
-if (!isSmokeTest) migrateSampleProfile(app.getPath('appData'));
 app.setPath('userData', isSmokeTest
   ? path.join(app.getPath('temp'), isQuickChatSmoke ? 'elysia-pet-quick-chat-smoke' : isPortableRelaunchSmoke ? 'elysia-pet-portable-relaunch-smoke' : isChatSmoke ? 'elysia-pet-chat-smoke' : isVoiceSmoke ? 'elysia-pet-voice-smoke' : isInteractionSmoke ? 'elysia-pet-interaction-smoke' : 'elysia-pet-host-smoke')
   : path.join(app.getPath('appData'), 'Elysia Desktop Pet'));
 let voices, cursorTrail, chat, chatWindow, chatSpeech, chatSpeechTestHooks, modelSetup, voiceSetup, firstRunSetup;
 let quickChat, quickChatWindow, quickChatShortcut, quickChatIpc, speechTarget = 'chat';
 let lastChatSettings = null;
-let pet, tray, settingsWindow, settingsFile, pointerTimer, saveTimer, desktopPointer, dragLifecycle, topmost, windowShape, legacyProcess, typingListener;
+let pet, tray, settingsWindow, settingsFile, pointerTimer, saveTimer, desktopPointer, dragLifecycle, topmost, windowShape, legacyListener, typingListener, petRecovery;
 let preferences = { ...DEFAULT_SETTINGS };
 let appearance = sanitizeAppearance();
 let savedPosition = null;
+let settingsStorageError = null;
+let protectedSettingsFile = false;
 let characterBounds=null,viewport=null,logicalHitRegion=null,logicalHitRevision=0,projectedHitKey=null;
 let lastNativeTargetKey=null;
 const viewportChannel=createViewportChannel(payload=>send('pet:viewport',payload));
 let quitting = false;
 const hotkeys = { legacy: { active: false, error: null }, alternate: { active: false, failed: [] }, typing: { active: false, error: null }, recovery: false };
 
-function state() { return { settings: { ...preferences }, appearance: { ...appearance }, hotkeys: structuredClone(hotkeys), viewport:viewport?{...viewport}:null }; }
+function state() { return { settings: { ...preferences }, appearance: { ...appearance }, hotkeys: structuredClone(hotkeys), viewport:viewport?{...viewport}:null, storageError: settingsStorageError }; }
 function send(channel, data) {
-  if (pet && !pet.isDestroyed() && !pet.webContents.isDestroyed()) pet.webContents.send(channel, data);
+  if (pet && !pet.isDestroyed() && !pet.webContents.isDestroyed() && !petRecovery?.isFailed()) pet.webContents.send(channel, data);
 }
 function publishSettings() { const snapshot=state();send('pet:settings',snapshot);settingsWindow?.publish(snapshot); }
 function chatState() { return { ...chat.getState(), speech: chatSpeech?.getState() ?? { status: 'idle', error: null } }; }
@@ -120,30 +125,49 @@ function placePet(position) {
   applyHitRegion();
   voices?.reposition();
 }
+function writeSettings() {
+  if (!settingsFile || protectedSettingsFile) return;
+  const previousError = settingsStorageError;
+  try {
+    const bounds = characterBounds ?? savedPosition;
+    const payload = { settings: preferences, position: bounds ? { x: bounds.x, y: bounds.y } : null };
+    fs.mkdirSync(path.dirname(settingsFile), { recursive: true });
+    fs.writeFileSync(settingsFile + '.tmp', JSON.stringify(payload, null, 2));
+    fs.renameSync(settingsFile + '.tmp', settingsFile);
+    settingsStorageError = null;
+  } catch {
+    settingsStorageError = '设置已生效，但未能保存；请检查磁盘空间与用户目录权限，再调整设置重试。';
+  }
+  if (!quitting && previousError !== settingsStorageError) publishSettings();
+}
 function saveSettings() {
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    if (!settingsFile) return;
-    try {
-      const bounds = characterBounds ?? savedPosition;
-      const payload = { settings: preferences, position: bounds ? { x: bounds.x, y: bounds.y } : null };
-      fs.mkdirSync(path.dirname(settingsFile), { recursive: true });
-      fs.writeFileSync(settingsFile + '.tmp', JSON.stringify(payload, null, 2));
-      fs.renameSync(settingsFile + '.tmp', settingsFile);
-    } catch (error) { console.error('Could not save pet preferences:', error.message); }
-  }, 120);
+  saveTimer = setTimeout(writeSettings, 120);
 }
 function loadSettings() {
   try {
-    const stored = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
+    const stored = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(fs.readFileSync(settingsFile)));
+    if (!stored || typeof stored !== 'object' || Array.isArray(stored)) throw new Error('invalid-settings');
+    if (Object.hasOwn(stored, 'settings') && (!stored.settings || typeof stored.settings !== 'object' || Array.isArray(stored.settings))) throw new Error('invalid-settings');
     preferences = sanitizeSettings(stored.settings);
     if (stored.position && Number.isFinite(stored.position.x) && Number.isFinite(stored.position.y)) savedPosition = stored.position;
-  } catch { /* First start or invalid preferences uses safe defaults. */ }
+  } catch (error) {
+    if (error.code !== 'ENOENT') {
+      protectedSettingsFile = true;
+      settingsStorageError = '设置读取失败，原文件已保留且不会覆盖。当前调整仅本次生效；请修复用户目录中的 settings.json 后重新启动。';
+    }
+  }
   // A fresh launch is always interactive; the tray can re-enable click-through.
   preferences.clickThrough = false;
 }
 function recover(resetScale = false) {
-  if (!pet || pet.isDestroyed()) return;
+  if (!pet || pet.isDestroyed() || quitting) return;
+  if (petRecovery?.isFailed()) {
+    const owner = pet;
+    void petRecovery.recover().then(restored => { if (restored && pet === owner && !quitting) recover(resetScale); })
+      .catch(error => console.error('Could not restore pet renderer:', error.message));
+    return;
+  }
   updateSettings({ clickThrough: false, ...(resetScale?{scale:1}:{}) });
   dragLifecycle?.cancelDrag();
   if (pet.isMinimized()) pet.restore();
@@ -218,49 +242,15 @@ function configureTypedKeys() {
 }
 
 function configureLegacyHotkeys() {
-  const previousProcess = legacyProcess;
-  legacyProcess = null;
-  if (previousProcess) previousProcess.kill();
-  hotkeys.legacy = { active: false, error: null };
-  if (!preferences.legacyHotkeys) { publishSettings(); return; }
-  if (process.platform !== 'win32') {
-    hotkeys.legacy.error = '原版 Space 组合键仅支持 Windows；可启用备用快捷键。';
-    publishSettings(); return;
+  if (!legacyListener) {
+    let script = path.join(__dirname, 'legacy-hotkeys.ps1');
+    if (app.isPackaged) script = script.replace(/app\.asar([\\/])/, 'app.asar.unpacked$1');
+    legacyListener = createLegacyHotkeyListener({ spawn, script,
+      onAction: value => { if (preferences.legacyHotkeys && !quitting) action(value); },
+      onStatus: value => { hotkeys.legacy = value; if (!quitting) publishSettings(); },
+    });
   }
-  let script = path.join(__dirname, 'legacy-hotkeys.ps1');
-  if (app.isPackaged) script = script.replace(/app\.asar([\\/])/, 'app.asar.unpacked$1');
-  const child = spawn('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, '-ParentProcessId', String(process.pid)], {
-    windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  legacyProcess = child;
-  let pending = '';
-  let failure = '';
-  child.stdout.setEncoding('utf8');
-  child.stderr.setEncoding('utf8');
-  child.stdout.on('data', (text) => {
-    if (legacyProcess !== child) return;
-    pending += text;
-    const lines = pending.split(/\r?\n/); pending = lines.pop();
-    for (const line of lines) {
-      if (line.trim() === 'READY') {
-        hotkeys.legacy = { active: true, error: null }; publishSettings(); continue;
-      }
-      const mapped = actionForKey(line.trim());
-      if (mapped) action(mapped);
-    }
-    if (pending.length > 1024) pending = '';
-  });
-  child.stderr.on('data', (text) => { failure = (failure + text).slice(-2000); });
-  child.on('error', () => {
-    if (legacyProcess !== child) return;
-    hotkeys.legacy = { active: false, error: '无法启动原版快捷键监听；可启用备用快捷键。' }; publishSettings();
-  });
-  child.on('exit', (code) => {
-    if (legacyProcess !== child || quitting) return;
-    legacyProcess = null;
-    hotkeys.legacy = { active: false, error: `原版快捷键监听已停止（${code ?? 'unknown'}）${failure ? '，请启用备用快捷键。' : '。'}` };
-    publishSettings();
-  });
+  legacyListener.start(preferences.legacyHotkeys);
 }
 
 const alternateBindings = [];
@@ -279,8 +269,32 @@ function configureAlternateHotkeys() {
 }
 
 function requestQuit() {
-  quickChat?.interrupt(); chat?.cancel(); chatSpeech?.release();
-  return voices ? voices.requestQuit() : app.quit();
+  // release() synchronously clears the voice controller's external busy flag.
+  // Preserve ongoing activity so stopping it to exit cannot start a farewell.
+  let skipFarewell = true;
+  finishEachCleanup([
+    () => { skipFarewell = Boolean(chatSpeech?.isActive()); },
+    () => quickChat?.interrupt(), () => chat?.cancel(), () => chatSpeech?.release(),
+  ]);
+  try { return voices ? voices.requestQuit({ skipFarewell }) : app.quit(); }
+  catch (error) {
+    console.error('Could not prepare farewell:', error?.message);
+    return app.quit();
+  }
+}
+function prepareSessionEnd() {
+  // Windows can abandon shutdown after querying us. Stop current work without
+  // permanently disposing services; session-end/before-quit owns final teardown.
+  finishEachCleanup([
+    () => quickChat?.interrupt(), () => chat?.cancel(), () => chatSpeech?.release(), () => voices?.stopVoice(),
+    () => { clearTimeout(saveTimer); writeSettings(); },
+  ]);
+}
+function finishEachCleanup(operations) {
+  for (const operation of operations) {
+    try { operation(); }
+    catch (error) { console.error('Could not complete one shutdown operation:', error?.message); }
+  }
 }
 function buildMenu() {
   return Menu.buildFromTemplate(trayTemplate({
@@ -341,7 +355,10 @@ function registerIpc() {
     return state();
   });
   registerChatIpc({ ipcMain, chat, chatWindow, settingsWindow, speech: chatSpeech, clipboard, getState: chatState,
-    onAction: () => { quickChat?.interrupt(); chatSpeech?.stop(); speechTarget = 'chat'; } });
+    onAction: channel => {
+      const preserveWarmup = channel === 'chat:send' || channel === 'chat:read-aloud';
+      quickChat?.interrupt(); chatSpeech?.stop({ preserveWarmup }); speechTarget = 'chat';
+    } });
   registerModelSetupIpc({ ipcMain, settingsWindow, setup: modelSetup, voiceSetup, clipboard,
     getAppInfo: () => ({ version: app.getVersion(), mode: isLocalPreview ? 'local-preview' : app.isPackaged ? 'release' : 'development' }) });
   quickChatIpc = registerQuickChatIpc({ ipcMain, controller: quickChat, window: quickChatWindow, settingsWindow,
@@ -362,6 +379,7 @@ async function createWindow() {
     title: '爱莉希雅桌宠', icon: createAppImage(nativeImage),
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false, webSecurity: true, backgroundThrottling: false, devTools: !app.isPackaged },
   });
+  petRecovery = createRendererRecovery(pet, rendererUrl);
   topmost=createTopmostController(pet,{enabled:preferences.alwaysOnTop,taskbarInFront:preferences.taskbarInFront,
     onLayerRestored:()=>voices?.reposition(),
     onError:error=>console.error('Could not update pet window layer:',error.message)});
@@ -382,7 +400,7 @@ async function createWindow() {
   pet.webContents.on('did-finish-load',()=>{desktopPointer?.reset();viewportChannel.reset();});
   pet.setMenu(null);
   pet.on('page-title-updated', event => event.preventDefault());
-  pet.on('query-session-end', () => { quickChat?.dispose(); chatSpeech?.dispose(); voices?.dispose(); cursorTrail?.dispose(); });
+  pet.on('query-session-end', prepareSessionEnd);
   pet.on('session-end', () => app.quit());
   pet.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   pet.webContents.on('will-navigate', (event, url) => { if (url !== rendererUrl) event.preventDefault(); });
@@ -391,7 +409,7 @@ async function createWindow() {
   // the character belongs to the wheel-resize gesture in the renderer.
   pet.on('move', () => { if(!desktopPointer?.dragging)saveSettings(); });
   pet.on('resize', () => windowShape?.refresh());
-  pet.on('closed', () => { dragLifecycle?.dispose();windowShape?.dispose();topmost?.dispose();desktopPointer?.reset();pet = null; if (!quitting) app.quit(); });
+  pet.on('closed', () => { petRecovery?.dispose();dragLifecycle?.dispose();windowShape?.dispose();topmost?.dispose();desktopPointer?.reset();pet = null; if (!quitting) app.quit(); });
   pet.once('ready-to-show', () => { if (!isSmokeTest) pet.showInactive(); });
   await pet.loadURL(rendererUrl);
   pollPointer();
@@ -474,6 +492,8 @@ else {
     else recover();
   });
   app.whenReady().then(async () => {
+    // A second instance must not migrate or overwrite the active instance's profile.
+    if (!isSmokeTest) migrateSampleProfile(app.getPath('appData'));
     settingsFile = path.join(app.getPath('userData'), 'settings.json');
     loadSettings();
     const firstChatSetup = !isSmokeTest && app.isPackaged && !fs.existsSync(path.join(app.getPath('userData'), 'chat-state.json'));
@@ -498,7 +518,7 @@ else {
       if (panel && !panel.webContents.isDestroyed()) panel.webContents.send('settings:model-setup-state', snapshot);
     } });
     voiceSetup = createVoiceSetup({ userData: app.getPath('userData'), allowDownloads: !isLocalPreview && !isSmokeTest,
-      beforeRepair: () => { chatSpeech?.release(); },
+      beforeRepair: async () => { chatSpeech?.release(); await chatSpeech?.whenReleased(); },
       resourcesPath: app.isPackaged ? process.resourcesPath : path.join(root, 'build-resources', 'voice-bootstrap'),
       assetDirectory: app.isPackaged ? process.env.PORTABLE_EXECUTABLE_DIR || path.dirname(process.execPath) : path.join(root, 'build-resources', 'voice-bootstrap'),
       onChange: snapshot => {
@@ -506,8 +526,8 @@ else {
         chatSpeech?.refreshPermission();
         if (snapshot.phase === 'ready' && snapshot.ready) {
           const current = chat.getState().settings.voiceProjectRoot;
-          if (current === 'D:\\Elysia_AI' || current === voiceSetup.getProjectRoot()) {
-            if (current !== voiceSetup.getProjectRoot()) chat.setSettings({ voiceProjectRoot: voiceSetup.getProjectRoot() });
+          if (sameWindowsDirectory(current, 'D:\\Elysia_AI') || sameWindowsDirectory(current, voiceSetup.getProjectRoot())) {
+            if (!sameWindowsDirectory(current, voiceSetup.getProjectRoot())) chat.setSettings({ voiceProjectRoot: voiceSetup.getProjectRoot() });
           }
         }
         const panel = settingsWindow?.getWindow();
@@ -518,7 +538,7 @@ else {
     quickChatWindow = createQuickChatWindow({ BrowserWindow, screen, root, icon:windowIcon, isSmokeTest, isPackaged: app.isPackaged, getState: () => quickChat?.getState() ?? { busy: false, error: null, storageError: null } });
     if (isChatSmoke || isQuickChatSmoke) chatSpeechTestHooks = require('./chat-speech-smoke.cjs').createChatSpeechSmokeWorker();
     const speechBlockReason = manual => getChatSpeechBlockReason(voices?.getState(), { manual,
-      setupBusy: voiceSetup.getState().busy && lastChatSettings.voiceProjectRoot === voiceSetup.getProjectRoot() });
+      setupBusy: voiceSetup.getState().busy && sameWindowsDirectory(lastChatSettings.voiceProjectRoot, voiceSetup.getProjectRoot()) });
     chatSpeech = createChatSpeech({ root, ...(chatSpeechTestHooks ?? {}),
       getProjectRoot: () => chat.getState().settings.voiceProjectRoot,
       isEnabled: () => chat.getState().settings.readAloud === true && (!isSmokeTest || isChatSmoke || isQuickChatSmoke),
@@ -593,37 +613,23 @@ else {
     screen.on('display-metrics-changed', constrainToScreen);
   }).catch((error) => { console.error(error); app.exit(1); });
 }
-app.on('before-quit', () => {
+const quitCoordinator = createQuitCoordinator({ prepare: () => {
   quitting = true;
-  quickChatIpc?.dispose();
-  quickChatShortcut?.dispose();
-  quickChat?.dispose();
-  chatSpeech?.dispose();
-  modelSetup?.dispose();
-  voiceSetup?.dispose();
-  chat?.dispose();
-  chatWindow?.dispose();
-  quickChatWindow?.dispose();
-  voices?.dispose();
-  cursorTrail?.dispose();
-  settingsWindow?.dispose();
-  clearInterval(pointerTimer);
-  dragLifecycle?.dispose();
-  windowShape?.dispose();
-  topmost?.dispose();
-  desktopPointer?.reset();
-  clearTimeout(saveTimer);
-  if (pet && !pet.isDestroyed()) {
-    try {
-      const { x, y } = characterBounds??pet.getBounds();
-      fs.mkdirSync(path.dirname(settingsFile), { recursive: true });
-      fs.writeFileSync(settingsFile, JSON.stringify({ settings: preferences, position: { x, y } }, null, 2));
-    } catch { /* Shutdown must still release input listeners. */ }
-  }
-  if (legacyProcess) legacyProcess.kill();
-  legacyProcess = null;
-  typingListener?.stop();
-  globalShortcut.unregisterAll();
-  if (tray) tray.destroy();
-});
+  // Each owner must get its shutdown request even if another native operation
+  // fails. In particular, failures cannot skip model release or final settings.
+  finishEachCleanup([
+    () => quickChatIpc?.dispose(), () => quickChatShortcut?.dispose(), () => quickChat?.dispose(),
+    () => chatSpeech?.dispose(), () => modelSetup?.dispose(), () => voiceSetup?.dispose(), () => chat?.dispose(),
+    () => chatWindow?.dispose(), () => quickChatWindow?.dispose(), () => voices?.dispose(),
+    () => cursorTrail?.dispose(), () => settingsWindow?.dispose(), () => clearInterval(pointerTimer),
+    () => dragLifecycle?.dispose(), () => windowShape?.dispose(), () => petRecovery?.dispose(),
+    () => topmost?.dispose(), () => desktopPointer?.reset(),
+    // The pet may already be closed; retained logical bounds still belong here.
+    () => { clearTimeout(saveTimer); writeSettings(); },
+    () => legacyListener?.stop(), () => typingListener?.stop(),
+    () => globalShortcut.unregisterAll(), () => tray?.destroy(),
+  ]);
+}, drain: () => chatSpeech?.whenReleased(), finish: () => app.quit(),
+  onError: error => console.error('Could not complete graceful shutdown:', error?.message) });
+app.on('before-quit', event => quitCoordinator.beforeQuit(event));
 app.on('window-all-closed', () => app.quit());

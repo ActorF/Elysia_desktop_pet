@@ -7,10 +7,11 @@ const assert = require('node:assert/strict');
 const { execFileSync } = require('node:child_process');
 const yaml = require('js-yaml');
 const { verifyReleaseContract, verifyReleaseSmokeReport } = require('./release-contract.cjs');
+const { resolveReleaseOutput } = require('./release-output.cjs');
 
 const root = path.resolve(__dirname, '..');
 const manifest = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
-const output = path.resolve(root, manifest.build.directories.output);
+const output = resolveReleaseOutput({ root, manifest });
 const artifacts = path.join(root, 'artifacts', `validation-v${manifest.version}`);
 const digest = file => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 const relative = file => path.relative(root, file).replaceAll('\\', '/');

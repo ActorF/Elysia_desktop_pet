@@ -1,18 +1,19 @@
 'use strict';
+const { performance } = require('node:perf_hooks');
 const { managedChatEndpoint } = require('./first-run-setup.cjs');
 
 /** Start only an existing local model. No installation path is used here. */
-async function ensureQuickChatReady(chat, setup, signal, timeoutMs = 150000) {
+async function ensureQuickChatReady(chat, setup, signal, timeoutMs = 150000, clock = () => performance.now()) {
   if (!managedChatEndpoint(chat.getState().settings.baseUrl)) return;
   if (signal.aborted) throw new Error('已取消发送，草稿已保留。');
   const started = setup.ensureInstalledServer();
   if (started?.ok === false) throw new Error(started.error || '本地聊天服务暂时无法启动。');
-  const deadline = Date.now() + timeoutMs;
+  const deadline = clock() + timeoutMs;
   while (!signal.aborted) {
     const state = setup.getState();
     if (state.serverReady && !state.busy) return;
     if (!state.busy) throw new Error(state.error || '本地聊天资源尚未就绪，请在设置中查看。');
-    if (Date.now() >= deadline) throw new Error('模型还在启动，请稍后再发送，草稿已保留。');
+    if (clock() >= deadline) throw new Error('模型还在启动，请稍后再发送，草稿已保留。');
     await new Promise(resolve => {
       const finish = () => { clearTimeout(timer); signal.removeEventListener('abort', finish); resolve(); };
       const timer = setTimeout(finish, 100);
@@ -35,7 +36,7 @@ function createQuickChatController({ chat, window, voices, speech, ensureReady =
   };
   const publish = () => { if (!disposed) window.publish(getState()); };
   function interrupt() {
-    serial++; owner = null;
+    serial++; owner = null; localError = null;
     preparing?.abort(); preparing = null;
     voices.stopChatText();
     publish();
@@ -47,7 +48,7 @@ function createQuickChatController({ chat, window, voices, speech, ensureReady =
     if (preparing || initial.busy) return { ...getState(), accepted: false, error: '请等她回复，或先停止当前回答。' };
     if (typeof text !== 'string' || !text.trim() || text.length > 8000) return reject('请输入 1–8000 个字符的消息。');
     if (initial.storageError) return reject(initial.storageError);
-    interrupt(); speech.stop(); selectSpeechTarget('quick');
+    interrupt(); speech.stop({ preserveWarmup: true }); selectSpeechTarget('quick');
     const request = new AbortController(); preparing = request; localError = null; publish();
     try {
       await ensureReady(request.signal);

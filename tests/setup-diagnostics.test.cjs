@@ -106,12 +106,13 @@ test('public diagnostic shape excludes raw errors, URLs, tokens, stacks and abso
 });
 
 test('only bounded, relative resource names are included in missing-file details', () => {
-  const safe = ['python/python.exe', 'models\\voice.pth', '资源/参考.wav'];
+  const safe = ['python/python.exe', 'models\\voice.pth', '资源/参考.wav',
+    'runtime/Lib/site-packages/pandas/tests/io/data/legacy_pickle/1.2.4/empty_frame_v1_2_4-GH#42345.pkl'];
   const rejected = ['', '.', '..', '../private', 'models/../private', 'models\\..\\private', './private',
     '/etc/private', 'C:\\Users\\Private\\file', '\\\\server\\share\\file', '//server/share/file',
     'https://host/file?token=SECRET', 'downloads/file?token=SECRET', 'folder\\token=SECRET|file',
     'file\u0000secret', 'file\nsecret', 'double//slash', 'folder./file', 'folder /file', 'a'.repeat(241), null, 42];
-  const result = createSetupDiagnostic('voice', 'installation-missing-files', { missingFiles: [...safe, ...rejected, ...safe], missingCount: 3 });
+  const result = createSetupDiagnostic('voice', 'installation-missing-files', { missingFiles: [...safe, ...rejected, ...safe], missingCount: safe.length });
   assert.deepEqual(result.details.missingFiles, safe);
   assert.doesNotMatch(JSON.stringify(result), /SECRET|Private|private/);
   const many = createSetupDiagnostic('voice', 'installation-missing-files', { missingFiles: Array.from({ length: 40 }, (_, i) => `models/${i}.bin`) });

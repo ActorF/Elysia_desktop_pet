@@ -46,6 +46,17 @@ export function applyAction(state, action) {
   return state;
 }
 
+/** Rebuild only supported host appearance after a renderer reload. */
+export function restoreAppearance(state, appearance, settings = {}) {
+  applyAction(state, { type: 'reset' });
+  applyAction(state, { type: 'expression', id: appearance?.expression });
+  applyAction(state, { type: 'pose', id: appearance?.pose });
+  // Skins are persisted preferences; an initial host appearance may still have
+  // its default false values before this renderer first publishes its state.
+  for (const { id } of SKINS) if (settings[id] === true) applyAction(state, { type: 'toggle-skin', id });
+  return state;
+}
+
 /** Numeric keys select faces; F keys select skins / poses after the Space prefix. */
 export function actionForKey(code) {
   if (typeof code !== 'string') return null;

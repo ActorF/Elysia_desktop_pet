@@ -1,9 +1,10 @@
 // Native cursor sampling keeps dragging independent of rendering and IPC queues.
 'use strict';
 const {freeBounds,pointerPayload}=require('./host-policy.cjs');
+const {performance}=require('node:perf_hooks');
 const POINTER_INTERVAL_MS=16,DRAG_INTERVAL_MS=4;
-function createDesktopPointer({readCursor,getBounds,setPosition,sendPointer,onDragEnd=()=>{},onDragState=()=>{},now=Date.now,constrainBounds=freeBounds}){
-  let drag=null,sequence=0,pending=null,lastSent=null;
+function createDesktopPointer({readCursor,getBounds,setPosition,sendPointer,onDragEnd=()=>{},onDragState=()=>{},now=()=>performance.now(),constrainBounds=freeBounds}){
+  let drag=null,sequence=0,pending=null,lastSent=null,resampleOnAck=true;
   const valid=point=>point&&Number.isFinite(point.x)&&Number.isFinite(point.y);
   function move(point){
     if(!drag||!valid(point))return;
@@ -20,7 +21,7 @@ function createDesktopPointer({readCursor,getBounds,setPosition,sendPointer,onDr
     if(pending)return;
     if(lastSent&&Object.keys(payload).every(key=>payload[key]===lastSent[key])&&!pending)return;
     const id=++sequence;pending={id};lastSent=payload;
-    sendPointer({...payload,sequence:id,sampledAt});
+    sendPointer({...payload,sequence:id,sampledAt,clock:'desktop-monotonic'});
   }
   function cancelDrag(){if(drag){drag=null;onDragState(false);}}
   return {
@@ -28,8 +29,14 @@ function createDesktopPointer({readCursor,getBounds,setPosition,sendPointer,onDr
     startDrag(point=readCursor()){if(valid(point)&&!drag){drag={point:{x:point.x,y:point.y},bounds:getBounds()};onDragState(true);}},
     endDrag(point=readCursor()){if(!drag)return;move(point);drag=null;onDragState(false);onDragEnd();},
     cancelDrag,
-    acknowledge(id){if(pending?.id===id)pending=null;},
-    reset(){cancelDrag();pending=null;lastSent=null;},
+    acknowledge(id){
+      if(pending?.id!==id)return;
+      pending=null;
+      // A new document may discard its first in-flight point after local input.
+      // Sample once more after its ACK even if the cursor is now stationary.
+      if(resampleOnAck){resampleOnAck=false;lastSent=null;}
+    },
+    reset(){cancelDrag();pending=null;lastSent=null;resampleOnAck=true;},
     get dragging(){return drag!==null;},
   };
 }

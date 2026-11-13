@@ -3,7 +3,7 @@ const input = document.querySelector('#quick-input');
 const send = document.querySelector('#quick-send');
 const stop = document.querySelector('#quick-stop');
 const status = document.querySelector('#quick-status');
-let snapshot = null, revision = 0, pending = false, stopping = false, composing = false;
+let snapshot = null, revision = 0, draftRevision = 0, pending = false, stopping = false, composing = false;
 let localError = '';
 const plainError = value => typeof value === 'string' ? value : '';
 
@@ -34,7 +34,7 @@ async function hide() {
   try { await desktop?.hide(); }
   catch { localError = '暂时没能收起输入框，请重试。'; render(); }
 }
-input.addEventListener('input', render);
+input.addEventListener('input', () => { draftRevision++; render(); });
 input.addEventListener('compositionstart', () => { composing = true; });
 input.addEventListener('compositionend', () => { composing = false; });
 input.addEventListener('keydown', event => {
@@ -49,17 +49,21 @@ document.addEventListener('keydown', event => {
 document.querySelector('#quick-hide').addEventListener('click', () => void hide());
 document.querySelector('#quick-form').addEventListener('submit', async event => {
   event.preventDefault();
-  const draft = input.value, text = draft.trim();
+  const draft = input.value, submittedRevision = draftRevision, text = draft.trim();
   if (!snapshot || snapshot.busy || snapshot.storageError || pending || stopping || composing || !text) return;
   pending = true; localError = ''; render();
   try {
     const before = revision, result = await desktop.send(text);
-    if (before === revision) receive(result);
+    const latest = before === revision;
+    if (latest) receive(result);
     if (result?.accepted === true) {
       // Keep anything typed while the request was being accepted for the next turn.
-      if (input.value === draft) input.value = '';
-    } else {
-      localError = plainError(result?.storageError) || plainError(result?.error) || '消息还没发出，草稿已保留，请重试。';
+      if (draftRevision === submittedRevision && input.value === draft) input.value = '';
+    } else if (latest) {
+      const problem = plainError(result?.storageError) || plainError(result?.error);
+      // Host errors clear when the host recovers; do not make a duplicate local
+      // error outlive that state or overwrite a newer window's broadcast.
+      if (typeof result?.busy !== 'boolean' || !problem) localError = problem || '消息还没发出，草稿已保留，请重试。';
     }
   } catch { localError = '暂时没能发送，草稿已保留，请重试。'; }
   finally { pending = false; render(); }
@@ -69,8 +73,10 @@ stop.addEventListener('click', async () => {
   stopping = true; localError = ''; render();
   try {
     const before = revision, result = await desktop.cancel();
-    if (before === revision) receive(result);
-    if (result?.error || result?.storageError) localError = plainError(result.storageError) || plainError(result.error);
+    if (before === revision) {
+      receive(result);
+      if (typeof result?.busy !== 'boolean') localError = plainError(result?.storageError) || plainError(result?.error);
+    }
   } catch { localError = '暂时没能停止回答，请重试。'; }
   finally { stopping = false; render(); focusInput(); }
 });

@@ -9,17 +9,28 @@ function characterFromLine(line) {
 }
 
 function createTypedKeyListener({ spawn, platform = process.platform, script, parentProcessId = process.pid, onCharacter, onStatus }) {
-  let child = null;
+  let child = null, stopping = null, wanted = false;
   const status = (active, error = null) => onStatus({ active, error });
+  const waiting = () => status(false, '旧按键监听尚未退出，正在等待结束；不会重复启动。');
   function stop() {
-    const previous = child;
+    wanted = false;
+    const previous = child || stopping;
     child = null;
-    if (previous) previous.kill();
-    status(false);
+    if (previous) {
+      stopping = previous;
+      try { previous.kill(); } catch { /* Retain ownership until exit/close. */ }
+    }
+    if (stopping) waiting(); else status(false);
   }
   function start(enabled = true) {
     stop();
-    if (!enabled) return;
+    wanted = enabled === true;
+    if (!wanted) return;
+    if (stopping) { waiting(); return; }
+    launch();
+  }
+  function launch() {
+    if (!wanted || child || stopping) return;
     if (platform !== 'win32') { status(false, '全局按键显示仅支持 Windows。'); return; }
     try {
       child = spawn('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, '-ParentProcessId', String(parentProcessId)], {
@@ -47,12 +58,21 @@ function createTypedKeyListener({ spawn, platform = process.platform, script, pa
     });
     current.on('error', () => {
       if (child !== current) return;
-      child = null; status(false, '无法启动按键显示监听。');
+      if (current.pid) stop();
+      else { child = null; wanted = false; }
+      status(false, '无法启动按键显示监听。');
     });
-    current.on('exit', () => {
+    const exited = () => {
+      if (stopping === current) {
+        stopping = null;
+        if (wanted) launch(); else status(false);
+        return;
+      }
       if (child !== current) return;
-      child = null; status(false, '按键显示监听已停止，可在托盘关闭后重新打开。');
-    });
+      child = null; wanted = false;
+      status(false, '按键显示监听已停止，可在托盘关闭后重新打开。');
+    };
+    current.on('exit', exited); current.on('close', exited);
   }
   return { start, stop };
 }

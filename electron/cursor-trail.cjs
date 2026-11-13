@@ -1,6 +1,7 @@
 'use strict';
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
+const { performance } = require('node:perf_hooks');
 
 const TRAIL_LIFETIME_MS = 600;
 const SAMPLE_INTERVAL_MS = 16;
@@ -26,7 +27,7 @@ function breaksTrail(previous, next) {
 }
 
 /** One click-through surface per occupied monitor; all coordinates are DIPs. */
-function createCursorTrail({ BrowserWindow, screen, root, isSmokeTest = false, isPackaged = false, now = Date.now }) {
+function createCursorTrail({ BrowserWindow, screen, root, isSmokeTest = false, isPackaged = false, now = () => performance.now() }) {
   const url = pathToFileURL(path.join(root, 'renderer', 'cursor-trail.html')).href;
   const entries = new Map(), failedUntil = new Map();
   let enabled = true, blocked = false, disposed = false, style = 'pink', duration = TRAIL_LIFETIME_MS / 1000;
@@ -34,7 +35,25 @@ function createCursorTrail({ BrowserWindow, screen, root, isSmokeTest = false, i
   let displays = trailDisplays(screen.getAllDisplays());
   const live = entry => !disposed && entries.get(entry.display.id) === entry && !entry.window.isDestroyed();
   const allowed = entry => live(entry) && enabled && !blocked;
-  const send = (entry, channel, payload) => { if (live(entry) && !entry.window.webContents.isDestroyed()) entry.window.webContents.send(channel, payload); };
+  function discardFailed(entry, message = '鼠标流光窗口暂时无法显示，将稍后重试。') {
+    if (entries.get(entry.display.id) !== entry) return;
+    entry.epoch++; cancelTimers(entry); entry.pending = [];
+    entries.delete(entry.display.id);
+    lastError = message; failedUntil.set(entry.display.id, now() + 2000);
+    // Remove ownership before native cleanup; a throwing hide/destroy cannot
+    // leave a broken optional surface in the main pointer timer.
+    try { if (!entry.window.isDestroyed()) entry.window.hide(); } catch {}
+    try { if (!entry.window.isDestroyed()) entry.window.destroy(); } catch {}
+  }
+  function withWindow(entry, operation) {
+    if (!live(entry)) return false;
+    try { operation(); return true; }
+    catch { discardFailed(entry); return false; }
+  }
+  const send = (entry, channel, payload) => withWindow(entry, () => {
+    if (entry.window.webContents.isDestroyed()) throw new Error('Renderer unavailable');
+    entry.window.webContents.send(channel, payload);
+  });
   function cancelTimers(entry) {
     clearTimeout(entry.flushTimer); clearTimeout(entry.idleTimer);
     entry.flushTimer = null; entry.idleTimer = null;
@@ -42,11 +61,14 @@ function createCursorTrail({ BrowserWindow, screen, root, isSmokeTest = false, i
   function clearEntry(entry) {
     entry.epoch++; cancelTimers(entry); entry.pending = []; entry.lastSentAt = -Infinity; entry.lastQueuedAt = -Infinity;
     send(entry, 'cursor-trail:clear', { generation });
-    if (!entry.window.isDestroyed()) entry.window.hide();
+    withWindow(entry, () => entry.window.hide());
   }
   function retire(entry) {
-    clearEntry(entry); entries.delete(entry.display.id);
-    if (!entry.window.isDestroyed()) entry.window.destroy();
+    clearEntry(entry);
+    if (entries.get(entry.display.id) !== entry) return;
+    entries.delete(entry.display.id);
+    try { if (!entry.window.isDestroyed()) entry.window.destroy(); }
+    catch { lastError = '鼠标流光窗口暂时无法关闭。'; failedUntil.set(entry.display.id, now() + 2000); }
   }
   function clearAll() {
     generation++; lastPoint = null;
@@ -90,46 +112,55 @@ function createCursorTrail({ BrowserWindow, screen, root, isSmokeTest = false, i
     const points = entry.pending.map(packet => ({ x: packet.x - entry.display.bounds.x, y: packet.y - entry.display.bounds.y,
       break: packet.break, age: at - packet.at, sequence: packet.sequence }));
     entry.pending = []; entry.lastSentAt = at;
-    send(entry, 'cursor-trail:sample', { points, generation, style, duration });
+    if (!send(entry, 'cursor-trail:sample', { points, generation, style, duration })) return;
     // showInactive preserves the foreground application's keyboard focus.
-    if (!isSmokeTest && !entry.window.isVisible()) entry.window.showInactive();
+    if (!isSmokeTest) withWindow(entry, () => { if (!entry.window.isVisible()) entry.window.showInactive(); });
   }
   function createEntry(display) {
-    if (now() < (failedUntil.get(display.id) ?? 0)) return null;
-    const window = new BrowserWindow({
-      ...display.bounds, show: false, frame: false, thickFrame: false, transparent: true, backgroundColor: '#00000000',
-      resizable: false, movable: false, minimizable: false, maximizable: false, fullscreenable: false,
-      focusable: false, skipTaskbar: true, hasShadow: false, alwaysOnTop: true, title: '爱莉希雅 · 鼠标流光',
-      webPreferences: { preload: path.join(root, 'electron', 'cursor-trail-preload.cjs'), contextIsolation: true,
-        sandbox: true, nodeIntegration: false, webSecurity: true, webviewTag: false, backgroundThrottling: false, devTools: !isPackaged },
-    });
-    const entry = { display, window, ready: false, pending: [], lastSentAt: -Infinity, lastQueuedAt: -Infinity,
-      flushTimer: null, idleTimer: null, idleSequence: 0, epoch: 0 };
-    entries.set(display.id, entry);
-    window.setMenu(null);
-    window.setIgnoreMouseEvents(true);
-    window.setAlwaysOnTop(true, 'screen-saver');
-    window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-    for (const event of ['will-navigate', 'will-redirect', 'will-attach-webview']) window.webContents.on(event, value => value.preventDefault());
-    window.on('page-title-updated', event => event.preventDefault());
-    window.on('closed', () => {
-      entry.epoch++; cancelTimers(entry); entry.pending = [];
-      if (entries.get(display.id) === entry) entries.delete(display.id);
-    });
-    window.webContents.on('render-process-gone', () => {
-      if (!live(entry)) return;
-      lastError = '鼠标流光窗口暂时停止。'; failedUntil.set(display.id, now() + 2000); retire(entry);
-    });
-    entry.loading = window.loadURL(url).then(() => {
-      if (!live(entry)) return;
-      entry.ready = true; lastError = null;
-      send(entry, 'cursor-trail:style', { style, generation, duration });
-      flush(entry);
-    }).catch(error => {
-      if (!live(entry)) return;
-      lastError = error.message; failedUntil.set(display.id, now() + 2000); retire(entry);
-    });
-    return entry;
+    if (now() < (failedUntil.get(display.id) ?? -Infinity)) return null;
+    let window;
+    try {
+      window = new BrowserWindow({
+        ...display.bounds, show: false, frame: false, thickFrame: false, transparent: true, backgroundColor: '#00000000',
+        resizable: false, movable: false, minimizable: false, maximizable: false, fullscreenable: false,
+        focusable: false, skipTaskbar: true, hasShadow: false, alwaysOnTop: true, title: '爱莉希雅 · 鼠标流光',
+        webPreferences: { preload: path.join(root, 'electron', 'cursor-trail-preload.cjs'), contextIsolation: true,
+          sandbox: true, nodeIntegration: false, webSecurity: true, webviewTag: false, backgroundThrottling: false, devTools: !isPackaged },
+      });
+      const entry = { display, window, ready: false, pending: [], lastSentAt: -Infinity, lastQueuedAt: -Infinity,
+        flushTimer: null, idleTimer: null, idleSequence: 0, epoch: 0 };
+      entries.set(display.id, entry);
+      window.setMenu(null);
+      window.setIgnoreMouseEvents(true);
+      window.setAlwaysOnTop(true, 'screen-saver');
+      window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+      for (const event of ['will-navigate', 'will-redirect', 'will-attach-webview']) window.webContents.on(event, value => value.preventDefault());
+      window.on('page-title-updated', event => event.preventDefault());
+      window.on('closed', () => {
+        entry.epoch++; cancelTimers(entry); entry.pending = [];
+        if (entries.get(display.id) === entry) entries.delete(display.id);
+      });
+      window.webContents.on('render-process-gone', () => {
+        if (!live(entry)) return;
+        discardFailed(entry, '鼠标流光窗口暂时停止。');
+      });
+      entry.loading = window.loadURL(url).then(() => {
+        if (!live(entry)) return;
+        entry.ready = true; lastError = null;
+        send(entry, 'cursor-trail:style', { style, generation, duration });
+        flush(entry);
+      }).catch(error => {
+        if (!live(entry)) return;
+        discardFailed(entry, error.message);
+      });
+      return entry;
+    } catch {
+      lastError = '鼠标流光窗口暂时无法创建，将稍后重试。'; failedUntil.set(display.id, now() + 2000);
+      const entry = entries.get(display.id);
+      if (entry && entry.window === window) { cancelTimers(entry); entries.delete(display.id); }
+      try { if (window && !window.isDestroyed()) window.destroy(); } catch {}
+      return null;
+    }
   }
   function sample(point) {
     if (disposed || !enabled || blocked) return false;
@@ -208,11 +239,23 @@ function createCursorTrail({ BrowserWindow, screen, root, isSmokeTest = false, i
     for (const entry of [...entries.values()]) retire(entry);
     disposed = true; failedUntil.clear();
   }
+  function windowStates() {
+    const result = [];
+    for (const entry of entries.values()) {
+      let visible;
+      if (withWindow(entry, () => { visible = entry.window.isVisible(); })) {
+        result.push({ displayId: entry.display.id, bounds: { ...entry.display.bounds }, ready: entry.ready, visible });
+      }
+    }
+    return result;
+  }
   return { sample, setEnabled, setBlocked, setStyle, setDuration, dispose,
     getWindows: () => [...entries.values()].filter(live).map(entry => entry.window),
-    getState: () => ({ enabled, blocked, disposed, style, duration, generation, lastError,
-      pending: [...entries.values()].filter(entry => entry.pending.length).map(entry => entry.display.id),
-      windows: [...entries.values()].filter(live).map(entry => ({ displayId: entry.display.id, bounds: { ...entry.display.bounds }, ready: entry.ready, visible: entry.window.isVisible() })) }),
+    getState: () => {
+      const windows = windowStates();
+      return { enabled, blocked, disposed, style, duration, generation, lastError,
+        pending: [...entries.values()].filter(entry => entry.pending.length).map(entry => entry.display.id), windows };
+    },
   };
 }
 

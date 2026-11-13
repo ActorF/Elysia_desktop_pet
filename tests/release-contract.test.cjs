@@ -14,12 +14,14 @@ test('current release file rules include every quick chat and resource recovery 
   const root = path.resolve(__dirname, '..'), manifest = require('../package.json');
   const files = [...new Set(manifest.build.files.flatMap(pattern => fs.globSync(pattern, { cwd: root })))].map(file => file.replaceAll('\\', '/'));
   verifyReleaseContract(manifest, manifest, files);
+  assert.ok(manifest.build.asarUnpack.includes('electron/windows-file-move.ps1'), 'Native file publication must run outside the ASAR archive');
 });
 
 test('formal package verification rejects missing features, stale versions and preview versions', () => {
   const manifest = { version: '1.4.5', main: 'electron/main.cjs' };
   verifyReleaseContract(manifest, manifest, REQUIRED_RUNTIME_FILES);
-  for (const file of ['electron/voice-repair.cjs', 'electron/setup-diagnostics.cjs', 'electron/quick-chat-preload.cjs', 'renderer/quick-chat.html']) {
+  for (const file of ['electron/voice-repair.cjs', 'electron/setup-diagnostics.cjs', 'electron/legacy-hotkey-listener.cjs',
+    'electron/windows-file-move.ps1', 'electron/quick-chat-preload.cjs', 'renderer/quick-chat.html']) {
     assert.throws(() => verifyReleaseContract(manifest, manifest, REQUIRED_RUNTIME_FILES.filter(item => item !== file)), /Required release module is missing/);
   }
   assert.throws(() => verifyReleaseContract(manifest, { ...manifest, version: '1.4.4' }, REQUIRED_RUNTIME_FILES), /wrong release version/);

@@ -411,3 +411,15 @@ test('pagehide fully clears a pending audio and its late callbacks cannot restar
   assert.equal(f.reports.filter(value => value.type !== 'prepared').length, 0);
   assert.equal(f.elements['#speech'].dataset.layout, 'pending');
 });
+
+test('reverse audit: queued play callbacks and pending fonts stay inert after speech page teardown', async () => {
+  const f = rendererRaceFixture({ waitForFonts: true });
+  const loading = f.play('before-close'); f.windowEvents.pagehide();
+  await f.play('late-new-packet'); await f.ready('late-new-packet');
+  f.fonts.resolve(); await loading; await f.frame();
+  assert.equal(f.audio.length, 1); assert.equal(f.audio[0].src, '');
+  assert.equal(f.layouts.length, 0); assert.equal(f.reports.length, 0); assert.equal(f.audible(), 0);
+  const reopened = rendererRaceFixture(); await reopened.play('new-document');
+  assert.deepEqual(reopened.layouts.map(value => value.token), ['new-document']);
+  reopened.windowEvents.pagehide();
+});

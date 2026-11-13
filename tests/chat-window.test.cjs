@@ -47,6 +47,22 @@ function fixture(options = {}) {
   return { windows, snapshot, controller, area };
 }
 
+test('chat renderer crashes release playback ownership and the next open loads a new window', async t => {
+  let closed = 0;
+  const f = fixture({ onClosed: () => { closed++; } }); t.after(() => f.controller.dispose());
+  const previous = await f.controller.open();
+  previous.bounds = { x: -900, y: 30, width: 600, height: 720 };
+  previous.webContents.emit('render-process-gone', {}, { reason: 'crashed' });
+  assert.equal(f.controller.getWindow(), null);
+  assert.equal(previous.destroyed, true); assert.equal(closed, 1);
+  const next = await f.controller.open();
+  assert.notEqual(next, previous);
+  assert.deepEqual(next.getNormalBounds(), previous.bounds);
+  previous.webContents.emit('render-process-gone', {}, { reason: 'crashed' });
+  assert.equal(f.controller.getWindow(), next);
+  assert.equal(closed, 1, 'A stale crash event cannot close the replacement');
+});
+
 test('chat is one independent sandboxed window, blocks navigation and restores itself when reopened', async () => {
   const f = fixture({ isPackaged: true });
   const [window, again] = await Promise.all([f.controller.open(), f.controller.open()]);
